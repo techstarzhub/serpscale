@@ -1,0 +1,15 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Allow these dependencies to run install scripts (Prisma downloads its query
+# engine and generates the client; Nest and sharp compile native bits).
+allowBuilds:
+  '@nestjs/core': true
+  '@prisma/client': true
+  '@prisma/engines': true
+  prisma: true
+  sharp: true
+  esbuild: true
+  msgpackr-extract: true
+  unrs-resolver: true

@@ -1,0 +1,766 @@
+// Multi-tenant SaaS data model.
+//
+// Design goals:
+//  - Sellable product: every customer is an Organization (tenant) with its own
+//    users, plan, subscription, and branding.
+//  - SUPER_ADMIN (the platform owner) can manage everything across all tenants.
+//  - Nothing hardcoded: plans, limits, features, branding, and global settings all
+//    live in the database and are editable by the super admin. The seed only sets
+//    sensible starting values.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN // platform owner - full control across all organizations
+  ADMIN // organization admin (a customer's admin)
+  MEMBER // organization member
+  CLIENT // client-portal user (belongs to a Client; read-only, sees only their campaigns)
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  name           String?
+  passwordHash   String
+  role           Role      @default(MEMBER)
+  isActive       Boolean   @default(true)
+
+  // A user belongs to one organization (their workspace/tenant). The super admin
+  // may have none - they operate above tenants.
+  orgId          String?
+  organization   Organization? @relation(fields: [orgId], references: [id])
+
+  // Optional custom role (permission set) assigned by the org admin. When set, it
+  // overrides the built-in `role` for permission checks.
+  customRoleId   String?
+  customRole     CustomRole?   @relation(fields: [customRoleId], references: [id])
+
+  // Per-user theme customization (dynamic tokens, never hardcoded).
+  themeOverrides Json?
+
+  // Profile photo: the R2 object key (served via a presigned URL).
+  avatarKey      String?
+
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  passwordResets PasswordReset[]
+  refreshTokens  RefreshToken[]
+
+  // Campaigns this member has been granted access to (for non-admin members).
+  assignedProjects Project[]    @relation("ProjectAccess")
+
+  copilotMessages  CopilotMessage[]
+
+  // Client-side users (portal): the client this user belongs to, and whether
+  // they can manage their client's own members. Null for agency staff.
+  clientId         String?
+  client           Client?      @relation("ClientMembers", fields: [clientId], references: [id], onDelete: SetNull)
+  clientOwner      Boolean      @default(false)
+
+  // Per-user notification preferences: { [type]: { inApp: bool, email: bool } }.
+  notifPrefs       Json?
+  notifications    Notification[]
+
+  // Ad-hoc permissions granted directly to this user (on top of their role /
+  // custom role) — e.g. approved via an access request.
+  extraPermissions String[]     @default([])
+  accessRequests   AccessRequest[] @relation("MyAccessRequests")
+
+  @@index([orgId])
+  @@index([clientId])
+}
+
+// A user's request for access to a campaign or a permission; an admin approves
+// (which grants it) or denies it.
+model AccessRequest {
+  id          String    @id @default(cuid())
+  orgId       String
+  userId      String
+  user        User      @relation("MyAccessRequests", fields: [userId], references: [id], onDelete: Cascade)
+  type        String    // "project" | "permission"
+  target      String    // website/domain (for project) or permission key (for permission)
+  note        String?
+  // The specific reviewers the requester chose to send this to — only they see/act on it.
+  recipientIds String[]  @default([])
+  status      String    @default("PENDING") // PENDING | APPROVED | DENIED
+  decidedById String?
+  decidedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([orgId, status])
+  @@index([userId])
+}
+
+// An in-app notification for a single user.
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String?  @db.Text
+  link      String?  // in-app deep link (e.g. /dashboard/projects/<slug>)
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read, createdAt])
+}
+
+model Organization {
+  id           String        @id @default(cuid())
+  name         String
+  slug         String        @unique
+  isActive     Boolean       @default(true)
+
+  // Per-tenant branding: { agencyName, logoKey } — replaces the platform name/logo
+  // in this org's sidebar (white-label). Also holds theme overrides.
+  branding     Json?
+
+  // Per-tenant SMTP. When set, this org's transactional mail (invites, resets)
+  // is sent from the admin's own mail server instead of the platform default.
+  smtp         Json?
+
+  users        User[]
+  subscription Subscription?
+  projects     Project[]
+  customRoles  CustomRole[]
+  transactions Transaction[]
+  clients      Client[]
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+// A tenant-defined role: a named bundle of permission strings. The org admin
+// creates these and assigns them to users. Permissions are DATA (from the
+// catalog in auth/permissions.ts), never hardcoded.
+model CustomRole {
+  id           String       @id @default(cuid())
+  orgId        String
+  organization Organization @relation(fields: [orgId], references: [id])
+  name         String
+  description  String?
+  permissions  Json         // string[] of permission keys
+  isDefault    Boolean      @default(false)
+  users        User[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([orgId])
+}
+
+// Immutable activity trail — who did what. The super admin sees everything across
+// all tenants; an org admin sees their own org's log.
+model AuditLog {
+  id        String   @id @default(cuid())
+  orgId     String?
+  userId    String?
+  userEmail String?
+  action    String   // "project.create", "role.update", "user.invite", "plan.create", ...
+  target    String?  // affected entity id / name
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([orgId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// Payment records. Populated by the payment-gateway webhook (Stripe/Razorpay) or
+// a manual super-admin entry. The super admin sees all transactions.
+model Transaction {
+  id           String       @id @default(cuid())
+  orgId        String
+  organization Organization @relation(fields: [orgId], references: [id])
+  planId       String?
+  amountCents  Int
+  currency     String       @default("usd")
+  status       String       @default("pending") // pending | succeeded | failed | refunded
+  gateway      String       @default("manual")  // stripe | razorpay | manual
+  gatewayRef   String?
+  createdAt    DateTime     @default(now())
+
+  @@index([orgId])
+  @@index([createdAt])
+}
+
+model Plan {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  priceCents  Int      @default(0)
+  currency    String   @default("usd")
+  interval    String   @default("month") // "month" | "year"
+
+  // Limits and features are DATA, edited by the super admin - not hardcoded.
+  // limits example: { "projects": 3, "keywords": 100, "crawlPagesPerMonth": 5000,
+  //                   "rankChecksPerDay": 100, "seats": 2 }
+  limits      Json
+  features    Json?
+
+  isActive    Boolean  @default(true)
+  isPublic    Boolean  @default(true) // shown on pricing page
+  sortOrder   Int      @default(0)
+
+  // Cached gateway identifiers (created lazily on first checkout).
+  stripePriceId String?
+  paypalPlanId  String?
+
+  subscriptions Subscription[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Subscription {
+  id               String             @id @default(cuid())
+  orgId            String             @unique
+  organization     Organization       @relation(fields: [orgId], references: [id])
+  planId           String
+  plan             Plan               @relation(fields: [planId], references: [id])
+  status           SubscriptionStatus @default(TRIALING)
+  currentPeriodEnd DateTime?
+
+  // Gateway correlation (set by webhooks) — which processor + its ids.
+  gateway               String?
+  gatewayCustomerId     String?
+  gatewaySubscriptionId String?
+
+  // Overrides on top of the plan for a specific tenant (custom deals). Optional.
+  limitOverrides   Json?
+
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+}
+
+model PlatformSetting {
+  // Global, dynamic configuration: branding defaults, feature flags, default plan,
+  // signup toggles, etc. The super admin edits these; nothing is hardcoded.
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Projects + Site Crawl / Audit
+// ---------------------------------------------------------------------------
+
+enum CrawlStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Project {
+  id           String        @id @default(cuid())
+  orgId        String?
+  organization Organization? @relation(fields: [orgId], references: [id])
+  name         String
+  domain       String
+  createdById  String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  crawls       Crawl[]
+  serpKeywords SerpKeyword[]
+  copilotMessages CopilotMessage[]
+
+  // Connected GitHub repo for the audit auto-fix PR loop (one per campaign).
+  githubConnection GithubConnection?
+
+  // Members explicitly granted access to this campaign. Empty = admin-only (org
+  // admins always see every campaign; members see only assigned ones).
+  members      User[]        @relation("ProjectAccess")
+
+  // Clients this campaign belongs to (many-to-many: a campaign can serve several
+  // clients, a client can have several campaigns).
+  clients      Client[]      @relation("ProjectClients")
+
+  // Keywords tracked for automatic (scheduled) rank checks.
+  rankKeywords RankKeyword[]
+
+  // Content workflow: keywords saved from research + AI-generated blog drafts.
+  savedKeywords SavedKeyword[]
+  blogPosts     BlogPost[]
+
+  @@index([orgId])
+  @@index([createdById])
+}
+
+// A keyword saved from research (SERP ideas / related / ranked) to reuse later —
+// e.g. as the target of an AI-generated blog post.
+model SavedKeyword {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  keyword     String
+  volume      Int?
+  difficulty  Int?
+  cpc         Float?
+  createdById String?
+  createdAt   DateTime @default(now())
+  @@unique([projectId, keyword])
+  @@index([projectId])
+}
+
+// Every search a user runs (SERP / keyword ideas) — for a per-user "recent
+// searches" list (re-run hits the cache, no extra cost) and org-admin oversight.
+model SearchHistory {
+  id        String   @id @default(cuid())
+  orgId     String?
+  userId    String
+  projectId String?
+  kind      String   // "serp" | "keyword"
+  term      String
+  // Cached snapshot of the search result (SERP + keyword ideas) so a saved search
+  // renders instantly and never has to hit the paid API again until refreshed.
+  result    Json?
+  resultAt  DateTime?
+  createdAt DateTime @default(now())
+  @@unique([userId, projectId, kind, term])
+  @@index([orgId, createdAt])
+  @@index([userId, createdAt])
+}
+
+// An AI-generated blog draft targeting one or more saved keywords.
+model BlogPost {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  content     String   @db.Text
+  keywords    String[]
+  createdById String?
+  createdAt   DateTime @default(now())
+  @@index([projectId])
+}
+
+// A keyword whose Google rank we track over time for a project (scheduled daily).
+model RankKeyword {
+  id        String      @id @default(cuid())
+  projectId String
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  keyword   String
+  country   String      @default("US")
+  device    String      @default("desktop") // desktop | mobile
+  createdAt DateTime    @default(now())
+  lastCheckedAt DateTime?
+  checks    RankCheck[]
+
+  @@unique([projectId, keyword, country, device])
+  @@index([projectId])
+}
+
+// One historical rank reading for a tracked keyword.
+model RankCheck {
+  id        String      @id @default(cuid())
+  keywordId String
+  keyword   RankKeyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  position  Int?        // organic position (1..100); null = not found in top 100
+  url       String?     // the ranking URL on the project's domain
+  checkedAt DateTime    @default(now())
+
+  @@index([keywordId, checkedAt])
+}
+
+// A customer of the agency. type "CLIENT" = ordinary customer; "AGENCY" = a
+// white-label sub-agency that has its own branding, team members and reports.
+model Client {
+  id           String        @id @default(cuid())
+  orgId        String
+  organization Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  name         String
+  company      String?
+  email        String?
+  phone        String?
+  status       String        @default("ACTIVE") // ACTIVE | PAUSED
+  type         String        @default("CLIENT")  // CLIENT | AGENCY (white-label reseller)
+  notes        String?       @db.Text
+  // For AGENCY clients: { agencyName, logoDataUrl, logoBg, email, whiteLabel }.
+  branding     Json?
+  projects     Project[]     @relation("ProjectClients")
+  members      User[]        @relation("ClientMembers")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([orgId])
+}
+
+// One AI Copilot chat message. Each member has their OWN private thread per
+// project (grouped by userId); org admins can read every member's thread.
+model CopilotMessage {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // The member whose thread this belongs to (the asker). Assistant replies are
+  // stored under the same userId so a thread reads as one Q/A conversation.
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   // "user" | "assistant"
+  content   String   @db.Text
+  // Optional UI action chips the assistant attached (navigate/track/open-url).
+  actions   Json?
+  createdAt DateTime @default(now())
+
+  @@index([projectId, userId, createdAt])
+}
+
+model Crawl {
+  id           String      @id @default(cuid())
+  projectId    String
+  project      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  status       CrawlStatus @default(QUEUED)
+  startUrl     String
+  maxPages     Int         @default(1000)
+  pagesCrawled Int         @default(0)
+  healthScore  Int?
+  errors       Int         @default(0)
+  warnings     Int         @default(0)
+  notices      Int         @default(0)
+
+  // Aggregated issue breakdown: [{ code, severity, message, count }]
+  issuesSummary Json?
+
+  // Detected technology stack: [{ name, category }]
+  technologies Json?
+
+  // Page speed (Google PageSpeed Insights, best-effort on the home page)
+  perfScore    Int?
+  lcpMs        Int?
+  clsScore     Float?
+  fcpMs        Int?
+  ttfbMs       Int?
+  pagespeed    Json?    // full structured report: category scores, lab metrics, field data, opportunities
+  linkGraph    Json?    // internal linking: top-linked pages, orphans, broken links, depth distribution
+
+  error        String?
+  startedAt    DateTime    @default(now())
+  finishedAt   DateTime?
+
+  pages        CrawlPage[]
+
+  @@index([projectId])
+}
+
+// Third-party integrations (Google Search Console / Analytics / Business, DataForSEO).
+model Integration {
+  id           String    @id @default(cuid())
+  ownerKey     String // orgId, or "user:<id>" for accounts without an org
+  provider     String // "google" | "dataforseo"
+  status       String    @default("connected")
+  accessToken  String?
+  refreshToken String?
+  expiresAt    DateTime?
+  scope        String?
+  accountEmail String?
+  meta         Json?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Multiple accounts per provider allowed (e.g. several Google logins).
+  @@unique([ownerKey, provider, accountEmail])
+  @@index([ownerKey])
+}
+
+// A campaign's connected GitHub repo — the target for audit auto-fix PRs. The
+// access token is stored AES-256-GCM encrypted (never plaintext), unlike the
+// legacy Integration rows.
+model GithubConnection {
+  id            String   @id @default(cuid())
+  projectId     String   @unique
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner         String   // repo owner (user or org)
+  repo          String   // repo name
+  defaultBranch String?  // base branch for PRs; null = the repo's default
+  tokenCipher   String   // encrypted PAT: "iv:tag:ciphertext" (hex)
+  accountLabel  String?  // who connected it / a note
+  status        String   @default("connected")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([projectId])
+}
+
+model CrawlPage {
+  id              String   @id @default(cuid())
+  crawlId         String
+  crawl           Crawl    @relation(fields: [crawlId], references: [id], onDelete: Cascade)
+  url             String
+  statusCode      Int?
+  title           String?
+  titleLength     Int?
+  metaDescription String?
+  metaLength      Int?
+  h1Count         Int?
+  wordCount       Int?
+  imagesNoAlt     Int?
+  internalLinks   Int?
+  externalLinks   Int?
+  inlinks         Int      @default(0) // internal links pointing TO this page
+  canonical       String?
+  depth           Int      @default(0)
+  loadMs          Int?
+  issues          Json? // [{ code, severity, message }]
+  issueCodes      String[] // flat list of issue codes for fast filtering
+  issueCount      Int      @default(0)
+
+  @@index([crawlId])
+}
+
+// Cache for slow external API responses (GA4, GSC) so the UI loads instantly.
+model DataCache {
+  key       String   @id
+  payload   Json
+  updatedAt DateTime @updatedAt
+}
+
+// ===========================================================================
+// SERP Intelligence module — immutable snapshots + async jobs + metering.
+// Prefixed "Serp*" to avoid collisions with existing models.
+// ===========================================================================
+
+model SerpCountry {
+  id           Int    @id @default(autoincrement())
+  code         String @unique
+  name         String
+  googleDomain String?
+  snapshots    SerpSnapshot[]
+  keywords     SerpKeyword[]
+}
+
+model SerpLanguage {
+  id        Int    @id @default(autoincrement())
+  code      String @unique
+  name      String
+  snapshots SerpSnapshot[]
+  keywords  SerpKeyword[]
+}
+
+model SerpDevice {
+  id        Int    @id @default(autoincrement())
+  name      String @unique
+  snapshots SerpSnapshot[]
+  keywords  SerpKeyword[]
+}
+
+model SerpKeyword {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  text       String
+  normalized String
+  countryId  Int
+  country    SerpCountry  @relation(fields: [countryId], references: [id])
+  languageId Int
+  language   SerpLanguage @relation(fields: [languageId], references: [id])
+  deviceId   Int
+  device     SerpDevice   @relation(fields: [deviceId], references: [id])
+  tags       String[]
+  jobs       SerpJob[]
+  snapshots  SerpSnapshot[]
+  history    SerpHistory[]
+  createdAt  DateTime @default(now())
+  @@unique([projectId, normalized, countryId, languageId, deviceId])
+  @@index([projectId])
+}
+
+enum SerpJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  DEAD
+}
+
+model SerpJob {
+  id             String        @id @default(cuid())
+  orgId          String
+  keywordId      String?
+  keyword        SerpKeyword?  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  status         SerpJobStatus @default(QUEUED)
+  priority       Int           @default(0)
+  attempts       Int           @default(0)
+  provider       String?
+  error          String?
+  snapshotId     String?
+  snapshot       SerpSnapshot? @relation(fields: [snapshotId], references: [id])
+  idempotencyKey String?       @unique
+  requestedAt    DateTime      @default(now())
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  @@index([orgId, status])
+  @@index([status, priority])
+}
+
+model SerpSnapshot {
+  id           String   @id @default(cuid())
+  orgId        String
+  keywordId    String?
+  keyword      SerpKeyword? @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  query        String
+  engine       String   @default("google")
+  countryId    Int
+  country      SerpCountry  @relation(fields: [countryId], references: [id])
+  languageId   Int
+  language     SerpLanguage @relation(fields: [languageId], references: [id])
+  deviceId     Int
+  device       SerpDevice   @relation(fields: [deviceId], references: [id])
+  contentHash  String
+  totalResults BigInt?
+  fetchedAt    DateTime @default(now())
+
+  organic   SerpOrganicResult[]
+  features  SerpFeatureRow[]
+  paa       SerpPeopleAlsoAsk[]
+  related   SerpRelatedSearch[]
+  aiOverview SerpAiOverview?
+  metadata  SerpMetadata?
+  history   SerpHistory[]
+  jobs      SerpJob[]
+
+  @@index([keywordId, fetchedAt(sort: Desc)])
+  @@index([orgId, fetchedAt])
+  @@index([contentHash])
+}
+
+model SerpOrganicResult {
+  id         String @id @default(cuid())
+  snapshotId String
+  snapshot   SerpSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  position   Int
+  rank       Int
+  title      String
+  url        String
+  domain     String
+  snippet    String?
+  sitelinks  Json?
+  @@index([snapshotId, position])
+  @@index([domain])
+}
+
+model SerpFeatureRow {
+  id            String @id @default(cuid())
+  snapshotId    String
+  snapshot      SerpSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  type          String
+  position      Int
+  ownedByDomain String?
+  data          Json
+  @@index([snapshotId, type])
+}
+
+model SerpPeopleAlsoAsk {
+  id String @id @default(cuid())
+  snapshotId String
+  snapshot SerpSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  position Int
+  question String
+  snippet  String?
+  url      String?
+  @@index([snapshotId])
+}
+
+model SerpRelatedSearch {
+  id String @id @default(cuid())
+  snapshotId String
+  snapshot SerpSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  position Int
+  query    String
+  @@index([snapshotId])
+}
+
+model SerpAiOverview {
+  id String @id @default(cuid())
+  snapshotId String @unique
+  snapshot SerpSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  content      String
+  sources      Json
+  citedDomains String[]
+}
+
+model SerpMetadata {
+  id String @id @default(cuid())
+  snapshotId String @unique
+  snapshot SerpSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  provider          String
+  providerLatencyMs Int?
+  totalOrganic      Int
+  featureTypes      String[]
+  raw               Json
+}
+
+model SerpHistory {
+  id String @id @default(cuid())
+  keywordId  String
+  keyword    SerpKeyword  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  snapshotId String
+  snapshot   SerpSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  domain     String
+  position   Int?
+  delta      Int?
+  fetchedAt  DateTime
+  @@index([keywordId, domain, fetchedAt(sort: Desc)])
+}
+
+model SerpCredit {
+  id        String   @id @default(cuid())
+  orgId     String   @unique
+  balance   Int      @default(0)
+  reserved  Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model SerpUsageLog {
+  id        String   @id @default(cuid())
+  orgId     String
+  action    String
+  units     Int      @default(1)
+  jobId     String?
+  meta      Json?
+  createdAt DateTime @default(now())
+  @@index([orgId, createdAt])
+}

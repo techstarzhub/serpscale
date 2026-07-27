@@ -1,0 +1,210 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  DESIGN TOKENS - single source of truth.
+
+  Every color, radius, font, and layout size in the app is a CSS variable here.
+  Components never hardcode values; they read these through Tailwind, e.g.
+  bg-primary -> hsl(var(--primary)). The ThemeProvider overrides any of these at
+  runtime, so a user can fully re-skin the dashboard with nothing hardcoded.
+
+  Default look (light): clean and airy like a modern hosting panel - light-grey
+  canvas, crisp WHITE surfaces (sidebar, cards, inputs), soft borders and shadows,
+  a vibrant indigo-blue primary. Colors are HSL channels ("H S% L%").
+*/
+
+:root {
+  /* canvas + text - text is dark GREY, not black */
+  --background: 220 20% 97%;
+  --foreground: 220 14% 24%;
+
+  /* white surfaces */
+  --card: 0 0% 100%;
+  --card-foreground: 220 14% 24%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 14% 24%;
+
+  /* brand - soft indigo (easy on the eyes) */
+  --primary: 235 82% 62%;
+  --primary-foreground: 0 0% 100%;
+
+  /* neutrals */
+  --secondary: 220 16% 95%;
+  --secondary-foreground: 224 20% 25%;
+  --muted: 220 16% 95%;
+  --muted-foreground: 220 9% 46%;
+
+  /* soft brand tint (hover, subtle accents) */
+  --accent: 234 89% 96%;
+  --accent-foreground: 234 60% 45%;
+
+  /* status */
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 152 56% 40%;
+  --success-foreground: 0 0% 100%;
+
+  /* lines + focus */
+  --border: 220 16% 90%;
+  --input: 220 16% 87%;
+  --ring: 235 82% 62%;
+
+  /* soft, pleasant accent palette for stats / data */
+  --chart-1: 235 82% 62%;
+  --chart-2: 160 66% 43%;
+  --chart-3: 35 90% 55%;
+  --chart-4: 268 68% 64%;
+  --chart-5: 199 89% 48%;
+
+  /* sidebar - light/white */
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 224 16% 34%;
+  --sidebar-border: 220 16% 92%;
+  --sidebar-accent: 234 89% 96%;
+  --sidebar-accent-foreground: 234 76% 56%;
+
+  /* shape */
+  --radius: 0.65rem;
+
+  /* type */
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-heading: "Inter", system-ui, -apple-system, sans-serif;
+
+  /* layout */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 68px;
+  --topbar-height: 52px;
+}
+
+.dark {
+  --background: 224 30% 8%;
+  --foreground: 210 20% 92%;
+  --card: 224 28% 11%;
+  --card-foreground: 210 20% 92%;
+  --popover: 224 28% 11%;
+  --popover-foreground: 210 20% 92%;
+
+  --primary: 234 89% 66%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 222 16% 20%;
+  --secondary-foreground: 210 20% 92%;
+  --muted: 222 16% 18%;
+  --muted-foreground: 220 12% 62%;
+  --accent: 234 40% 22%;
+  --accent-foreground: 210 40% 92%;
+
+  --destructive: 0 62% 52%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 152 52% 46%;
+  --success-foreground: 0 0% 100%;
+
+  --border: 222 16% 22%;
+  --input: 222 16% 24%;
+  --ring: 234 89% 66%;
+
+  --chart-1: 234 89% 66%;
+  --chart-2: 160 70% 45%;
+  --chart-3: 32 90% 55%;
+  --chart-4: 280 65% 66%;
+  --chart-5: 199 89% 55%;
+
+  --sidebar: 224 28% 10%;
+  --sidebar-foreground: 210 14% 72%;
+  --sidebar-border: 222 16% 18%;
+  --sidebar-accent: 234 40% 20%;
+  --sidebar-accent-foreground: 234 90% 82%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--card)), 0 0 0 4px hsl(var(--ring) / 0.6);
+}
+
+/* ---- AI Copilot widget motion (tasteful, GPU-friendly) ---- */
+@keyframes copilot-pop {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+@keyframes copilot-msg {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes copilot-pulse {
+  0%   { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.40); }
+  70%  { box-shadow: 0 0 0 14px hsl(var(--primary) / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0); }
+}
+@keyframes copilot-dot {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40%           { transform: scale(1);   opacity: 1; }
+}
+.copilot-pop { animation: copilot-pop 0.26s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.copilot-msg { animation: copilot-msg 0.24s ease-out; }
+.copilot-pulse { animation: copilot-pulse 2.6s ease-out infinite; }
+.copilot-dot { animation: copilot-dot 1.2s ease-in-out infinite; }
+.copilot-dot:nth-child(2) { animation-delay: 0.15s; }
+.copilot-dot:nth-child(3) { animation-delay: 0.3s; }
+@media (prefers-reduced-motion: reduce) {
+  .copilot-pop, .copilot-msg, .copilot-pulse, .copilot-dot { animation: none; }
+}
+
+/* ---- Dashboard motion + premium surfaces ---- */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+@keyframes ring-in {
+  from { stroke-dashoffset: var(--dash); }
+}
+.ring-in { animation: ring-in 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+/* Value-proportional data bar behind table numbers (grows on mount). */
+@keyframes bar-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.bar-grow { transform-origin: left; animation: bar-grow 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+/* Soft lift on hover for cards/rows. */
+.lift { transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
+.lift:hover { transform: translateY(-2px); box-shadow: 0 10px 30px -12px hsl(var(--foreground) / 0.18); }
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up, .ring-in, .bar-grow { animation: none; }
+  .lift:hover { transform: none; }
+}
+
+/* Blog editor: always render markdown links as clearly underlined, themed links —
+   so internal links are visibly distinguishable in both our preview and the
+   editor's own markdown renderer. */
+.blog-md-editor .wmde-markdown a,
+.blog-md-editor a[href] {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: hsl(var(--primary) / 0.45);
+}
+.blog-md-editor .wmde-markdown a:hover,
+.blog-md-editor a[href]:hover {
+  text-decoration-color: hsl(var(--primary));
+}
