@@ -1,0 +1,96 @@
+import type { Metadata } from "next";
+import Script from "next/script";
+
+const CSS = [
+  "bootstrap.min.css",
+  "all.min.css",
+  "animate.css",
+  "magnific-popup.css",
+  "meanmenu.css",
+  "swiper-bundle.min.css",
+  "nice-select.css",
+  "main.css",
+  "serpscale.css",
+];
+
+// jQuery + all template plugins + main.js, concatenated in load order into one
+// ordered bundle (single script → guaranteed execution order across the stack).
+
+export const metadata: Metadata = {
+  metadataBase: new URL("https://serpscale.com"),
+  title: {
+    default: "SerpScale — The All-in-One SEO Tool & SEMrush Alternative",
+    template: "%s | SerpScale",
+  },
+  description:
+    "SerpScale is the all-in-one SEO platform: rank tracker, site audit, backlink checker and keyword research in one dashboard. A faster, affordable SEMrush & Ahrefs alternative built for agencies.",
+  applicationName: "SerpScale",
+  keywords: [
+    "SEO tool",
+    "SEO platform",
+    "rank tracker",
+    "backlink checker",
+    "site audit tool",
+    "keyword research tool",
+    "SEMrush alternative",
+    "Ahrefs alternative",
+    "white label SEO",
+  ],
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    siteName: "SerpScale",
+    title: "SerpScale — The All-in-One SEO Tool & SEMrush Alternative",
+    description:
+      "Rank tracking, site audits, backlinks and keyword research in one platform. The affordable SEMrush & Ahrefs alternative for agencies.",
+    url: "/",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "SerpScale — The All-in-One SEO Platform",
+    description: "Rank tracker, site audit, backlink checker & keyword research in one dashboard.",
+  },
+  robots: { index: true, follow: true },
+};
+
+const orgJsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://serpscale.com/#organization",
+      name: "SerpScale",
+      url: "https://serpscale.com",
+      description:
+        "SerpScale is an all-in-one SEO platform: rank tracker, site audit, backlink checker and keyword research in one dashboard.",
+      sameAs: ["https://twitter.com/serpscale", "https://www.linkedin.com/company/serpscale"],
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://serpscale.com/#website",
+      url: "https://serpscale.com",
+      name: "SerpScale",
+      publisher: { "@id": "https://serpscale.com/#organization" },
+    },
+  ],
+};
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  return (
+    <html lang="en">
+      <head>
+        {/* Preconnect to Google Fonts (main.css @imports DM Sans + Open Sans) — improves LCP. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }} />
+        {CSS.map((f) => (
+          <link key={f} rel="stylesheet" href={`/assets/css/${f}`} />
+        ))}
+      </head>
+      <body>
+        {children}
+        <Script src="/assets/js/_bundle.js" strategy="afterInteractive" />
+      </body>
+    </html>
+  );
+}

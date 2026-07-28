@@ -1,0 +1,23 @@
+/* SerpScale overrides on top of the Cloudly template */
+.serp-logo{font-family:"DM Sans",sans-serif;font-weight:800;font-size:28px;letter-spacing:-.02em;color:#0b0b16;line-height:1;display:inline-block;text-decoration:none;}
+.serp-logo span{color:#7B1FE4;}
+.serp-logo-light,.pp-footer-logo.serp-logo{color:#fff;}
+.serp-logo-light span{color:#c084fc;}
+.offcanvas__logo .serp-logo{font-size:24px;}
+/* keep header logo vertically centered like the original img logo */
+.logo .header-logo.serp-logo{display:inline-flex;align-items:center;height:100%;}
+
+/* Footer: the template's ::before dark overlay extends 50% ABOVE the footer to
+   blend into a dark section above it. On short inner pages (e.g. a blog list with
+   few posts) that upward overlay covers the page content. Keep the overlay inside
+   the footer's own box — the dark base still comes from .section-bg-2 + top-shape. */
+.pp-footer-section::before{top:0;}
+
+/* payment + integration icon chips */
+.pp-pay{display:inline-flex;align-items:center;justify-content:center;background:#fff;border-radius:8px;padding:7px 12px;box-shadow:0 4px 14px rgba(0,0,0,.12);}
+.pp-pay img{display:block;}
+.pp-integrations{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:16px;}
+.pp-int-chip{display:inline-flex;align-items:center;gap:9px;background:#fff;border:1px solid #ececf5;border-radius:12px;padding:12px 18px;font-weight:600;color:#1b1f2a;box-shadow:0 8px 24px -14px rgba(0,0,0,.25);}
+.pp-int-chip img{width:24px;height:24px;display:block;}
+.pp-int-chip span{font-size:14px;white-space:nowrap;}
+
