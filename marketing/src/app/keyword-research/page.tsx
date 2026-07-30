@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "Keyword Research Tool — Free Keyword Finder for SEO",
   description:
     "SerpScale is an affordable keyword research tool for SEO — find keyword ideas, real search volume, difficulty and search intent. Start free, no card required.",
+  keywords: ["keyword research tool","keyword research","keyword research for SEO","SEO keyword research","keyword tool","free keyword research tool","keyword finder","keyword generator","keyword ideas","long-tail keywords","keyword difficulty","search volume","keyword suggestions","search intent","related keywords","keyword gap analysis","keyword clustering","question keywords","keyword volume checker","keyword metrics","seed keyword","CPC data","topic clusters","keyword explorer","keyword research tools"],
   alternates: { canonical: "/keyword-research" },
   openGraph: {
     title: "Keyword Research Tool — Free Keyword Finder for SEO",
@@ -37,7 +38,11 @@ const faqs = [
   },
   {
     q: "How does it compare to SEMrush's keyword research tool?",
-    a: "SerpScale covers the core of the SEMrush keyword research tool — keyword ideas, search volume, keyword difficulty, search intent and keyword gap analysis — at a fraction of the cost. It is a practical SEO tool for keyword research if you want SEMrush-style insight without the enterprise bill.",
+    a: "SerpScale covers the core of the SEMrush keyword research tool — keyword ideas, search volume, keyword difficulty, search intent and keyword gap analysis — at a fraction of the cost. If you want SEMrush-style insight without the enterprise bill, it's the keyword research tool most teams actually end up using day to day.",
+  },
+  {
+    q: "Is there a free keyword research tool?",
+    a: "Yes — you can start with SerpScale's free keyword research tool and generate keyword ideas, check real search volume and see difficulty without a credit card. It works as both a keyword generator for fresh ideas and a keyword finder when you already have a phrase in mind, and you can upgrade when you need more searches or full competitor data.",
   },
 ];
 
@@ -56,7 +61,6 @@ export default function Page() {
             description:
               "Affordable keyword research tool for SEO with keyword ideas, real search volume, keyword difficulty, search intent and keyword gap analysis.",
             url: "/keyword-research",
-            rating: { value: "4.8", count: "180" },
           }),
         ]}
       />

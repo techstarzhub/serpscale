@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
+import { OtpStep } from "@/components/auth/otp-step";
 
 // useSearchParams must sit under a Suspense boundary (Next.js CSR bailout).
 export default function LoginPage() {
@@ -23,6 +24,12 @@ function LoginForm() {
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [otpEmail, setOtpEmail] = useState<string | null>(null); // set once password passes
+
+  function done() {
+    const next = params.get("next");
+    window.location.href = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+  }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -30,18 +37,20 @@ function LoginForm() {
     setLoading(true);
     const form = new FormData(e.currentTarget);
     try {
-      await api.post("/auth/login", {
+      const res = await api.post<{ otpRequired?: boolean; email?: string }>("/auth/login", {
         email: form.get("email"),
         password: form.get("password"),
       });
-      const next = params.get("next");
-      window.location.href = next && next.startsWith("/") ? next : "/dashboard";
+      if (res.otpRequired) setOtpEmail(res.email ?? String(form.get("email")));
+      else done();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sign in");
     } finally {
       setLoading(false);
     }
   }
+
+  if (otpEmail) return <OtpStep email={otpEmail} purpose="LOGIN" onVerified={done} onBack={() => setOtpEmail(null)} />;
 
   return (
     <div className="space-y-6">

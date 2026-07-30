@@ -48,6 +48,14 @@ export const api = {
   patch: <T>(path: string, body?: unknown) => request<T>(path, "PATCH", body),
   put: <T>(path: string, body?: unknown) => request<T>(path, "PUT", body),
   del: <T>(path: string) => request<T>(path, "DELETE"),
+  // Fetch a binary file (e.g. a PDF) with the session cookie + one silent
+  // refresh on 401. Returns a Blob the caller can turn into a download.
+  download: async (path: string): Promise<Blob> => {
+    let res = await fetch(`${API_URL}${path}`, { credentials: "include" });
+    if (res.status === 401 && (await tryRefresh())) res = await fetch(`${API_URL}${path}`, { credentials: "include" });
+    if (!res.ok) throw new Error("Could not download the file");
+    return res.blob();
+  },
   // Multipart upload (do NOT set Content-Type - the browser adds the boundary).
   upload: async <T>(path: string, formData: FormData) => {
     const res = await fetch(`${API_URL}${path}`, {

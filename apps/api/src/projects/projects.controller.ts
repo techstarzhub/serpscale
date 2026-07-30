@@ -19,6 +19,8 @@ import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { RequirePermissions } from "../auth/decorators/require-permissions.decorator";
 import { PERMISSIONS as P } from "../auth/permissions";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
+import { FeaturesGuard } from "../entitlements/features.guard";
+import { RequireFeature } from "../entitlements/require-feature.decorator";
 import { ProjectsService } from "./projects.service";
 import { CrawlService } from "../crawl/crawl.service";
 import { GoogleService } from "../integrations/google.service";
@@ -33,7 +35,7 @@ import { CreateProjectDto, UpdateProjectDto } from "./dto/project.dto";
 // "?fresh=1" / "?fresh=true" → bypass cache and re-fetch live (Refresh button).
 const isFresh = (v?: string) => v === "1" || v === "true";
 
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, FeaturesGuard)
 @Controller("projects")
 export class ProjectsController {
   constructor(
@@ -52,6 +54,7 @@ export class ProjectsController {
 
   @Get(":id/rank-keywords")
   @RequirePermissions(P.RANKS_VIEW)
+  @RequireFeature("ranks")
   async rankKeywords(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.projects.get(user, id);
     return this.rankTracker.list(id);
@@ -59,6 +62,7 @@ export class ProjectsController {
 
   @Post(":id/rank-keywords")
   @RequirePermissions(P.RANKS_VIEW)
+  @RequireFeature("ranks")
   async addRankKeyword(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { keyword?: string; country?: string; device?: string }) {
     await this.projects.get(user, id);
     return this.rankTracker.add(id, dto?.keyword ?? "", dto?.country, dto?.device);
@@ -66,6 +70,7 @@ export class ProjectsController {
 
   @Delete(":id/rank-keywords/:kid")
   @RequirePermissions(P.RANKS_VIEW)
+  @RequireFeature("ranks")
   async removeRankKeyword(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("kid") kid: string) {
     await this.projects.get(user, id);
     return this.rankTracker.remove(id, kid);
@@ -73,6 +78,7 @@ export class ProjectsController {
 
   @Post(":id/rank-keywords/refresh")
   @RequirePermissions(P.RANKS_VIEW)
+  @RequireFeature("ranks")
   async refreshRankKeywords(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.projects.get(user, id);
     return this.rankTracker.checkProject(id);
@@ -114,6 +120,27 @@ export class ProjectsController {
     return this.projects.update(user, id, dto);
   }
 
+  // Archive / restore a campaign (soft — data is kept, just hidden by default).
+  @Patch(":id/archive")
+  @RequirePermissions(P.PROJECTS_EDIT)
+  setArchived(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { archived?: boolean }) {
+    return this.projects.setArchived(user, id, dto?.archived !== false);
+  }
+
+  // Generate (or fetch) the campaign's public read-only view key.
+  @Post(":id/share")
+  @RequirePermissions(P.PROJECTS_EDIT)
+  generateShare(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.projects.generateShare(user, id);
+  }
+
+  // Revoke the public view key — the link stops working immediately.
+  @Delete(":id/share")
+  @RequirePermissions(P.PROJECTS_EDIT)
+  revokeShare(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.projects.revokeShare(user, id);
+  }
+
   @Delete(":id")
   @RequirePermissions(P.PROJECTS_DELETE)
   remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {
@@ -124,6 +151,7 @@ export class ProjectsController {
 
   @Post(":id/crawl")
   @RequirePermissions(P.AUDIT_RUN)
+  @RequireFeature("audit")
   async startCrawl(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -137,6 +165,7 @@ export class ProjectsController {
   // Cancel the running audit for this campaign.
   @Post(":id/crawl/cancel")
   @RequirePermissions(P.AUDIT_RUN)
+  @RequireFeature("audit")
   async cancelCrawl(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.projects.get(user, id); // access check
     return this.crawls.cancel(id);
@@ -144,6 +173,7 @@ export class ProjectsController {
 
   @Get(":id/crawl/latest")
   @RequirePermissions(P.AUDIT_VIEW)
+  @RequireFeature("audit")
   async latestCrawl(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.projects.get(user, id); // access check
     return this.crawls.latestForProject(id);
@@ -151,6 +181,7 @@ export class ProjectsController {
 
   @Get(":id/crawl/history")
   @RequirePermissions(P.AUDIT_VIEW)
+  @RequireFeature("audit")
   async crawlHistory(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.projects.get(user, id); // access check
     return this.crawls.historyForProject(id);
@@ -199,15 +230,17 @@ export class ProjectsController {
     if (!pdf) throw new BadRequestException("No data to report yet. Run an audit or connect Google / Analytics first.");
 
     const safe = project.domain.replace(/[^a-z0-9.-]/gi, "_");
-    const html = this.email.wrap(
-      "Your SEO report is ready",
-      `Please find attached the latest SEO report for <b>${project.domain}</b>. It covers rankings, traffic, backlinks and technical health.`,
-    );
     let sent = 0;
     for (const to of emails) {
-      const ok = await this.email.send(to, `SEO report — ${project.domain}`, html, user.orgId, [
-        { filename: `${safe}-seo-report.pdf`, content: pdf },
-      ]);
+      const ok = await this.email.sendBranded(
+        to,
+        `SEO report — ${project.domain}`,
+        "Your SEO report is ready",
+        `Please find attached the latest SEO report for <b>${project.domain}</b>. It covers rankings, traffic, backlinks and technical health.`,
+        undefined,
+        user.orgId,
+        [{ filename: `${safe}-seo-report.pdf`, content: pdf }],
+      );
       if (ok) sent++;
     }
     void this.notifications.notify(user.id, "report_sent", {
@@ -221,6 +254,7 @@ export class ProjectsController {
   // On-demand PageSpeed for a single page (must be on the project's domain).
   @Get(":id/pagespeed")
   @RequirePermissions(P.AUDIT_VIEW)
+  @RequireFeature("audit")
   async pagespeed(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("url") url?: string, @Query("fresh") fresh?: string) {
     const project = await this.projects.get(user, id);
     if (!url) return { error: "url required" };
@@ -248,13 +282,19 @@ export class ProjectsController {
   ) {
     const project = await this.projects.get(user, id);
     const d = Math.min(90, Math.max(7, Number(days) || 28));
-    return this.google.cached(`gsc:${id}:${d}`, 3 * 3600_000, () => this.google.gscForProject(project, d), isFresh(fresh));
+    // Cache even a "not matched" result (30m) so an unmatched domain doesn't
+    // re-run Google's expensive property/site scan on every page load. Matched
+    // data caches for 3h. Refresh button (?fresh=1) always bypasses.
+    const key = `gsc:${id}:${d}`;
+    const matched = (await this.google.peek<any>(key))?.matched === true;
+    return this.google.cached(key, matched ? 3 * 3600_000 : 30 * 60_000, () => this.google.gscForProject(project, d), isFresh(fresh), true);
   }
 
   // ---- Google Analytics 4 traffic (auto-matched to the project domain) ----
 
   @Get(":id/ga")
   @RequirePermissions(P.TRAFFIC_VIEW)
+  @RequireFeature("traffic")
   async ga(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -263,7 +303,11 @@ export class ProjectsController {
   ) {
     const project = await this.projects.get(user, id);
     const d = Math.min(90, Math.max(7, Number(days) || 28));
-    return this.google.cached(`ga:${id}:${d}`, 3 * 3600_000, () => this.google.gaForProject(project, d), isFresh(fresh));
+    // Same as GSC: cache the "not matched" result (30m) so an unmatched domain
+    // doesn't rescan every GA4 property (with its stream URIs) on every load.
+    const key = `ga:${id}:${d}`;
+    const matched = (await this.google.peek<any>(key))?.matched === true;
+    return this.google.cached(key, matched ? 3 * 3600_000 : 30 * 60_000, () => this.google.gaForProject(project, d), isFresh(fresh), true);
   }
 
   // ---- Google Business Profile (GMB): rating + reviews, matched by domain ----
@@ -272,14 +316,19 @@ export class ProjectsController {
   @RequirePermissions(P.OVERVIEW_VIEW)
   async gmb(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("fresh") fresh?: string) {
     const project = await this.projects.get(user, id);
-    // Reviews change slowly — cache 6h so the dashboard stays instant.
-    return this.google.cached(`gmb:${id}`, 6 * 3600_000, () => this.google.gmbForProject(project), isFresh(fresh));
+    // cacheEmpty=true: cache even a "not connected / quota pending" result (1h) so
+    // the dashboard doesn't re-hit Google for every campaign on every refresh.
+    // Once GMB is truly connected it caches the real rating/reviews for 6h via a refresh.
+    const matched = (await this.google.peek<any>(`gmb:${id}`))?.matched === true;
+    const ttl = matched ? 6 * 3600_000 : 60 * 60_000;
+    return this.google.cached(`gmb:${id}`, ttl, () => this.google.gmbForProject(project), isFresh(fresh), true);
   }
 
   // ---- DataForSEO: backlinks (cached 24h in the service) ----
 
   @Get(":id/backlinks")
   @RequirePermissions(P.BACKLINKS_VIEW)
+  @RequireFeature("backlinks")
   async backlinks(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("fresh") fresh?: string, @Query("cachedOnly") cachedOnly?: string) {
     const project = await this.projects.get(user, id);
     return this.dataforseo.backlinksForDomain(project.domain, isFresh(fresh), cachedOnly === "1");
@@ -289,6 +338,7 @@ export class ProjectsController {
 
   @Get(":id/keywords")
   @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("keywords")
   async keywordIdeas(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -304,6 +354,7 @@ export class ProjectsController {
 
   @Get(":id/ranked-keywords")
   @RequirePermissions(P.RANKS_VIEW)
+  @RequireFeature("ranks")
   async rankedKeywords(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -320,6 +371,7 @@ export class ProjectsController {
 
   @Get(":id/competitors")
   @RequirePermissions(P.COMPETITORS_VIEW)
+  @RequireFeature("competitors")
   async competitors(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -334,6 +386,7 @@ export class ProjectsController {
 
   @Get(":id/keyword-gap")
   @RequirePermissions(P.COMPETITORS_VIEW)
+  @RequireFeature("competitors")
   async keywordGap(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -350,6 +403,7 @@ export class ProjectsController {
 
   @Get(":id/technologies")
   @RequirePermissions(P.DOMAIN_VIEW)
+  @RequireFeature("domain")
   async technologies(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("fresh") fresh?: string, @Query("cachedOnly") cachedOnly?: string) {
     const project = await this.projects.get(user, id);
     return this.dataforseo.technologies(project.domain, isFresh(fresh), cachedOnly === "1");
@@ -359,6 +413,7 @@ export class ProjectsController {
 
   @Get(":id/local")
   @RequirePermissions(P.COMPETITORS_VIEW)
+  @RequireFeature("competitors")
   async local(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -377,6 +432,7 @@ export class ProjectsController {
   // soon as that assistant answers (SSE), instead of waiting for all of them.
   @Get(":id/ai-visibility")
   @RequirePermissions(P.AI_VIEW)
+  @RequireFeature("ai")
   async aiVisibility(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -411,10 +467,18 @@ export class ProjectsController {
   // AI "how to fix" for a single site-audit issue (stack-aware).
   @Post(":id/audit-fix")
   @RequirePermissions(P.AUDIT_VIEW)
+  @RequireFeature("audit")
   async auditFix(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { code?: string }) {
     const project = await this.projects.get(user, id);
     if (!dto?.code) throw new BadRequestException("An issue code is required.");
     return { fix: await this.copilotChat.auditFix(project, dto.code) };
+  }
+
+  // Read-only campaign team (assigned members + clients) — visible to anyone with
+  // campaign access, including client-portal users, so they see who works on it.
+  @Get(":id/team")
+  campaignTeam(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.projects.campaignTeam(user, id);
   }
 
   // ---- Campaign team: assign / unassign members from the campaign header ----
@@ -460,6 +524,7 @@ export class ProjectsController {
   // Whole-audit prioritised AI action plan.
   @Post(":id/audit-plan")
   @RequirePermissions(P.AUDIT_VIEW)
+  @RequireFeature("audit")
   async auditPlan(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     const project = await this.projects.get(user, id);
     return { plan: await this.copilotChat.auditPlan(project) };
@@ -468,6 +533,7 @@ export class ProjectsController {
   // Stack-aware AI fix for a Lighthouse finding (performance / accessibility / SEO / best-practices).
   @Post(":id/lighthouse-fix")
   @RequirePermissions(P.AUDIT_VIEW)
+  @RequireFeature("audit")
   async lighthouseFix(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -504,6 +570,7 @@ export class ProjectsController {
 
   @Post(":id/audit-fix/stream")
   @RequirePermissions(P.AUDIT_VIEW)
+  @RequireFeature("audit")
   async auditFixStream(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { code?: string }, @Res() res: Response) {
     const project = await this.projects.get(user, id);
     if (!dto?.code) throw new BadRequestException("An issue code is required.");
@@ -512,6 +579,7 @@ export class ProjectsController {
 
   @Post(":id/audit-plan/stream")
   @RequirePermissions(P.AUDIT_VIEW)
+  @RequireFeature("audit")
   async auditPlanStream(@CurrentUser() user: AuthUser, @Param("id") id: string, @Res() res: Response) {
     const project = await this.projects.get(user, id);
     await this.streamFixSse(res, this.copilotChat.auditPlanStream(project));
@@ -519,6 +587,7 @@ export class ProjectsController {
 
   @Post(":id/lighthouse-fix/stream")
   @RequirePermissions(P.AUDIT_VIEW)
+  @RequireFeature("audit")
   async lighthouseFixStream(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
@@ -542,6 +611,7 @@ export class ProjectsController {
   // read any member's thread in the project.
   @Get(":id/copilot/history")
   @RequirePermissions(P.AI_COPILOT_VIEW)
+  @RequireFeature("copilot")
   async copilotHistory(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("userId") userId?: string) {
     await this.projects.get(user, id); // enforces campaign access
     let target = user.id;
@@ -555,6 +625,7 @@ export class ProjectsController {
   // Admin oversight: list every member who has chatted in this project.
   @Get(":id/copilot/threads")
   @RequirePermissions(P.AI_COPILOT_VIEW)
+  @RequireFeature("copilot")
   async copilotThreads(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.projects.get(user, id);
     if (user.role !== "ADMIN") throw new ForbiddenException("Only admins can view team chats.");
@@ -564,6 +635,7 @@ export class ProjectsController {
   // Proactive prioritized action brief for the site (cached ~12h).
   @Get(":id/copilot/brief")
   @RequirePermissions(P.AI_COPILOT_VIEW)
+  @RequireFeature("copilot")
   async copilotBrief(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     const project = await this.projects.get(user, id);
     if (!this.copilotChat.configured) return { text: "", generatedAt: null };
@@ -572,6 +644,7 @@ export class ProjectsController {
 
   @Delete(":id/copilot/history")
   @RequirePermissions(P.AI_COPILOT_VIEW)
+  @RequireFeature("copilot")
   async copilotClear(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.projects.get(user, id);
     return this.copilotChat.clear(id, user.id);
@@ -582,6 +655,7 @@ export class ProjectsController {
   @Throttle({ default: { limit: 15, ttl: 60_000 } })
   @Post(":id/copilot/stream")
   @RequirePermissions(P.AI_COPILOT_VIEW)
+  @RequireFeature("copilot")
   async copilotStream(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

@@ -20,11 +20,15 @@ import {
   KeyRound,
   Mail,
   ScrollText,
+  Newspaper,
   SlidersHorizontal,
+  Archive,
+  ArchiveRestore,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { LogoMark } from "@/components/layout/logo-mark";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserAvatar } from "@/components/ui/user-avatar";
@@ -54,19 +58,20 @@ export function Sidebar({
   const searchParams = useSearchParams();
   const { user, setUser } = useCurrentUser();
   const can = useCan();
-  const { projects, loading: projectsLoading } = useProjects();
+  const { projects, loading: projectsLoading, setArchived } = useProjects();
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
   const currentAdminSection = searchParams.get("s") || "overview";
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Super admin's sidebar is platform-management nav, NOT projects/campaigns.
-  const adminSections: { key: string; label: string; icon: LucideIcon }[] = [
+  const adminSections: { key: string; label: string; icon: LucideIcon; href?: string }[] = [
     { key: "overview", label: "Overview", icon: LayoutDashboard },
     { key: "users", label: "Users", icon: UsersIcon },
     { key: "orgs", label: "Organizations", icon: Building2 },
     { key: "plans", label: "Plans", icon: CreditCard },
     { key: "transactions", label: "Payments", icon: Receipt },
     { key: "gateways", label: "Payment keys", icon: KeyRound },
+    { key: "blog", label: "Blog", icon: Newspaper, href: "/dashboard/admin/blog" },
     { key: "email", label: "Email / SMTP", icon: Mail },
     { key: "audit", label: "Audit log", icon: ScrollText },
     { key: "settings", label: "Settings", icon: SlidersHorizontal },
@@ -88,10 +93,15 @@ export function Sidebar({
 
   const [query, setQuery] = useState("");
   const [reqOpen, setReqOpen] = useState(false);
+  const [archTab, setArchTab] = useState<"active" | "archived">("active");
   const q = query.trim().toLowerCase();
+  const activeProjects = projects.filter((p) => !p.archivedAt);
+  const archivedProjects = projects.filter((p) => !!p.archivedAt);
+  const tabProjects = archTab === "archived" ? archivedProjects : activeProjects;
   const filteredProjects = q
-    ? projects.filter((p) => p.name.toLowerCase().includes(q) || p.domain.toLowerCase().includes(q))
-    : projects;
+    ? tabProjects.filter((p) => p.name.toLowerCase().includes(q) || p.domain.toLowerCase().includes(q))
+    : tabProjects;
+  const canArchive = can("projects.edit");
 
   const accountNav: { label: string; href: string; icon: LucideIcon; soon?: boolean; adminOnly?: boolean }[] = [
     { label: "Settings", href: "/dashboard/settings", icon: Settings },
@@ -102,58 +112,44 @@ export function Sidebar({
       className={cn(
         "fixed inset-y-0 left-0 z-30 flex w-[var(--sidebar-width)] flex-col border-r border-sidebar-border bg-sidebar transition-[transform,width] duration-200",
         mobileOpen ? "translate-x-0 shadow-soft" : "-translate-x-full",
-        "lg:translate-x-0 lg:shadow-none",
+        "lg:translate-x-0 lg:shadow-rail",
         collapsed ? "lg:w-[var(--sidebar-collapsed-width)]" : "lg:w-[var(--sidebar-width)]",
       )}
     >
-      {/* Brand — the agency's own logo + name (white-label) when set, else platform default */}
+      {/* Brand — the agency's own logo + name (white-label) when set, else the
+          platform default (SerpScale logo + styled wordmark). */}
       {(() => {
         const agencyName = user?.branding?.agencyName || null;
         const logo = user?.branding?.logoDataUrl || null;
         const logoBg = user?.branding?.logoBg || null;
-        const brandName = agencyName || "SEO Platform";
+        // No agency branding at all → show our own SerpScale brand.
+        const isDefault = !agencyName && !logo;
         return (
-          <div className={cn("flex h-[var(--topbar-height)] items-center", rail ? "justify-center" : "gap-2.5 px-5")}>
+          <div className={cn("flex h-[var(--topbar-height)] items-center border-b border-border", rail ? "justify-center" : "gap-3 px-5")}>
             {logo ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={logo}
-                alt={brandName}
-                className="h-8 w-8 shrink-0 rounded-lg object-contain"
-                style={logoBg ? { backgroundColor: logoBg } : undefined}
-              />
+              <img src={logo} alt={agencyName ?? "Logo"} className="h-10 w-10 shrink-0 rounded-xl object-contain" style={logoBg ? { backgroundColor: logoBg } : undefined} />
+            ) : isDefault ? (
+              // Inline mark: swoosh follows the appearance Primary colour, chart
+              // follows foreground (black in light / white in dark).
+              <LogoMark className="h-10 w-10 shrink-0" />
             ) : (
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary font-heading text-sm font-bold text-primary-foreground shadow-sm">
-                {brandName.charAt(0).toUpperCase()}
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary to-primary/75 font-heading text-base font-bold text-primary-foreground shadow-glow ring-1 ring-white/10">
+                {(agencyName || "S").charAt(0).toUpperCase()}
               </span>
             )}
-            {!rail && <span className="truncate text-[15px] font-semibold text-foreground">{brandName}</span>}
+            {!rail && (
+              isDefault ? (
+                <span className="truncate text-[24px] leading-none" style={{ letterSpacing: "-0.03em" }}>
+                  <span style={{ fontFamily: "'Montserrat', sans-serif", fontWeight: 800, color: "hsl(var(--primary))" }}>Serp</span><span style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600, fontStyle: "italic", color: "hsl(var(--foreground))" }}>Scale</span>
+                </span>
+              ) : (
+                <span className="truncate text-[17px] font-bold text-foreground">{agencyName}</span>
+              )
+            )}
           </div>
         );
       })()}
-
-      {/* Search */}
-      <div className={cn("pb-2 pt-1", rail ? "px-2.5" : "px-3")}>
-        {rail ? (
-          <button
-            onClick={onExpand}
-            title="Search projects"
-            className="grid h-9 w-full place-items-center rounded-lg border border-input bg-background text-muted-foreground transition-colors hover:text-foreground"
-          >
-            <Search className="h-4 w-4" />
-          </button>
-        ) : (
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search projects..."
-              className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus-ring"
-            />
-          </div>
-        )}
-      </div>
 
       <nav className={cn("flex-1 overflow-y-auto py-2", rail ? "px-2.5" : "px-3")}>
         {isSuperAdmin ? (
@@ -167,9 +163,13 @@ export function Sidebar({
                 <NavItem
                   key={s.key}
                   label={s.label}
-                  href={`/dashboard/admin?s=${s.key}`}
+                  href={s.href ?? `/dashboard/admin?s=${s.key}`}
                   icon={s.icon}
-                  active={pathname === "/dashboard/admin" && currentAdminSection === s.key}
+                  active={
+                    s.href
+                      ? pathname.startsWith(s.href)
+                      : pathname === "/dashboard/admin" && currentAdminSection === s.key
+                  }
                   rail={rail}
                   onNavigate={onCloseMobile}
                 />
@@ -199,7 +199,7 @@ export function Sidebar({
           />
         )}
 
-        {user?.role === "CLIENT" && user?.clientOwner && (
+        {user?.role === "CLIENT" && user?.clientOwner && user?.clientCanManageTeam && (
           <NavItem
             label="My Team"
             href="/dashboard/portal/team"
@@ -229,9 +229,9 @@ export function Sidebar({
             <div className="flex items-center justify-between px-3 pb-1.5 pt-1">
               <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {user?.role === "CLIENT" ? "Campaigns" : "Projects"}
-                {projects.length > 0 && (
+                {tabProjects.length > 0 && (
                   <span className="rounded bg-secondary px-1.5 text-[10px] font-semibold text-muted-foreground">
-                    {projects.length}
+                    {tabProjects.length}
                   </span>
                 )}
               </span>
@@ -248,21 +248,81 @@ export function Sidebar({
             </div>
           )}
 
+          {/* Project search — filters the list below. Collapsed rail shows a
+              compact icon button that expands the sidebar (same spot). */}
+          {rail ? (
+            <button
+              onClick={onExpand}
+              title="Search projects"
+              className="mb-1 grid h-9 w-full place-items-center rounded-lg border border-input bg-background text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <Search className="h-4 w-4" />
+            </button>
+          ) : (
+            <div className="relative mx-1 mb-2">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search projects..."
+                className="h-9 w-full rounded-full border border-input bg-background pl-4 pr-10 text-[13px] text-foreground shadow-sm transition-shadow placeholder:text-muted-foreground focus-ring hover:shadow-soft"
+              />
+              <span className="pointer-events-none absolute right-1 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full bg-primary text-primary-foreground shadow-glow">
+                <Search className="h-3 w-3" />
+              </span>
+            </div>
+          )}
+
+          {/* Active / Archived segmented toggle (like a filter tab-bar) */}
+          {!rail && (activeProjects.length > 0 || archivedProjects.length > 0) && (
+            <div className="mx-1 mb-2 flex rounded-xl border border-border bg-secondary/60 p-1">
+              {(["active", "archived"] as const).map((t) => {
+                const count = t === "archived" ? archivedProjects.length : activeProjects.length;
+                return (
+                  <button
+                    key={t}
+                    onClick={() => setArchTab(t)}
+                    className={cn(
+                      "flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-[13px] font-semibold capitalize transition-all",
+                      archTab === t
+                        ? "bg-primary text-primary-foreground shadow-glow"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {t}
+                    {count > 0 && (
+                      <span
+                        className={cn(
+                          "text-[11px]",
+                          archTab === t ? "text-primary-foreground/80" : "text-muted-foreground",
+                        )}
+                      >
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {projectsLoading ? (
+            // Mirrors a real project row (favicon + name + domain) so the list
+            // doesn't jump when it loads. Widths vary per row to feel natural.
             <div className="space-y-0.5">
-              {[0, 1].map((i) => (
+              {[0, 1, 2, 3].map((i) => (
                 <div
                   key={i}
                   className={cn(
                     "flex rounded-lg",
-                    rail ? "justify-center p-1" : "items-center gap-2.5 px-2.5 py-1.5",
+                    rail ? "justify-center p-1" : "items-center gap-3 py-2 pl-2.5 pr-2.5",
                   )}
+                  style={{ opacity: 1 - i * 0.15 }}
                 >
-                  <Skeleton className="h-7 w-7 rounded-md" />
+                  <Skeleton className="h-9 w-9 shrink-0 rounded-lg" />
                   {!rail && (
-                    <div className="flex-1 space-y-1.5">
-                      <Skeleton className="h-3 w-24" />
-                      <Skeleton className="h-2 w-16" />
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <Skeleton className="h-3.5 rounded-full" style={{ width: `${68 - (i % 3) * 12}%` }} />
+                      <Skeleton className="h-2.5 rounded-full" style={{ width: `${48 - (i % 2) * 10}%` }} />
                     </div>
                   )}
                 </div>
@@ -286,39 +346,70 @@ export function Sidebar({
               <p className="px-3 py-4 text-center text-xs text-muted-foreground">No campaigns yet.</p>
             ))
           ) : filteredProjects.length === 0 ? (
-            !rail && <p className="px-3 py-2 text-xs text-muted-foreground">No projects match your search.</p>
+            !rail && (
+              <p className="px-3 py-2 text-xs text-muted-foreground">
+                {q
+                  ? "No projects match your search."
+                  : archTab === "archived"
+                    ? "No archived campaigns."
+                    : "No active campaigns."}
+              </p>
+            )
           ) : (
             <div className="space-y-0.5">
               {filteredProjects.map((p) => {
                 const href = `/dashboard/projects/${p.slug}`;
                 const active = pathname === href || pathname.startsWith(`${href}/`) || pathname === `/dashboard/projects/${p.id}`;
+                const isArchived = !!p.archivedAt;
                 return (
-                  <Link
-                    key={p.id}
-                    href={href}
-                    title={rail ? p.name : undefined}
-                    onClick={onCloseMobile}
-                    className={cn(
-                      "flex rounded-lg transition-colors",
-                      rail ? "justify-center p-1" : "items-center gap-2.5 px-2.5 py-1.5",
-                      active ? "bg-secondary" : "hover:bg-secondary",
-                    )}
-                  >
-                    <SiteFavicon domain={p.domain} className="h-7 w-7" iconClassName="h-3.5 w-3.5" />
-                    {!rail && (
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className={cn(
-                            "block truncate text-sm",
-                            active ? "font-semibold text-foreground" : "font-medium text-foreground",
-                          )}
-                        >
-                          {p.name}
+                  <div key={p.id} className="group relative">
+                    <Link
+                      href={href}
+                      title={rail ? p.name : undefined}
+                      onClick={onCloseMobile}
+                      className={cn(
+                        "relative flex rounded-lg transition-colors",
+                        rail ? "justify-center p-1" : "items-center gap-3 py-2 pl-2.5 pr-2.5",
+                        !rail && canArchive && "group-hover:pr-9",
+                        active ? "bg-primary/10" : "hover:bg-secondary",
+                        isArchived && "opacity-70",
+                      )}
+                    >
+                      {active && !rail && (
+                        <span className="glow-pulse absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-primary shadow-glow" />
+                      )}
+                      <SiteFavicon domain={p.domain} className="h-9 w-9 shrink-0 transition-transform duration-200 group-hover:scale-105" iconClassName="h-[18px] w-[18px]" />
+                      {!rail && (
+                        <span className="min-w-0 flex-1">
+                          <span
+                            className={cn(
+                              "block truncate text-[15px]",
+                              active ? "font-semibold text-foreground" : "font-medium text-foreground",
+                            )}
+                          >
+                            {p.name}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">{p.domain}</span>
                         </span>
-                        <span className="block truncate text-[11px] text-muted-foreground">{p.domain}</span>
-                      </span>
+                      )}
+                    </Link>
+                    {/* Archive / restore — sits over the row, revealed on hover */}
+                    {!rail && canArchive && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void setArchived(p.id, !isArchived);
+                        }}
+                        title={isArchived ? "Restore campaign" : "Archive campaign"}
+                        aria-label={isArchived ? "Restore campaign" : "Archive campaign"}
+                        className="absolute right-1.5 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground opacity-0 shadow-sm transition-all hover:bg-card hover:text-primary group-hover:opacity-100"
+                      >
+                        {isArchived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+                      </button>
                     )}
-                  </Link>
+                  </div>
                 );
               })}
             </div>
@@ -406,7 +497,7 @@ export function Sidebar({
             "flex w-full items-center text-left transition-colors",
             rail
               ? "justify-center rounded-lg p-1 hover:bg-secondary"
-              : "gap-3 rounded-xl border border-border bg-secondary/40 p-2 hover:bg-secondary",
+              : "gap-3 rounded-xl border border-border bg-card p-2 shadow-soft hover:border-input hover:shadow-elevated",
           )}
         >
           <UserAvatar src={user?.avatarUrl} className="h-9 w-9" />
@@ -449,25 +540,29 @@ function NavItem({
   onNavigate?: () => void;
 }) {
   const base = cn(
-    "group flex items-center rounded-lg transition-colors",
-    rail ? "justify-center p-1" : "gap-2.5 px-2.5 py-1.5",
+    "group relative flex items-center rounded-lg transition-colors",
+    rail ? "justify-center p-1" : "gap-3 px-2.5 py-2",
+  );
+  // Vertical accent bar on the active row (like a raised tab indicator).
+  const indicator = active && !rail && (
+    <span className="glow-pulse absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-primary shadow-glow" />
   );
   const chip = (
     <span
       className={cn(
-        "grid h-7 w-7 shrink-0 place-items-center rounded-md transition-colors",
+        "grid h-9 w-9 shrink-0 place-items-center rounded-lg transition-all duration-200 group-hover:-translate-y-px group-hover:scale-105",
         active
-          ? "bg-primary text-primary-foreground shadow-sm"
-          : "border border-border bg-card text-muted-foreground group-hover:text-foreground",
+          ? "bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-glow group-hover:shadow-glow-lg"
+          : "border border-border bg-card text-muted-foreground shadow-sm group-hover:border-input group-hover:text-foreground group-hover:shadow-soft",
       )}
     >
-      <Icon className="h-4 w-4" />
+      <Icon className="h-[18px] w-[18px]" />
     </span>
   );
   const text = !rail && (
     <span
       className={cn(
-        "flex-1 truncate text-sm",
+        "flex-1 truncate text-[15px]",
         active ? "font-semibold text-foreground" : "font-medium text-foreground",
       )}
     >
@@ -478,6 +573,7 @@ function NavItem({
   if (soon) {
     return (
       <span className={cn(base, "cursor-default opacity-60")} title={rail ? label : undefined}>
+        {indicator}
         {chip}
         {text}
         {!rail && (
@@ -493,8 +589,9 @@ function NavItem({
       href={href}
       title={rail ? label : undefined}
       onClick={onNavigate}
-      className={cn(base, active ? "bg-secondary" : "hover:bg-secondary")}
+      className={cn(base, active ? "bg-primary/10" : "hover:bg-secondary")}
     >
+      {indicator}
       {chip}
       {text}
     </Link>

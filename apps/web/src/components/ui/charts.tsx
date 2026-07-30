@@ -115,7 +115,7 @@ export function TrendChart({
             );
           })}
         </defs>
-        <CartesianGrid vertical={false} stroke={token("border")} strokeDasharray="4 4" />
+        <CartesianGrid vertical={false} stroke={token("border")} strokeOpacity={0.35} />
         <XAxis dataKey={xKey} {...axisProps} tickFormatter={xTickFormatter} minTickGap={24} />
         <YAxis {...axisProps} width={44} domain={yDomain} allowDecimals={false} tickFormatter={(v) => compact(v)} />
         <Tooltip
@@ -135,6 +135,7 @@ export function TrendChart({
               fill={`url(#${gid[i]})`}
               dot={dots ? { r: 2.5, fill: c, strokeWidth: 0 } : false}
               activeDot={{ r: 4, strokeWidth: 0 }}
+              isAnimationActive={false}
             />
           );
         })}
@@ -212,6 +213,7 @@ export function DonutChart({
             outerRadius="88%"
             paddingAngle={2}
             strokeWidth={0}
+            isAnimationActive={false}
           >
             {data.map((_, i) => (
               <Cell key={i} fill={token(CHART_SERIES[i % CHART_SERIES.length])} />

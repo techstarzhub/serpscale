@@ -1,0 +1,24 @@
+# SerpScale
+
+> SerpScale is an all-in-one SEO platform — a daily rank tracker, technical site audit tool, backlink checker and keyword research tool in one dashboard. It's an affordable, faster SEMrush and Ahrefs alternative built for agencies and in-house teams, with white-label reporting, client portals and an AI SEO copilot. Plans start at $5/mo with a free trial.
+
+## SEO Tools
+- [Keyword Rank Tracker](https://serpscale.com/rank-tracker): Track daily keyword positions on Google across desktop, mobile and location. Local and enterprise rank tracking with visibility trends, rank deltas and Google Search Console sync.
+- [Keyword Research Tool](https://serpscale.com/keyword-research): Turn one seed keyword into thousands of ideas with real search volume, keyword difficulty and search intent. Free keyword finder for SEO.
+- [Backlink Checker](https://serpscale.com/backlink-checker): Check backlinks and referring domains for any site, flag toxic links, and run competitor backlink gap analysis.
+- [Site Audit Tool](https://serpscale.com/site-audit): Crawl every page, score site health, check Core Web Vitals and get a prioritized technical SEO audit report. Free website SEO checker.
+- [Features](https://serpscale.com/features): The full toolkit — rank tracker, site audit, backlink checker, keyword research, competitor analysis, AI content writer, AI visibility tracking, AI SEO copilot, white-label reports, team roles and Google integrations.
+
+## Pricing & Comparison
+- [Pricing](https://serpscale.com/pricing): Simple, transparent SEO software pricing from $5/mo. Pick your keyword volume and scale — free trial, no card required to start.
+- [SEMrush Alternative](https://serpscale.com/semrush-alternative): How SerpScale compares to SEMrush and Ahrefs — the same core SEO tools at a lower price. The best affordable SEMrush alternative.
+
+## Company
+- [About SerpScale](https://serpscale.com/about): The all-in-one SEO platform for agencies and in-house teams.
+- [Blog](https://serpscale.com/blog): Actionable SEO guides on rank tracking, site audits, backlink analysis, keyword research and white-label reporting.
+- [FAQ](https://serpscale.com/faq): Common questions about SerpScale's SEO platform, pricing and features.
+- [Contact](https://serpscale.com/contact): Book a demo or get support.
+
+## Legal
+- [Privacy Policy](https://serpscale.com/privacy)
+- [Terms & Conditions](https://serpscale.com/terms)

@@ -72,6 +72,9 @@ model User {
   clientId         String?
   client           Client?      @relation("ClientMembers", fields: [clientId], references: [id], onDelete: SetNull)
   clientOwner      Boolean      @default(false)
+  // For a client-portal member: true = sees ALL the client's campaigns; false =
+  // only the campaigns explicitly assigned to them (via assignedProjects).
+  clientAllCampaigns Boolean    @default(true)
 
   // Per-user notification preferences: { [type]: { inApp: bool, email: bool } }.
   notifPrefs       Json?
@@ -81,6 +84,9 @@ model User {
   // custom role) — e.g. approved via an access request.
   extraPermissions String[]     @default([])
   accessRequests   AccessRequest[] @relation("MyAccessRequests")
+
+  // Marketing blog articles authored by this user (super-admin CMS).
+  articles         Article[]    @relation("ArticleAuthor")
 
   @@index([orgId])
   @@index([clientId])
@@ -214,6 +220,14 @@ model Plan {
   //                   "rankChecksPerDay": 100, "seats": 2 }
   limits      Json
   features    Json?
+  // Keyword→price options for the pricing-page dropdown, authored by the super
+  // admin: [{ keywords: 250, priceCents: 3500 }, ...]. Empty/null = a fixed-price
+  // plan (no dropdown, e.g. Starter). The lowest tier is the plan's default price.
+  pricingTiers Json?
+
+  // Free-trial length in days for this plan (e.g. Starter = 7). 0/null = no trial.
+  // Editable by the super admin, so trials are configured, never hardcoded.
+  trialDays   Int?
 
   isActive    Boolean  @default(true)
   isPublic    Boolean  @default(true) // shown on pricing page
@@ -270,6 +284,23 @@ model PasswordReset {
   @@index([userId])
 }
 
+// One-time email codes for signup verification + login 2FA. The code is stored
+// hashed; `payload` carries pending signup data (name + password hash) so the
+// account is only created once the email is verified.
+model EmailOtp {
+  id        String   @id @default(cuid())
+  email     String
+  codeHash  String
+  purpose   String // SIGNUP | LOGIN
+  payload   Json?
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([email, purpose])
+}
+
 model RefreshToken {
   id        String    @id @default(cuid())
   userId    String
@@ -300,9 +331,21 @@ model Project {
   organization Organization? @relation(fields: [orgId], references: [id])
   name         String
   domain       String
+  // Which dashboards (project detail tabs) are active for THIS campaign. Empty =
+  // all tabs available. Chosen in the create-campaign wizard, editable later.
+  enabledTabs  String[]      @default([])
   createdById  String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+  // When set, the campaign is archived: hidden from the default sidebar list but
+  // still fully accessible under the "Archived" tab. Null = active.
+  archivedAt   DateTime?
+
+  // Public read-only share link. When shareKey is set, anyone with the link
+  // (/share/<shareKey>) can view this campaign's dashboards without logging in.
+  // Null = sharing disabled. Rotating/clearing the key instantly revokes access.
+  shareKey     String?       @unique
+  sharedAt     DateTime?
 
   crawls       Crawl[]
   serpKeywords SerpKeyword[]
@@ -418,6 +461,9 @@ model Client {
   phone        String?
   status       String        @default("ACTIVE") // ACTIVE | PAUSED
   type         String        @default("CLIENT")  // CLIENT | AGENCY (white-label reseller)
+  // When true, this client's owner can invite/manage their own portal team members
+  // (unlocks the "My team" area). Works for both CLIENT and AGENCY types.
+  allowTeam    Boolean       @default(false)
   notes        String?       @db.Text
   // For AGENCY clients: { agencyName, logoDataUrl, logoBg, email, whiteLabel }.
   branding     Json?
@@ -763,4 +809,70 @@ model SerpUsageLog {
   meta      Json?
   createdAt DateTime @default(now())
   @@index([orgId, createdAt])
+}
+
+
+// ---- Marketing Blog CMS (super-admin managed; the public marketing site reads it) ----
+
+enum ArticleStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model ArticleCategory {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique
+  articles  Article[] @relation("ArticleCategories")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Article {
+  id              String            @id @default(cuid())
+  title           String
+  slug            String            @unique
+  excerpt         String?
+  content         String            @db.Text // rich-text HTML
+  coverKey        String?           // R2 storage key for the featured image
+  status          ArticleStatus     @default(DRAFT)
+  metaTitle       String?
+  metaDescription String?
+  tags            String[]          @default([])
+  categories      ArticleCategory[] @relation("ArticleCategories")
+  authorId        String?
+  author          User?             @relation("ArticleAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  publishedAt     DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([status, publishedAt])
+}
+
+// ── Marketing site: public form submissions ──────────────────────────────────
+// Contact-form messages from the marketing website. Stored so the super admin
+// can review them in-app; a copy is also emailed to the platform admins.
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  company   String?
+  message   String   @db.Text
+  ip        String?
+  userAgent String?
+  handled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// Newsletter subscribers captured from the marketing footer form.
+model Subscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  source    String?  // where they subscribed from, e.g. "footer"
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }

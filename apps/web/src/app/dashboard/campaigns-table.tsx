@@ -592,12 +592,17 @@ export function CampaignsTable({
                 ))}
               </tr>
             ))}
-            {table.getRowModel().rows.length === 0 && (
-              <tr><td colSpan={columns.length} className="px-4 py-12 text-center text-sm text-muted-foreground">No campaigns match your filters.</td></tr>
-            )}
           </tbody>
         </table>
       </div>
+
+      {table.getRowModel().rows.length === 0 && (
+        <div className="grid place-items-center gap-2 py-16 text-center">
+          <Search className="h-8 w-8 text-muted-foreground/40" />
+          <p className="text-sm font-medium">No campaigns found</p>
+          <p className="text-xs text-muted-foreground">No campaigns match your current search or filter.</p>
+        </div>
+      )}
 
       {editRow && <RenameModal row={editRow} onClose={() => setEditRow(null)} onSaved={(name) => { setData((prev) => prev.map((r) => (r.id === editRow.id ? { ...r, name } : r))); refreshProjects(); setEditRow(null); }} />}
       {deleteRow && <DeleteModal row={deleteRow} onClose={() => setDeleteRow(null)} onDeleted={() => { setData((prev) => prev.filter((r) => r.id !== deleteRow.id)); refreshProjects(); setDeleteRow(null); }} />}

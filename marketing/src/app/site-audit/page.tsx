@@ -6,12 +6,13 @@ import { breadcrumb, faqPage, softwareApp } from "@/lib/schema";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "SEO Site Audit Tool — Free Website SEO Checker",
+  title: "Website SEO Checker — Free SEO Site Audit Tool",
   description:
     "SerpScale is a free site audit tool that crawls your website, scores site health, checks Core Web Vitals and delivers a prioritized technical SEO audit report.",
+  keywords: ["website SEO checker","site audit tool","SEO site audit","SEO audit tool","technical SEO audit","free SEO audit","free site audit","website audit tool","web site audit","site audit","on-page SEO checker","SEO checker","crawl website","core web vitals","broken link checker","site health score","duplicate content checker","meta tag checker","redirect chains","indexability","structured data check","page speed","SEO issues","website crawler","SEO audit report"],
   alternates: { canonical: "/site-audit" },
   openGraph: {
-    title: "SEO Site Audit Tool — Free Website SEO Checker | SerpScale",
+    title: "Website SEO Checker — Free SEO Site Audit Tool | SerpScale",
     description:
       "Crawl your website, get a site health score, check Core Web Vitals and fix technical SEO issues with SerpScale's free site audit tool.",
     url: "/site-audit",
@@ -25,7 +26,7 @@ const faqs = [
   },
   {
     q: "What does the site audit check?",
-    a: "Our SEO website checker tool runs a full-site crawl and inspects technical SEO and on-page SEO together. That includes broken links, redirect chains, indexing and crawl errors, duplicate or missing titles and meta descriptions, heading structure, canonicals, structured data and thin content — every issue delivered in one SEO audit report.",
+    a: "SerpScale runs a full-site crawl and inspects technical SEO and on-page SEO together, the way a thorough website SEO checker should. That includes broken links, redirect chains, indexing and crawl errors, duplicate or missing titles and meta descriptions, heading structure, canonicals, structured data and thin content — every issue delivered in one SEO audit report.",
   },
   {
     q: "How often should I audit my site?",
@@ -33,11 +34,11 @@ const faqs = [
   },
   {
     q: "Do you check Core Web Vitals?",
-    a: "Yes. This SEO auditing tool measures Core Web Vitals — LCP, INP and CLS — along with PageSpeed on real page loads. It shows which templates are slow and why, so your technical SEO audit turns performance data into specific, prioritized fixes rather than raw numbers.",
+    a: "Yes. SerpScale measures Core Web Vitals — LCP, INP and CLS — along with PageSpeed on real page loads. It shows which templates are slow and why, so your technical SEO audit turns performance data into specific, prioritized fixes rather than raw numbers.",
   },
   {
     q: "Is there a free site audit tool?",
-    a: "Yes. SerpScale includes a free site audit tool on the forever-free Starter plan, so you can crawl your website and get a site health score without a credit card. It is an affordable alternative to the SEMrush site audit, and you can upgrade any time for daily crawls and larger sites.",
+    a: "Yes. SerpScale includes a free site audit tool on the Starter plan's 7-day free trial, so you can crawl your website and get a site health score without a credit card. It is an affordable alternative to the SEMrush site audit, and you can upgrade any time for daily crawls and larger sites.",
   },
 ];
 
@@ -56,7 +57,6 @@ export default function Page() {
             description:
               "Free SEO site audit tool that crawls your website, scores site health, checks Core Web Vitals and delivers a prioritized technical SEO audit report.",
             url: "/site-audit",
-            rating: { value: "4.8", count: "180" },
           }),
         ]}
       />

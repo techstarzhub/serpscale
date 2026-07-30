@@ -6,7 +6,7 @@ import { breadcrumb } from "@/lib/schema";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Terms & Conditions — SerpScale",
+  title: "Terms & Conditions",
   description:
     "Read the SerpScale Terms & Conditions covering accounts, billing, acceptable use and your data on our all-in-one SEO platform.",
   alternates: { canonical: "/terms" },

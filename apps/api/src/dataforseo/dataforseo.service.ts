@@ -569,6 +569,94 @@ export class DataForSeoService {
       return null;
     }
   }
+
+  // ==========================================================================
+  // SERP — Standard (queue) mode. ~3x cheaper than live/advanced, but ASYNC:
+  // post tasks now, results are ready minutes later. Used for the BULK daily
+  // rank refresh; live mode stays for instant single checks (add / manual).
+  // ==========================================================================
+
+  /** Low-level JSON call that still tracks $ cost + budget, for GET/POST alike. */
+  private async rawJson(method: "GET" | "POST", path: string, body?: unknown): Promise<any | null> {
+    const auth = this.auth();
+    if (!auth) return null;
+    try {
+      const res = await fetch(`https://api.dataforseo.com${path}`, {
+        method,
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(60000),
+      });
+      const data: any = await res.json();
+      if (typeof data?.cost === "number" && data.cost > 0) {
+        this.spentToday += data.cost;
+        this.logger.log(`dataforseo ${path}: cost $${data.cost.toFixed(4)} · today ~$${this.spentToday.toFixed(3)}`);
+      }
+      if (data?.status_code !== 20000) {
+        this.logger.warn(`dataforseo ${path}: ${data?.status_code} ${data?.status_message}`);
+        return null;
+      }
+      return data;
+    } catch (e) {
+      this.logger.warn(`dataforseo ${path} failed: ${String(e).slice(0, 80)}`);
+      return null;
+    }
+  }
+
+  /** Post a batch of Standard SERP tasks (tag carries our keyword id so results
+   *  can be mapped back). Returns how many DataForSEO accepted. Cost charged here. */
+  async serpTaskPostBatch(items: { keyword: string; country?: string; language?: string; device?: string; tag: string }[]): Promise<number> {
+    if (!this.auth() || items.length === 0) return 0;
+    if (!this.budgetOk()) {
+      this.logger.warn(`dataforseo: daily budget reached — skipping serp task_post (${items.length} tasks)`);
+      return 0;
+    }
+    const body = items.map((t) =>
+      compact({
+        keyword: t.keyword,
+        location_code: locationCode(t.country),
+        language_code: t.language ?? "en",
+        device: t.device === "mobile" ? "mobile" : "desktop",
+        depth: 100,
+        tag: t.tag,
+      }),
+    );
+    const data = await this.rawJson("POST", "/v3/serp/google/organic/task_post", body);
+    const tasks: any[] = Array.isArray(data?.tasks) ? data.tasks : [];
+    return tasks.filter((t) => t?.status_code === 20100 || t?.id).length;
+  }
+
+  /** IDs of Standard SERP tasks that are finished and ready to fetch. */
+  async serpTasksReady(): Promise<string[]> {
+    const data = await this.rawJson("GET", "/v3/serp/google/organic/tasks_ready");
+    const ids: string[] = [];
+    for (const t of data?.tasks ?? []) {
+      for (const r of t?.result ?? []) if (r?.id) ids.push(String(r.id));
+    }
+    return ids;
+  }
+
+  /** Fetch one finished Standard SERP task → its organic items + our tag. */
+  async serpTaskResult(id: string): Promise<{ items: any[]; tag: string | null } | null> {
+    const data = await this.rawJson("GET", `/v3/serp/google/organic/task_get/advanced/${id}`);
+    const task = data?.tasks?.[0];
+    if (!task) return null;
+    const result = task.result?.[0];
+    return { items: result?.items ?? [], tag: task.data?.tag ?? result?.tag ?? null };
+  }
+
+  /** Find a domain's organic position within a SERP items array (top 100). */
+  positionInSerp(items: any[], domain: string): { position: number | null; url: string | null } {
+    const target = cleanDomain(domain);
+    for (const it of items ?? []) {
+      if (it.type !== "organic") continue;
+      const d = cleanDomain(String(it.domain ?? it.url ?? ""));
+      if (d === target || d.endsWith(`.${target}`) || target.endsWith(`.${d}`)) {
+        return { position: it.rank_absolute ?? it.rank_group ?? null, url: it.url ?? null };
+      }
+    }
+    return { position: null, url: null };
+  }
 }
 
 function cleanDomain(d: string): string {

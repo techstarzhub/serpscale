@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "Backlink Checker — Check Backlinks & Referring Domains",
   description:
     "Free backlink checker to analyze any backlink profile. Check backlinks, referring domains, anchor text and toxic links, and benchmark competitors.",
+  keywords: ["backlink checker","check backlinks","free backlink checker","backlink checker tool","website backlink checker","ahrefs backlink checker","google backlink checker","competitor backlink checker","backlink analysis","referring domains","anchor text","toxic backlinks","dofollow backlinks","nofollow links","backlink profile","new and lost backlinks","link building","domain authority","backlink gap","spam score","referring IPs","backlink monitoring","check website backlinks","backlink audit"],
   alternates: { canonical: "/backlink-checker" },
   openGraph: {
     title: "Backlink Checker — Analyze Any Backlink Profile",
@@ -56,7 +57,6 @@ export default function Page() {
             description:
               "Backlink checker to analyze any backlink profile — check backlinks, referring domains, anchor text and toxic links, and benchmark competitors.",
             url: "/backlink-checker",
-            rating: { value: "4.8", count: "180" },
           }),
         ]}
       />

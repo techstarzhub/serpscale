@@ -11,6 +11,7 @@ export const metadata: Metadata = {
   title: "SEO Blog — Guides on Rank Tracking, Audits & Backlinks",
   description:
     "Actionable SEO guides from SerpScale: keyword rank tracking, technical site audits, backlink analysis, keyword research and white-label reporting for agencies.",
+  keywords: ["SEO blog","SEO guides","SEO tips","rank tracking guide","keyword research guide","site audit guide","backlink analysis","technical SEO","SEO for agencies","white label SEO","SEO strategy","how to improve SEO","SEMrush alternative","SEO tutorials","content optimization","SEO best practices"],
   alternates: { canonical: "/blog" },
   openGraph: { title: "SerpScale SEO Blog", description: "Actionable SEO guides & tips.", url: "/blog" },
 };

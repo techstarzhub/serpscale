@@ -5,9 +5,11 @@ import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { RequirePermissions } from "../auth/decorators/require-permissions.decorator";
 import { PERMISSIONS as P } from "../auth/permissions";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
+import { FeaturesGuard } from "../entitlements/features.guard";
+import { RequireFeature } from "../entitlements/require-feature.decorator";
 import { ContentService } from "./content.service";
 
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, FeaturesGuard)
 @Controller("projects")
 export class ContentController {
   constructor(private readonly content: ContentService) {}
@@ -90,24 +92,28 @@ export class ContentController {
   // ---- Blog drafts ----
   @Get(":id/blogs")
   @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("content")
   listBlogs(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.content.listBlogs(user, id);
   }
 
   @Get(":id/blogs/:bid")
   @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("content")
   getBlog(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("bid") bid: string) {
     return this.content.getBlog(user, id, bid);
   }
 
   @Post(":id/blogs")
   @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("content")
   saveBlog(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { title?: string; content?: string; keywords?: string[] }) {
     return this.content.saveBlog(user, id, dto);
   }
 
   @Delete(":id/blogs/:bid")
   @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("content")
   removeBlog(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("bid") bid: string) {
     return this.content.removeBlog(user, id, bid);
   }
@@ -115,6 +121,7 @@ export class ContentController {
   // Generate a blog from selected keywords — streamed token-by-token over SSE.
   @Post(":id/blog/generate")
   @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("content")
   async generate(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,

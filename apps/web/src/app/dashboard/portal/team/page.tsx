@@ -9,7 +9,7 @@ export default function PortalTeamPage() {
   const { user, loading } = useCurrentUser();
 
   if (loading) return null;
-  if (!user || user.role !== "CLIENT" || !user.clientOwner || !user.clientId) {
+  if (!user || user.role !== "CLIENT" || !user.clientOwner || !user.clientId || !user.clientCanManageTeam) {
     return (
       <Card>
         <CardContent className="py-10 text-center text-sm text-muted-foreground">

@@ -10,8 +10,15 @@ export interface Project {
   createdAt: string;
   orgId: string | null;
   createdById: string | null;
+  // Dashboards (project detail tabs) active for this campaign. Empty = all tabs.
+  enabledTabs?: string[];
+  // ISO timestamp when the campaign was archived, or null when active.
+  archivedAt?: string | null;
   // Readable URL slug derived from the name (e.g. "Tech Starz Hub" -> "tech-starz-hub").
   slug: string;
+  // Public read-only share key. Set once "Generate view key" is used; null/absent
+  // means sharing is off. The public link is /share/<shareKey>.
+  shareKey?: string | null;
 }
 
 // Turn a project name into a URL-safe slug.
@@ -44,8 +51,15 @@ function withSlugs(list: Omit<Project, "slug">[]): Project[] {
 interface ProjectsContextValue {
   projects: Project[];
   loading: boolean;
-  addProject: (input: { name: string; domain: string }) => Promise<Project>;
+  addProject: (input: { name: string; domain: string; enabledTabs?: string[] }) => Promise<Project>;
+  // Edit an existing campaign (name / domain / dashboards). Re-slugs the list.
+  updateProject: (id: string, input: { name?: string; domain?: string; enabledTabs?: string[] }) => Promise<Project>;
   removeProject: (id: string) => Promise<void>;
+  // Generate (once) or revoke the campaign's public read-only view key.
+  generateShareKey: (id: string) => Promise<string>;
+  revokeShareKey: (id: string) => Promise<void>;
+  // Archive (or restore) a campaign — updates the local list optimistically.
+  setArchived: (id: string, archived: boolean) => Promise<void>;
   // Resolves by either the readable slug or the raw id (old bookmarked links still work).
   getProject: (idOrSlug: string) => Project | undefined;
   refresh: () => Promise<void>;
@@ -69,7 +83,7 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
     refresh().finally(() => setLoading(false));
   }, [refresh]);
 
-  const addProject = useCallback(async (input: { name: string; domain: string }) => {
+  const addProject = useCallback(async (input: { name: string; domain: string; enabledTabs?: string[] }) => {
     const created = await api.post<Omit<Project, "slug">>("/projects", input);
     let withSlug!: Project;
     setProjects((prev) => {
@@ -80,9 +94,43 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
     return withSlug ?? withSlugs([created])[0];
   }, []);
 
+  const updateProject = useCallback(
+    async (id: string, input: { name?: string; domain?: string; enabledTabs?: string[] }) => {
+      const updated = await api.patch<Omit<Project, "slug">>(`/projects/${id}`, input);
+      let withSlug!: Project;
+      setProjects((prev) => {
+        // Swap in the server's copy, then re-slug the whole list (the name may
+        // have changed, which can affect slug collisions across projects).
+        const next = withSlugs(prev.map((p) => (p.id === id ? { ...p, ...updated } : p)));
+        withSlug = next.find((p) => p.id === id)!;
+        return next;
+      });
+      return withSlug ?? withSlugs([updated])[0];
+    },
+    [],
+  );
+
   const removeProject = useCallback(async (id: string) => {
     await api.del(`/projects/${id}`);
     setProjects((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
+  const generateShareKey = useCallback(async (id: string) => {
+    const { shareKey } = await api.post<{ shareKey: string }>(`/projects/${id}/share`);
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, shareKey } : p)));
+    return shareKey;
+  }, []);
+
+  const revokeShareKey = useCallback(async (id: string) => {
+    await api.del(`/projects/${id}/share`);
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, shareKey: null } : p)));
+  }, []);
+
+  const setArchived = useCallback(async (id: string, archived: boolean) => {
+    // Optimistic: flip the flag now, reconcile with the server's timestamp after.
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, archivedAt: archived ? new Date().toISOString() : null } : p)));
+    const updated = await api.patch<{ archivedAt: string | null }>(`/projects/${id}/archive`, { archived });
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, archivedAt: updated.archivedAt } : p)));
   }, []);
 
   const getProject = useCallback(
@@ -92,7 +140,7 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <ProjectsContext.Provider
-      value={{ projects, loading, addProject, removeProject, getProject, refresh }}
+      value={{ projects, loading, addProject, updateProject, removeProject, generateShareKey, revokeShareKey, setArchived, getProject, refresh }}
     >
       {children}
     </ProjectsContext.Provider>

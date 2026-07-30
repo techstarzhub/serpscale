@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   UnauthorizedException,
@@ -10,6 +11,7 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { EmailService } from "../email/email.service";
+import { OtpService } from "./otp.service";
 
 interface Tokens {
   accessToken: string;
@@ -23,57 +25,93 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly storage: StorageService,
     private readonly email: EmailService,
+    private readonly otp: OtpService,
   ) {}
 
-  // New self-serve customer: creates their own organization (tenant) and makes
-  // them its ADMIN, on the default (free) plan.
-  async signup(input: { name?: string; email: string; password: string }): Promise<Tokens> {
+  // ---- Signup: email-OTP verified. The account is only created once the code
+  // is confirmed, so unverified emails never become real accounts. ----
+  async signup(input: { name?: string; email: string; password: string; plan?: string; keywords?: number; trial?: boolean }): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
     const email = input.email.toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new ConflictException("An account with this email already exists.");
-
-    const plan = await this.prisma.plan.findUnique({ where: { slug: "free" } });
-
-    const org = await this.prisma.organization.create({
-      data: {
-        name: input.name ? `${input.name}'s Workspace` : "My Workspace",
-        slug: await this.uniqueSlug(input.name || email.split("@")[0]),
-      },
-    });
-
-    if (plan) {
-      await this.prisma.subscription.create({
-        data: { orgId: org.id, planId: plan.id, status: SubscriptionStatus.TRIALING },
-      });
+    const passwordHash = await bcrypt.hash(input.password, 12);
+    const intent = { name: input.name ?? null, email, passwordHash, plan: input.plan ?? null, keywords: input.keywords ?? null, trial: input.trial ?? false };
+    // Only gate on OTP when we can actually deliver the code. Until the platform
+    // SMTP is configured, create the account directly so no one is locked out.
+    if (!(await this.email.platformReady())) {
+      const user = await this.createAccount(intent);
+      return { tokens: await this.issueTokens(user) };
     }
-
-    const user = await this.prisma.user.create({
-      data: {
-        email,
-        name: input.name,
-        passwordHash: await bcrypt.hash(input.password, 12),
-        role: Role.ADMIN,
-        orgId: org.id,
-      },
-    });
-
-    return this.issueTokens(user);
+    return this.otp.issue(email, "SIGNUP", intent);
   }
 
-  async login(input: { email: string; password: string }): Promise<Tokens> {
+  // ---- Login: password first, then an email OTP (2FA) when SMTP is set up. ----
+  async login(input: { email: string; password: string }): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
     const email = input.email.toLowerCase();
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user || !user.isActive) throw new UnauthorizedException("Invalid email or password.");
-
     const ok = await bcrypt.compare(input.password, user.passwordHash);
     if (!ok) throw new UnauthorizedException("Invalid email or password.");
+    if (!(await this.email.platformReady())) {
+      await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+      return { tokens: await this.issueTokens(user) };
+    }
+    return this.otp.issue(email, "LOGIN", null);
+  }
 
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
-
+  // ---- Verify the emailed code and complete signup or login. ----
+  async verifyOtp(purpose: "SIGNUP" | "LOGIN", email: string, code: string): Promise<Tokens> {
+    const payload = await this.otp.verify(email, purpose, code);
+    if (purpose === "SIGNUP") {
+      const p = payload ?? {};
+      if (!p.email || !p.passwordHash) throw new BadRequestException("Signup session expired. Please sign up again.");
+      // Guard against the email being taken during verification.
+      if (await this.prisma.user.findUnique({ where: { email: p.email } })) {
+        throw new ConflictException("An account with this email already exists.");
+      }
+      const user = await this.createAccount(p);
+      return this.issueTokens(user);
+    }
+    const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    if (!user || !user.isActive) throw new UnauthorizedException("Account not found.");
+    await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     return this.issueTokens(user);
+  }
+
+  async resendOtp(purpose: "SIGNUP" | "LOGIN", email: string) {
+    return this.otp.resend(email, purpose);
+  }
+
+  // Create a tenant + its ADMIN. Trial (or organic) signups start on the default
+  // trial plan; a paid "Get started" signup gets NO subscription yet — the client
+  // sends them to checkout, and access stays locked until they subscribe.
+  private async createAccount(p: { name: string | null; email: string; passwordHash: string; plan?: string | null; trial?: boolean }) {
+    const org = await this.prisma.organization.create({
+      data: { name: p.name ? `${p.name}'s Workspace` : "My Workspace", slug: await this.uniqueSlug(p.name || p.email.split("@")[0]) },
+    });
+    // A trial signup, or an organic signup with no chosen plan, starts on the
+    // default trial plan. A paid plan choice defers to checkout (no subscription).
+    const wantsTrial = p.trial === true || !p.plan;
+    if (wantsTrial) {
+      const signup = (await this.prisma.platformSetting.findUnique({ where: { key: "signup" } }))?.value as any;
+      const slug = signup?.defaultPlanSlug || "starter";
+      const plan = await this.prisma.plan.findFirst({ where: { slug, isActive: true } });
+      if (plan) {
+        const days = Number(plan.trialDays) || 0;
+        await this.prisma.subscription.create({
+          data: {
+            orgId: org.id,
+            planId: plan.id,
+            status: SubscriptionStatus.TRIALING,
+            currentPeriodEnd: days > 0 ? new Date(Date.now() + days * 24 * 3600 * 1000) : null,
+            gateway: "trial",
+          },
+        });
+      }
+    }
+    return this.prisma.user.create({
+      data: { email: p.email, name: p.name, passwordHash: p.passwordHash, role: Role.ADMIN, orgId: org.id },
+    });
   }
 
   async forgotPassword(email: string) {
@@ -87,15 +125,32 @@ export class AuthService {
         data: { userId: user.id, tokenHash, expiresAt: new Date(Date.now() + 1000 * 60 * 30) },
       });
       const link = `${process.env.WEB_ORIGIN || "http://localhost:3000"}/reset-password?token=${raw}`;
-      const sent = await this.email.send(
+      const sent = await this.email.sendBranded(
         user.email,
         "Reset your password",
-        this.email.wrap("Reset your password", "We received a request to reset your password. This link expires in 30 minutes.", { label: "Reset password", url: link }),
-        user.orgId, // agency's own SMTP when configured
+        "Reset your password",
+        "We received a request to reset your password. This link expires in 30 minutes.",
+        { label: "Reset password", url: link },
+        user.orgId, // agency's own SMTP + branding when configured
       );
       // Fallback for local dev when SMTP isn't configured.
       if (!sent) console.log(`[auth] password reset link for ${user.email}: ${link}`);
     }
+    return { ok: true };
+  }
+
+  // Consume a password-reset token and set the new password.
+  async resetPassword(token: string, password: string) {
+    if (!token || !password || password.length < 8) throw new BadRequestException("A valid token and an 8+ character password are required.");
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const reset = await this.prisma.passwordReset.findUnique({ where: { tokenHash } });
+    if (!reset || reset.usedAt || reset.expiresAt < new Date()) {
+      throw new BadRequestException("This reset link is invalid or has expired. Please request a new one.");
+    }
+    await this.prisma.user.update({ where: { id: reset.userId }, data: { passwordHash: await bcrypt.hash(password, 12) } });
+    await this.prisma.passwordReset.update({ where: { id: reset.id }, data: { usedAt: new Date() } });
+    // Invalidate existing sessions after a reset.
+    await this.prisma.refreshToken.deleteMany({ where: { userId: reset.userId } });
     return { ok: true };
   }
 
@@ -141,11 +196,15 @@ export class AuthService {
         clientId: true,
         clientOwner: true,
         organization: { select: { name: true, branding: true } },
-        client: { select: { name: true, type: true, branding: true } },
+        client: { select: { name: true, type: true, branding: true, allowTeam: true } },
       },
     });
     if (!user) return null;
     const { avatarKey, organization, client, ...rest } = user;
+    // A client-portal owner can manage their team only when the agency enabled it.
+    const clientCanManageTeam = user.role === "CLIENT" && !!user.clientOwner && !!client?.allowTeam;
+    // An agency-type client owner can edit their own white-label branding.
+    const isAgencyClient = user.role === "CLIENT" && !!user.clientOwner && client?.type === "AGENCY";
     // White-label: the agency's own name + logo (set by the org admin) override
     // the platform brand in the sidebar. For a client-portal user whose client is
     // a white-label sub-agency, THAT sub-agency's branding takes precedence, so
@@ -168,6 +227,8 @@ export class AuthService {
       ...rest,
       avatarUrl: avatarKey ? await this.storage.signedUrl(avatarKey) : null,
       branding,
+      clientCanManageTeam,
+      isAgencyClient,
     };
   }
 

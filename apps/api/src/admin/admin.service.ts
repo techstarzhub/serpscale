@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { withFeatureLabels } from "../entitlements/entitlements.catalog";
 
 const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
@@ -26,8 +27,23 @@ export class AdminService {
   }
 
   // ---- Plans (dynamic, super-admin authored) ----
-  listPlans() {
-    return this.prisma.plan.findMany({ orderBy: { sortOrder: "asc" }, include: { _count: { select: { subscriptions: true } } } });
+  async listPlans() {
+    const plans = await this.prisma.plan.findMany({ orderBy: { sortOrder: "asc" }, include: { _count: { select: { subscriptions: true } } } });
+    return plans.map((p) => withFeatureLabels(p));
+  }
+
+  // Public, unauthenticated: the active/public plans rendered on the marketing
+  // pricing page (name, price, keyword tiers, features — no internal fields).
+  async publicPlans() {
+    const plans = await this.prisma.plan.findMany({
+      where: { isActive: true, isPublic: true },
+      orderBy: { sortOrder: "asc" },
+      select: {
+        id: true, name: true, slug: true, priceCents: true, currency: true,
+        interval: true, limits: true, features: true, pricingTiers: true, trialDays: true, sortOrder: true,
+      },
+    });
+    return plans.map((p) => withFeatureLabels(p));
   }
 
   async createPlan(dto: any) {
@@ -43,6 +59,8 @@ export class AdminService {
         interval: dto.interval === "year" ? "year" : "month",
         limits: dto.limits ?? {},
         features: dto.features ?? undefined,
+        pricingTiers: dto.pricingTiers ?? undefined,
+        trialDays: dto.trialDays != null ? Number(dto.trialDays) : null,
         isActive: dto.isActive ?? true,
         isPublic: dto.isPublic ?? true,
         sortOrder: Number(dto.sortOrder) || 0,
@@ -62,6 +80,8 @@ export class AdminService {
         interval: dto.interval ? (dto.interval === "year" ? "year" : "month") : undefined,
         limits: dto.limits ?? undefined,
         features: dto.features ?? undefined,
+        pricingTiers: dto.pricingTiers ?? undefined,
+        trialDays: dto.trialDays != null ? Number(dto.trialDays) : undefined,
         isActive: dto.isActive ?? undefined,
         isPublic: dto.isPublic ?? undefined,
         sortOrder: dto.sortOrder != null ? Number(dto.sortOrder) : undefined,
@@ -100,12 +120,55 @@ export class AdminService {
       users: (o as any)._count.users,
       projects: (o as any)._count.projects,
       plan: o.subscription?.plan?.name ?? null,
+      planId: o.subscription?.planId ?? null,
       status: o.subscription?.status ?? null,
     }));
   }
 
   setOrgActive(id: string, isActive: boolean) {
     return this.prisma.organization.update({ where: { id }, data: { isActive }, select: { id: true, isActive: true } });
+  }
+
+  /** Admin-driven org update: suspend/activate and/or directly assign a plan
+   *  (no payment) by upserting the org's subscription. Passing planId "" | null
+   *  clears the subscription. This is how the super admin hands any plan to any
+   *  org so that plan's features flow to its users via /auth/me entitlements. */
+  async updateOrg(
+    id: string,
+    dto: { isActive?: boolean; planId?: string | null; status?: string; limitOverrides?: Record<string, unknown> },
+  ) {
+    if (typeof dto.isActive === "boolean") {
+      await this.prisma.organization.update({ where: { id }, data: { isActive: dto.isActive } });
+    }
+    if (dto.planId !== undefined) {
+      if (!dto.planId) {
+        // Clear any subscription (back to no plan).
+        await this.prisma.subscription.deleteMany({ where: { orgId: id } });
+      } else {
+        const plan = await this.prisma.plan.findUnique({ where: { id: dto.planId } });
+        if (!plan) throw new BadRequestException("Unknown plan");
+        const status = (dto.status as any) || "ACTIVE";
+        const limitOverrides = (dto.limitOverrides as any) ?? undefined;
+        const existing = await this.prisma.subscription.findUnique({ where: { orgId: id } });
+        await this.prisma.subscription.upsert({
+          where: { orgId: id },
+          create: { orgId: id, planId: plan.id, status, gateway: "manual", limitOverrides },
+          update: { planId: plan.id, status, ...(limitOverrides !== undefined ? { limitOverrides } : {}) },
+        });
+        // Record a manual billing event when the plan actually changes, so it
+        // shows in the org's payment history with a downloadable invoice.
+        if (existing?.planId !== plan.id) {
+          await this.prisma.transaction.create({
+            data: { orgId: id, planId: plan.id, amountCents: plan.priceCents, currency: plan.currency, status: "succeeded", gateway: "manual" },
+          });
+        }
+      }
+    } else if (dto.status) {
+      // Restore / suspend access without changing the plan — this is how the
+      // admin "clears" a past-due account and turns access back on.
+      await this.prisma.subscription.updateMany({ where: { orgId: id }, data: { status: dto.status as any } });
+    }
+    return { ok: true };
   }
 
   // ---- Users (across all tenants) ----
@@ -158,6 +221,47 @@ export class AdminService {
   async getSetting(key: string) {
     const s = await this.prisma.platformSetting.findUnique({ where: { key } });
     return s?.value ?? null;
+  }
+
+  // Secret credential fields — never sent back to the browser, and preserved on
+  // save when submitted blank (so editing other fields doesn't wipe them).
+  private static readonly SECRET_RE = /secret|password|^pass$/i;
+  private static deepMask(v: any): any {
+    if (Array.isArray(v)) return v.map((x) => AdminService.deepMask(x));
+    if (v && typeof v === "object") {
+      const out: any = {};
+      for (const [k, val] of Object.entries(v)) {
+        out[k] = AdminService.SECRET_RE.test(k) ? (val ? "__SET__" : "") : AdminService.deepMask(val);
+      }
+      return out;
+    }
+    return v;
+  }
+  private static deepMerge(incoming: any, existing: any): any {
+    if (incoming && typeof incoming === "object" && !Array.isArray(incoming)) {
+      const out: any = {};
+      for (const [k, val] of Object.entries(incoming)) {
+        if (AdminService.SECRET_RE.test(k)) {
+          // Blank or the "__SET__" placeholder → keep the stored secret.
+          out[k] = val === "" || val == null || val === "__SET__" ? existing?.[k] ?? "" : val;
+        } else {
+          out[k] = AdminService.deepMerge(val, existing?.[k]);
+        }
+      }
+      return out;
+    }
+    return incoming;
+  }
+
+  /** Read a settings blob with secret fields masked (never leaves the server). */
+  async getSettingSafe(key: string) {
+    return AdminService.deepMask(await this.getSetting(key));
+  }
+
+  /** Save a settings blob, preserving any secret left blank in the submission. */
+  async setSettingMerged(key: string, dto: unknown) {
+    const merged = AdminService.deepMerge(dto, await this.getSetting(key));
+    return this.setSetting(key, merged);
   }
 
   async setSetting(key: string, value: unknown) {

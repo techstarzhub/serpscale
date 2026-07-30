@@ -6,25 +6,34 @@ import { CheckCircle2, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { useCurrentUser } from "@/components/providers/user-provider";
 
 export default function BillingSuccessPage() {
   const [active, setActive] = useState(false);
   const [tries, setTries] = useState(0);
+  const { refresh } = useCurrentUser();
 
   useEffect(() => {
     let alive = true;
     let n = 0;
+    // Once the payment is confirmed, refresh the global user/entitlements so the
+    // dashboard doesn't briefly show the "Subscribe to get started" lock before
+    // a manual reload picks up the new active plan.
+    const activate = async () => { await refresh().catch(() => {}); if (alive) setActive(true); };
     const poll = async () => {
       try {
+        // Fallback for when webhooks aren't configured yet: verify + activate.
+        const c = await api.post<{ active: boolean }>("/billing/confirm").catch(() => null);
+        if (alive && c?.active) { await activate(); return; }
         const sub = await api.get<{ status: string } | null>("/billing/subscription");
-        if (alive && sub?.status === "ACTIVE") { setActive(true); return; }
+        if (alive && sub?.status === "ACTIVE") { await activate(); return; }
       } catch { /* keep polling */ }
       n += 1;
       if (alive && n < 12) { setTries(n); setTimeout(poll, 2500); }
     };
     poll();
     return () => { alive = false; };
-  }, []);
+  }, [refresh]);
 
   return (
     <div className="mx-auto max-w-md">

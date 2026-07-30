@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Plus, Loader2, Contact, X, Trash2, Check, Upload, Building2, Search, Send } from "lucide-react";
+import { Plus, Loader2, Contact, X, Trash2, Check, Upload, Building2, Search, Send, KeyRound, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
-import { useCan } from "@/components/providers/user-provider";
+import { useCan, useFeature } from "@/components/providers/user-provider";
 import { useProjects } from "@/components/providers/projects-provider";
 import { ClientMembers } from "@/components/clients/client-members";
+import { LockedFeature } from "@/components/ui/locked-feature";
 
 interface Client {
   id: string;
@@ -19,6 +20,7 @@ interface Client {
   phone: string | null;
   status: string;
   type: string;
+  allowTeam: boolean;
   notes: string | null;
   branding: any;
   _count: { projects: number; members: number };
@@ -31,6 +33,16 @@ const field = "w-full rounded-lg border border-border bg-background px-3 py-2 te
 const lbl = "mb-1 block text-xs font-medium text-muted-foreground";
 
 export default function ClientsPage() {
+  const hasFeature = useFeature();
+  // Client dashboards are an agency capability. The page stays reachable but
+  // shows an upgrade prompt on plans that don't include it.
+  if (!hasFeature("client_dashboards")) {
+    return <LockedFeature title="Client dashboards" description="Give each client their own branded portal and reports. Upgrade to an agency plan to unlock." />;
+  }
+  return <ClientsInner />;
+}
+
+function ClientsInner() {
   const can = useCan();
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,12 +86,9 @@ export default function ClientsPage() {
       )}
 
       {loading ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <Card key={i}>
-              <CardContent className="h-28 animate-pulse p-5" />
-            </Card>
-          ))}
+        <div className="overflow-hidden rounded-xl border border-border">
+          <div className="h-11 bg-muted" />
+          {[0, 1, 2].map((i) => <div key={i} className="h-14 animate-pulse border-t border-border bg-card" />)}
         </div>
       ) : clients.length === 0 ? (
         <Card>
@@ -99,29 +108,75 @@ export default function ClientsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((c) => (
-            <button key={c.id} onClick={() => setOpen(c.id)} className="text-left">
-              <Card className="h-full transition-colors hover:border-ring/40">
-                <CardContent className="p-5">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                      {c.type === "AGENCY" ? <Building2 className="h-5 w-5" /> : <Contact className="h-5 w-5" />}
-                    </span>
-                    {c.type === "AGENCY" && <Badge variant="primary">Agency</Badge>}
-                  </div>
-                  <div className="mt-3 truncate font-semibold">{c.name}</div>
-                  {c.company && <div className="truncate text-sm text-muted-foreground">{c.company}</div>}
-                  <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
-                    <span>{c._count.projects} campaigns</span>
-                    {c.type === "AGENCY" && <span>{c._count.members} members</span>}
-                    {c.status === "PAUSED" && <Badge className="bg-muted text-muted-foreground">Paused</Badge>}
-                  </div>
-                </CardContent>
-              </Card>
-            </button>
-          ))}
-          {filtered.length === 0 && <p className="text-sm text-muted-foreground">No clients match your search.</p>}
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <th className="px-4 py-3">Client</th>
+                  <th className="px-4 py-3">Type</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 text-right">Campaigns</th>
+                  <th className="px-4 py-3 text-right">Members</th>
+                  <th className="px-4 py-3">Team</th>
+                  <th className="px-4 py-3">Contact</th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((c) => (
+                  <tr key={c.id} onClick={() => setOpen(c.id)} className="group cursor-pointer border-b border-border/50 transition-colors last:border-0 hover:bg-secondary/40">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        {c.branding?.logoDataUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={c.branding.logoDataUrl} alt={c.name} className="h-9 w-9 shrink-0 rounded-lg object-contain" style={c.branding.logoBg ? { backgroundColor: c.branding.logoBg } : undefined} />
+                        ) : (
+                          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                            {c.type === "AGENCY" ? <Building2 className="h-4 w-4" /> : <Contact className="h-4 w-4" />}
+                          </span>
+                        )}
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold group-hover:text-primary">
+                            {c.type === "AGENCY" && c.branding?.agencyName ? c.branding.agencyName : c.name}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {c.type === "AGENCY" && c.branding?.agencyName ? c.name : c.company || "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant={c.type === "AGENCY" ? "primary" : "outline"}>{c.type === "AGENCY" ? "Agency" : "Client"}</Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium", c.status === "PAUSED" ? "text-muted-foreground" : "text-chart-2")}>
+                        <span className={cn("h-1.5 w-1.5 rounded-full", c.status === "PAUSED" ? "bg-muted-foreground/40" : "bg-chart-2")} />
+                        {c.status === "PAUSED" ? "Paused" : "Active"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">{c._count.projects}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{c._count.members}</td>
+                    <td className="px-4 py-3">
+                      {c.allowTeam
+                        ? <span className="inline-flex items-center gap-1 rounded-md bg-chart-2/15 px-1.5 py-0.5 text-[10px] font-semibold text-chart-2">Enabled</span>
+                        : <span className="text-xs text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="truncate text-xs text-muted-foreground">{c.email || "—"}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">Manage →</span>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">No clients match your search.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="border-t border-border px-4 py-2.5 text-xs text-muted-foreground">{filtered.length} of {clients.length} clients</div>
         </div>
       )}
 
@@ -146,17 +201,19 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
 function CreateModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState({ name: "", company: "", email: "", phone: "", notes: "", password: "" });
   const [sendInvite, setSendInvite] = useState(true);
+  const [allowTeam, setAllowTeam] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const emailOk = /\S+@\S+\.\S+/.test(f.email.trim());
-  const ready = !!f.name.trim() && emailOk && f.password.trim().length >= 6;
+  const pwOk = !f.password.trim() || f.password.trim().length >= 6;
+  const ready = !!f.name.trim() && emailOk && pwOk;
 
   async function save() {
     setSaving(true);
     setErr(null);
     try {
-      await api.post("/clients", { ...f, sendInvite });
+      await api.post("/clients", { ...f, sendInvite, allowTeam });
       onSaved();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not create client.");
@@ -195,14 +252,25 @@ function CreateModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
                 <input type="email" className={field} value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="client@company.com" />
               </div>
               <div>
-                <label className={lbl}>Password</label>
-                <input type="text" className={field} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} placeholder="min 6 characters" />
+                <label className={lbl}>Password (optional)</label>
+                <input type="text" className={field} value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} placeholder="blank = auto-generate & email" />
               </div>
             </div>
             <div>
               <label className={lbl}>Notes (optional)</label>
               <textarea className={cn(field, "min-h-[70px] resize-none")} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} />
             </div>
+
+            {/* Can this client invite their own portal team members? */}
+            <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border px-3 py-2.5">
+              <span className="flex flex-col">
+                <span className="text-sm font-medium">Can add team members</span>
+                <span className="text-xs text-muted-foreground">Lets this client invite people to their own read-only portal (My team).</span>
+              </span>
+              <button type="button" role="switch" aria-checked={allowTeam} onClick={() => setAllowTeam((v) => !v)} className={cn("relative h-5 w-9 shrink-0 rounded-full transition-colors", allowTeam ? "bg-primary" : "bg-secondary")}>
+                <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform", allowTeam ? "translate-x-4" : "translate-x-0.5")} />
+              </button>
+            </label>
 
             {/* Send the login details to the client by email (on by default). */}
             <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border px-3 py-2.5">
@@ -242,9 +310,10 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
   const [tab, setTab] = useState<"details" | "campaigns" | "agency" | "members">("details");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [resetPw, setResetPw] = useState<{ email: string; tempPassword: string } | null>(null);
 
   // editable state
-  const [f, setF] = useState({ name: "", company: "", email: "", phone: "", notes: "", status: "ACTIVE" });
+  const [f, setF] = useState({ name: "", company: "", email: "", phone: "", notes: "", status: "ACTIVE", allowTeam: false });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [type, setType] = useState("CLIENT");
   const [brand, setBrand] = useState<{ agencyName: string; email: string; logoDataUrl: string | null; logoBg: string | null; whiteLabel: boolean }>({
@@ -259,7 +328,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
   useEffect(() => {
     api.get<ClientDetail>(`/clients/${id}`).then((d) => {
       setC(d);
-      setF({ name: d.name, company: d.company ?? "", email: d.email ?? "", phone: d.phone ?? "", notes: d.notes ?? "", status: d.status });
+      setF({ name: d.name, company: d.company ?? "", email: d.email ?? "", phone: d.phone ?? "", notes: d.notes ?? "", status: d.status, allowTeam: !!d.allowTeam });
       setSelected(new Set((d.projects ?? []).map((p) => p.id)));
       setType(d.type);
       const b = d.branding ?? {};
@@ -320,6 +389,20 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
       setSending(null);
     }
   }
+  async function resetLoginPw() {
+    if (!confirm("Reset this client's login password? A new one will be generated and emailed to them.")) return;
+    setBusy(true);
+    setResetPw(null);
+    try {
+      const r = await api.post<{ email: string; tempPassword: string }>(`/clients/${id}/reset-password`, {});
+      setResetPw(r);
+      flash("Password reset");
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
   async function del() {
     if (!confirm("Remove this client? Their campaigns stay, only the link is removed.")) return;
     setBusy(true);
@@ -344,7 +427,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
     { key: "details", label: "Details", show: true },
     { key: "campaigns", label: "Campaigns", show: can("clients.assign_campaigns") },
     { key: "agency", label: "Agency & white-label", show: can("clients.manage_agency") },
-    { key: "members", label: "Members", show: can("clients.manage_agency") && c?.type === "AGENCY" },
+    { key: "members", label: "Members", show: can("clients.manage_agency") && !!c?.allowTeam },
   ];
 
   return (
@@ -418,10 +501,34 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
                     <label className={lbl}>Notes</label>
                     <textarea className={cn(field, "min-h-[70px] resize-none")} value={f.notes} disabled={!can("clients.edit")} onChange={(e) => setF({ ...f, notes: e.target.value })} />
                   </div>
+                  <label className="flex cursor-pointer items-center justify-between rounded-lg border border-border px-3 py-2.5">
+                    <span className="flex flex-col">
+                      <span className="text-sm font-medium">Can add team members</span>
+                      <span className="text-xs text-muted-foreground">Lets this client invite people to their own read-only portal (My team).</span>
+                    </span>
+                    <button type="button" role="switch" aria-checked={f.allowTeam} disabled={!can("clients.edit")} onClick={() => setF({ ...f, allowTeam: !f.allowTeam })} className={cn("relative h-5 w-9 shrink-0 rounded-full transition-colors", f.allowTeam ? "bg-primary" : "bg-secondary")}>
+                      <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform", f.allowTeam ? "translate-x-4" : "translate-x-0.5")} />
+                    </button>
+                  </label>
                   {can("clients.edit") && (
-                    <Button onClick={saveDetails} disabled={busy}>
-                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Save details
-                    </Button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button onClick={saveDetails} disabled={busy}>
+                        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Save details
+                      </Button>
+                      <Button variant="outline" onClick={resetLoginPw} disabled={busy}>
+                        <KeyRound className="h-4 w-4" /> Reset login password
+                      </Button>
+                    </div>
+                  )}
+                  {resetPw && (
+                    <div className="rounded-lg border border-chart-2/40 bg-chart-2/5 p-3 text-sm">
+                      <p className="mb-1 font-medium text-chart-2">New password set &amp; emailed</p>
+                      <div className="flex items-center gap-2">
+                        <code className="rounded bg-background px-2 py-1 text-xs">{resetPw.email}</code>
+                        <code className="rounded bg-background px-2 py-1 text-xs">{resetPw.tempPassword}</code>
+                        <button onClick={() => navigator.clipboard?.writeText(`${resetPw.email} / ${resetPw.tempPassword}`)} className="text-muted-foreground hover:text-foreground"><Copy className="h-4 w-4" /></button>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}

@@ -6,14 +6,15 @@ import { breadcrumb, faqPage, softwareApp } from "@/lib/schema";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Keyword Rank Tracker — Daily SEO Rank Tracking Tool",
+  title: "Rank Tracker — Daily Keyword Rank Tracking Tool",
   description:
     "SerpScale is a daily keyword rank tracker that checks your Google positions on desktop, mobile and by location. Track keyword rankings for free.",
+  keywords: ["rank tracker","keyword rank tracker","SEO rank tracker","rank tracking tool","keyword tracker","google rank tracker","serp tracker","keyword position tracker","local rank tracker","enterprise rank tracker","mobile rank tracker","online rank tracker","free rank tracker","best rank tracker","rank tracker tool","rank tracker software","daily rank tracking","SERP tracking","share of voice","visibility index","google ranking checker","keyword ranking tool","track keyword rankings","bing rank tracker"],
   alternates: { canonical: "/rank-tracker" },
   openGraph: {
-    title: "Keyword Rank Tracker — Daily SEO Rank Tracking Tool | SerpScale",
+    title: "Rank Tracker — Daily Keyword & SEO Rank Tracking Tool | SerpScale",
     description:
-      "Track keyword rankings daily on desktop and mobile with SerpScale's local and enterprise rank tracker — visibility index, share-of-voice and a free plan.",
+      "Track keyword rankings daily on desktop and mobile with SerpScale's local and enterprise rank tracker — visibility index, share-of-voice and a 7-day free trial.",
     url: "/rank-tracker",
     type: "website",
   },
@@ -26,7 +27,7 @@ const faqs = [
   },
   {
     q: "How often are rankings updated?",
-    a: "SerpScale is a daily rank tracker, so your keyword positions refresh automatically every 24 hours. You can also trigger an on-demand refresh from any campaign whenever you want an instant seo rank checker tool reading after publishing changes.",
+    a: "SerpScale is a daily rank tracker, so your keyword positions refresh automatically every 24 hours. You can also trigger an on-demand refresh from any campaign the moment you publish a change and want to see where you land.",
   },
   {
     q: "Can I track local and mobile rankings?",
@@ -34,11 +35,11 @@ const faqs = [
   },
   {
     q: "Can I try the rank tracker?",
-    a: "Yes. Book a quick demo to see the rank tracker in action, then pick the plan that fits your keyword volume. It is a genuine online rank tracker with daily desktop and mobile updates — see pricing or talk to us to get started.",
+    a: "Yes. Book a quick demo to see the rank tracker in action, then pick the plan that fits your keyword volume. It's a full serp tracker with daily desktop and mobile updates — see pricing or talk to us to get started.",
   },
   {
     q: "How is it better than SEMrush's rank tracker?",
-    a: "SerpScale delivers the same daily keyword position tracking, local coverage and visibility reporting you expect from SEMrush's rank tracker, at a fraction of the cost. As an all-in-one rank tracking tool, it also pairs your ranks with real Google Search Console data and white-label reports built for agencies.",
+    a: "SerpScale delivers the same daily keyword position tracking, local coverage and visibility reporting you expect from SEMrush's rank tracker, at a fraction of the cost. It also pairs your ranks with real Google Search Console data and white-label reports built for agencies — one tool instead of three.",
   },
 ];
 
@@ -57,7 +58,6 @@ export default function Page() {
             description:
               "Daily keyword rank tracker that checks Google positions on desktop and mobile, by location, with visibility index and share-of-voice reporting.",
             url: "/rank-tracker",
-            rating: { value: "4.8", count: "180" },
           }),
         ]}
       />

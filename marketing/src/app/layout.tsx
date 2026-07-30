@@ -1,5 +1,11 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Script from "next/script";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#7B1FE4",
+};
 
 const CSS = [
   "bootstrap.min.css",
@@ -25,17 +31,7 @@ export const metadata: Metadata = {
   description:
     "SerpScale is the all-in-one SEO platform: rank tracker, site audit, backlink checker and keyword research in one dashboard. A faster, affordable SEMrush & Ahrefs alternative built for agencies.",
   applicationName: "SerpScale",
-  keywords: [
-    "SEO tool",
-    "SEO platform",
-    "rank tracker",
-    "backlink checker",
-    "site audit tool",
-    "keyword research tool",
-    "SEMrush alternative",
-    "Ahrefs alternative",
-    "white label SEO",
-  ],
+  keywords: ["SEO tools","SEO tool","SEO software","SEO platform","all-in-one SEO tool","best SEO tools","SEO marketing tools","SEO optimization tools","free SEO tools","SEO tools for agencies","rank tracker","keyword rank tracker","backlink checker","check backlinks","site audit tool","website SEO checker","keyword research tool","SEO reporting tool","white label SEO","SEMrush alternative","Ahrefs alternative","SEO dashboard","competitor analysis tool","SEO audit tool","keyword tracking"],
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
@@ -84,7 +80,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }} />
         {CSS.map((f) => (
-          <link key={f} rel="stylesheet" href={`/assets/css/${f}`} />
+          <link key={f} rel="stylesheet" href={`/assets/css/${f}?v=5`} />
         ))}
       </head>
       <body>

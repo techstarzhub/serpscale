@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { SiGooglesearchconsole } from "react-icons/si";
+import { FcGoogle } from "react-icons/fc";
 import {
   MousePointerClick,
   Eye,
   Percent,
   Gauge,
   Search,
-  Plug,
   ArrowUpDown,
   FileText,
   Globe2,
@@ -113,10 +114,17 @@ function PosBadge({ pos }: { pos: number }) {
   return <span className={cn("inline-flex h-6 min-w-10 items-center justify-center rounded-md px-1.5 text-xs font-semibold", tone)}>{p}</span>;
 }
 
-export function GscRankTracker({ project, refreshNonce = 0 }: { project: Project; refreshNonce?: number }) {
+export function GscRankTracker({ project, refreshNonce = 0, base, readOnly = false, days: daysProp, range }: { project: Project; refreshNonce?: number; base?: string; readOnly?: boolean; days?: number; range?: { from: string; to: string } }) {
+  const apiBase = base ?? `/projects/${project.id}`;
+  const rangeQ = range ? `&from=${range.from}&to=${range.to}` : "";
   const [data, setData] = useState<GscData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [days, setDays] = useState(28);
+  const [days, setDays] = useState(daysProp ?? 28);
+
+  // A parent-provided global date filter (public view) drives the range.
+  useEffect(() => {
+    if (daysProp != null) setDays(daysProp);
+  }, [daysProp]);
   const [dim, setDim] = useState<Dim>("queries");
   const [q, setQ] = useState("");
   const [bucket, setBucket] = useState<(typeof POS_BUCKETS)[number]["key"]>("all");
@@ -125,13 +133,13 @@ export function GscRankTracker({ project, refreshNonce = 0 }: { project: Project
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setData(await api.get<GscData>(`/projects/${project.id}/gsc?days=${days}${refreshNonce ? "&fresh=1" : ""}`));
+      setData(await api.get<GscData>(`${apiBase}/gsc?days=${days}${rangeQ}${refreshNonce ? "&fresh=1" : ""}`));
     } catch {
       setData(null);
     } finally {
       setLoading(false);
     }
-  }, [project.id, days, refreshNonce]);
+  }, [project.id, days, refreshNonce, rangeQ]);
 
   useEffect(() => {
     load();
@@ -165,16 +173,18 @@ export function GscRankTracker({ project, refreshNonce = 0 }: { project: Project
     return (
       <Card>
         <CardContent className="flex flex-col items-center gap-4 py-12 text-center">
-          <span className="grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary"><Plug className="h-7 w-7" /></span>
+          <span className="grid h-14 w-14 place-items-center rounded-2xl bg-card shadow-soft ring-1 ring-border"><SiGooglesearchconsole className="h-7 w-7" style={{ color: "#458CF5" }} /></span>
           <div className="space-y-1">
             <h3 className="font-heading text-base font-semibold">Connect Google Search Console</h3>
             <p className="mx-auto max-w-sm text-sm text-muted-foreground">
-              Connect your Google account to pull real keyword rankings, clicks, and impressions.
+              {readOnly ? "Search Console data hasn't been shared for this campaign yet." : "Connect your Google account to pull real keyword rankings, clicks, and impressions."}
             </p>
           </div>
-          <Link href="/dashboard/settings/integrations" className={cn(buttonVariants(), "gap-2")}>
-            <Plug className="h-4 w-4" /> Connect Google
-          </Link>
+          {!readOnly && (
+            <Link href="/dashboard/settings/integrations" className={cn(buttonVariants(), "gap-2")}>
+              <FcGoogle className="h-4 w-4" /> Connect Google
+            </Link>
+          )}
         </CardContent>
       </Card>
     );

@@ -72,3 +72,20 @@ export function MetricCard({
     </div>
   );
 }
+
+/**
+ * Compact inline metric strip — a single bordered row split into equal segments.
+ * A lighter, denser alternative to a grid of KPI cards (same data, less height).
+ */
+export function InlineStats({ items }: { items: { label: string; value: string; tone?: string }[] }) {
+  return (
+    <div className="flex divide-x divide-border overflow-hidden rounded-xl border border-border bg-card">
+      {items.map((s) => (
+        <div key={s.label} className="min-w-0 flex-1 px-2 py-2.5 text-center">
+          <div className={cn("text-lg font-bold leading-none tracking-tight tabular-nums", s.tone ?? "text-foreground")}>{s.value}</div>
+          <div className="mt-1 truncate text-[11px] font-medium text-muted-foreground">{s.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}

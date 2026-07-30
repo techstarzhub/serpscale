@@ -1,6 +1,10 @@
 import { Injectable, Logger } from "@nestjs/common";
 import * as nodemailer from "nodemailer";
+import * as fs from "fs";
+import * as path from "path";
 import { PrismaService } from "../prisma/prisma.service";
+
+type Attachment = { filename: string; content: Buffer; cid?: string };
 
 /** Sends transactional email via the SMTP the super admin configured
  *  (PlatformSetting "smtp"). No-ops gracefully when SMTP isn't set up. */
@@ -35,13 +39,20 @@ export class EmailService {
     return this.valid(await this.config(orgId));
   }
 
+  /** True only when the PLATFORM SMTP can actually send (host + user + password).
+   *  Used to gate email OTP: no point requiring a code we can't deliver. */
+  async platformReady(): Promise<boolean> {
+    const c = await this.platformConfig();
+    return !!(c && c.host && c.user && c.pass);
+  }
+
   /** Send using an explicit config (used by the admin's "send test" button). */
   async sendWith(
     cfg: any,
     to: string,
     subject: string,
     html: string,
-    attachments?: { filename: string; content: Buffer }[],
+    attachments?: Attachment[],
   ): Promise<{ ok: boolean; error?: string }> {
     if (!this.valid(cfg)) return { ok: false, error: "SMTP host and username are required." };
     try {
@@ -64,7 +75,7 @@ export class EmailService {
     subject: string,
     html: string,
     orgId?: string | null,
-    attachments?: { filename: string; content: Buffer }[],
+    attachments?: Attachment[],
   ): Promise<boolean> {
     const cfg = await this.config(orgId);
     if (!this.valid(cfg)) {
@@ -76,16 +87,93 @@ export class EmailService {
     return res.ok;
   }
 
-  /** Minimal branded wrapper for transactional emails. */
-  wrap(title: string, body: string, cta?: { label: string; url: string }): string {
-    const brand = process.env.BRAND_NAME || "SEO Platform";
-    const button = cta ? `<a href="${cta.url}" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-weight:600;margin-top:12px">${cta.label}</a>` : "";
-    return `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;color:#1f2430">
-      <div style="font-size:12px;font-weight:700;letter-spacing:.5px;color:#4f46e5;text-transform:uppercase">${brand}</div>
-      <h2 style="font-size:18px;margin:8px 0 12px">${title}</h2>
-      <div style="font-size:14px;line-height:1.6;color:#374151">${body}</div>
-      ${button}
-      <div style="margin-top:24px;padding-top:12px;border-top:1px solid #eef0f4;font-size:11px;color:#9aa1ad">Sent by ${brand}. If you didn't expect this, you can ignore it.</div>
+  // The platform (SerpScale) email logo, read once from disk as a Buffer.
+  private platformLogoCache: Buffer | null | undefined;
+  private platformLogo(): Buffer | null {
+    if (this.platformLogoCache !== undefined) return this.platformLogoCache;
+    const candidates = [
+      path.resolve(process.cwd(), "assets/brand-logo.png"),
+      path.resolve(process.cwd(), "apps/api/assets/brand-logo.png"),
+      path.resolve(__dirname, "../../assets/brand-logo.png"),
+    ];
+    for (const p of candidates) {
+      try { this.platformLogoCache = fs.readFileSync(p); return this.platformLogoCache; } catch { /* next */ }
+    }
+    this.platformLogoCache = null;
+    return null;
+  }
+
+  // Decode a base64 data URL (an agency's uploaded logo) into a Buffer.
+  private decodeDataUrl(url?: string): Buffer | null {
+    if (!url) return null;
+    const m = /^data:[^;]+;base64,(.+)$/i.exec(url.trim());
+    try { return m ? Buffer.from(m[1], "base64") : null; } catch { return null; }
+  }
+
+  /** Resolve the brand for an email: a white-label org's own name + logo when set,
+   *  otherwise the platform (SerpScale) default. `logo` is the actual image bytes,
+   *  embedded inline via CID so it renders in every email client. */
+  async brandFor(orgId?: string | null): Promise<{ name: string; logo: Buffer | null }> {
+    if (orgId) {
+      const org = await this.prisma.organization.findUnique({ where: { id: orgId }, select: { branding: true } }).catch(() => null);
+      const b: any = org?.branding ?? {};
+      if (b.agencyName || b.logoDataUrl) {
+        return { name: b.agencyName || "", logo: this.decodeDataUrl(b.logoDataUrl) };
+      }
+    }
+    const platform: any = (await this.prisma.platformSetting.findUnique({ where: { key: "branding" } }).catch(() => null))?.value ?? {};
+    return { name: platform.productName || process.env.BRAND_NAME || "SerpScale", logo: this.platformLogo() };
+  }
+
+  /** Branded email HTML. When `hasLogo` is true the header shows the brand logo
+   *  (referenced by cid:brandlogo — attach it via sendBranded) beside the name. */
+  wrap(title: string, body: string, cta?: { label: string; url: string }, brand?: { name: string; hasLogo?: boolean }): string {
+    const name = brand?.name || "SerpScale";
+    const isSerp = name.trim().toLowerCase() === "serpscale";
+    const header = brand?.hasLogo
+      ? `<span style="display:inline-block;vertical-align:middle"><img src="cid:brandlogo" alt="${name}" height="40" style="height:40px;width:auto;max-width:160px;max-height:44px;object-fit:contain;border:0;outline:none;vertical-align:middle" /></span><span style="vertical-align:middle;margin-left:11px;font-size:20px;font-weight:800;letter-spacing:-.02em;color:#111827">${isSerp ? '<span style="color:#2563EB">Serp</span>Scale' : name}</span>`
+      : isSerp
+        ? `<div style="font-size:22px;font-weight:800;letter-spacing:-.02em"><span style="color:#2563EB">Serp</span><span style="color:#111827">Scale</span></div>`
+        : `<div style="font-size:22px;font-weight:800;letter-spacing:-.02em;color:#111827">${name}</div>`;
+    const button = cta ? `<a href="${cta.url}" style="display:inline-block;background:#2563EB;color:#ffffff;text-decoration:none;padding:11px 22px;border-radius:8px;font-weight:700;margin-top:14px">${cta.label}</a>` : "";
+    return `<div style="background:#f4f6fb;padding:28px 16px;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+      <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:16px;padding:32px;color:#111827;box-shadow:0 8px 30px -18px rgba(0,0,0,.25)">
+        ${header}
+        <div style="height:2px;background:#2563EB;width:44px;border-radius:2px;margin:12px 0 20px"></div>
+        <h2 style="font-size:19px;margin:0 0 12px;color:#111827">${title}</h2>
+        <div style="font-size:14.5px;line-height:1.65;color:#374151">${body}</div>
+        ${button}
+        <div style="margin-top:26px;padding-top:14px;border-top:1px solid #eef0f4;font-size:11.5px;color:#9aa1ad">Sent by ${name}. If you didn't expect this email, you can safely ignore it.</div>
+      </div>
     </div>`;
+  }
+
+  /** Resolve the org's brand, build the branded HTML with its logo, and send —
+   *  the logo rides along as an inline CID attachment so it shows everywhere. */
+  async sendBranded(
+    to: string,
+    subject: string,
+    title: string,
+    body: string,
+    cta?: { label: string; url: string },
+    orgId?: string | null,
+    extraAttachments?: Attachment[],
+  ): Promise<boolean> {
+    const brand = await this.brandFor(orgId);
+    const html = this.wrap(title, body, cta, { name: brand.name, hasLogo: !!brand.logo });
+    const attachments: Attachment[] = [...(extraAttachments ?? [])];
+    if (brand.logo) attachments.push({ filename: "logo.png", content: brand.logo, cid: "brandlogo" });
+    return this.send(to, subject, html, orgId, attachments.length ? attachments : undefined);
+  }
+
+  /** Back-compat: branded HTML string (no inline logo — prefer sendBranded). */
+  async wrapBranded(orgId: string | null | undefined, title: string, body: string, cta?: { label: string; url: string }): Promise<string> {
+    const brand = await this.brandFor(orgId);
+    return this.wrap(title, body, cta, { name: brand.name, hasLogo: false });
+  }
+
+  /** A large, centred one-time code block for OTP emails. */
+  codeBlock(code: string): string {
+    return `<div style="margin:18px 0;text-align:center"><div style="display:inline-block;font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:32px;font-weight:800;letter-spacing:10px;color:#111827;background:#f4f6fb;border:1px solid #e5e7eb;border-radius:12px;padding:16px 26px">${code}</div></div>`;
   }
 }

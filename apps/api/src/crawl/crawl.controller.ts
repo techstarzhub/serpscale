@@ -13,10 +13,13 @@ import { PERMISSIONS } from "../auth/permissions";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 import { assertProjectAccess } from "../projects/access";
+import { FeaturesGuard } from "../entitlements/features.guard";
+import { RequireFeature } from "../entitlements/require-feature.decorator";
 import { CrawlService } from "./crawl.service";
 
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, FeaturesGuard)
 @RequirePermissions(PERMISSIONS.AUDIT_VIEW)
+@RequireFeature("audit")
 @Controller("crawls")
 export class CrawlsController {
   constructor(

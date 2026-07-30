@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { IsArray, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
 export class CreateProjectDto {
   @IsString()
@@ -10,6 +10,12 @@ export class CreateProjectDto {
   @MinLength(3)
   @MaxLength(255)
   domain!: string;
+
+  // Dashboards active for this campaign (project detail tab keys). Empty = all.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  enabledTabs?: string[];
 }
 
 export class UpdateProjectDto {
@@ -22,4 +28,10 @@ export class UpdateProjectDto {
   @IsString()
   @MaxLength(255)
   domain?: string;
+
+  // Dashboards active for this campaign (project detail tab keys). Empty = all.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  enabledTabs?: string[];
 }

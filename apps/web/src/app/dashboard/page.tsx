@@ -70,7 +70,21 @@ export default function DashboardPage() {
   const { projects: provided, loading: projectsLoading } = useProjects();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
-  const [groupBy, setGroupBy] = useState<GroupBy>("none");
+  const [groupBy, setGroupByState] = useState<GroupBy>("none");
+  // Persist the user's grouping choice so it survives reloads (agencies otherwise
+  // auto-default to "client" on every load).
+  useEffect(() => {
+    const saved = localStorage.getItem("dashboard-groupby") as GroupBy | null;
+    if (saved) setGroupByState(saved);
+  }, []);
+  const setGroupBy = (v: GroupBy) => {
+    setGroupByState(v);
+    try {
+      localStorage.setItem("dashboard-groupby", v);
+    } catch {
+      /* ignore */
+    }
+  };
   const [metric, setMetric] = useState<(typeof METRICS)[number]["key"]>("clicks");
   const [selected, setSelected] = useState("all");
   const [period, setPeriod] = useState("28");
@@ -89,7 +103,7 @@ export default function DashboardPage() {
     if (user?.role === "SUPER_ADMIN") return;
     setLoading(true);
     api.get<Summary>(`/dashboard/summary?days=${period}`)
-      .then((s) => { setSummary(s); setGroupBy((g) => (g === "none" && s.isAgency ? "client" : g)); })
+      .then((s) => { setSummary(s); if (s.isAgency && !localStorage.getItem("dashboard-groupby")) setGroupByState("client"); })
       .catch(() => setSummary(null))
       .finally(() => setLoading(false));
   }, [user?.role, period]);
@@ -159,7 +173,6 @@ export default function DashboardPage() {
     { label: "Campaigns", value: kpis.campaigns, fmt: (n: number) => String(Math.round(n)), show: true },
     { label: "Clients", value: org?.clients ?? 0, fmt: (n: number) => String(Math.round(n)), show: !!org, hint: org?.agencyClients ? `${org.agencyClients} agency` : undefined },
     { label: "Team members", value: org?.teamMembers ?? 0, fmt: (n: number) => String(Math.round(n)), show: !!org },
-    { label: "Avg health", value: kpis.avgHealth ?? 0, fmt: (n: number) => (kpis.avgHealth == null ? "—" : String(Math.round(n))), show: can("audit.view"), accent: kpis.avgHealth == null ? undefined : kpis.avgHealth >= 80 ? "chart-2" : kpis.avgHealth >= 50 ? "chart-3" : "destructive" },
     { label: "Search clicks", value: kpis.gscClicks, fmt: nf, show: can("overview.view"), spark: "clicks", color: "chart-1" },
     { label: "Impressions", value: kpis.impressions, fmt: nf, show: can("overview.view"), spark: "impressions", color: "chart-4" },
     { label: "Sessions", value: kpis.sessions, fmt: nf, show: can("traffic.view"), spark: "sessions", color: "chart-2" },
@@ -198,7 +211,7 @@ export default function DashboardPage() {
       {busy ? <DashboardSkeleton /> : rows.length === 0 ? <EmptyState canCreate={can("projects.create")} /> : (
         <>
           {/* Stat rail — hairline-separated cells, big tabular numbers, auto-fit */}
-          <div className="fade-up grid gap-px overflow-hidden rounded-xl border border-border bg-border" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+          <div className="fade-up grid gap-px overflow-hidden rounded-xl border border-border bg-border" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}>
             {stats.map((s) => <Stat key={s.label} label={s.label} value={s.value} fmt={s.fmt} accent={(s as any).accent} spark={(s as any).spark} color={(s as any).color} hint={(s as any).hint} trend={hasTrend ? trend : undefined} />)}
           </div>
 
@@ -396,9 +409,87 @@ function EmptyHint({ text }: { text: string }) {
 function DashboardSkeleton() {
   return (
     <div className="space-y-4">
-      <Skeleton className="h-20 w-full rounded-xl" />
-      <div className="grid gap-3 lg:grid-cols-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-44 w-full rounded-xl" />)}</div>
-      <Skeleton className="h-64 w-full rounded-xl" />
+      {/* Stat rail — mirrors the 8 hairline-separated KPI cells */}
+      <div
+        className="grid gap-px overflow-hidden rounded-xl border border-border bg-border"
+        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}
+      >
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="bg-card px-3.5 py-3">
+            <Skeleton className="h-2.5 w-16 rounded-full" />
+            <Skeleton className="mt-2.5 h-6 w-12 rounded-md" />
+            <Skeleton className="mt-2.5 h-4 w-full rounded-md opacity-60" />
+          </div>
+        ))}
+      </div>
+
+      {/* Performance trend card */}
+      <div className="rounded-xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+          <Skeleton className="h-3 w-40 rounded-full" />
+          <Skeleton className="h-8 w-48 rounded-full" />
+        </div>
+        <div className="p-4">
+          <Skeleton className="h-56 w-full rounded-lg" />
+        </div>
+      </div>
+
+      {/* Three panels — audit health (ring) · top campaigns (bars) · needs attention (list) */}
+      <div className="grid gap-3 lg:grid-cols-3">
+        <div className="rounded-xl border border-border bg-card">
+          <div className="border-b border-border px-4 py-2"><Skeleton className="h-3 w-24 rounded-full" /></div>
+          <div className="flex items-center gap-4 p-4">
+            <Skeleton className="h-28 w-28 shrink-0 rounded-full" />
+            <div className="flex-1 space-y-2.5">
+              {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-3.5 rounded-full" style={{ width: `${90 - i * 15}%` }} />)}
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-card">
+          <div className="border-b border-border px-4 py-2"><Skeleton className="h-3 w-28 rounded-full" /></div>
+          <div className="space-y-3.5 p-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="space-y-1.5">
+                <Skeleton className="h-3 rounded-full" style={{ width: `${60 - i * 8}%` }} />
+                <Skeleton className="h-2 w-full rounded-full opacity-70" />
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-card">
+          <div className="border-b border-border px-4 py-2"><Skeleton className="h-3 w-24 rounded-full" /></div>
+          <div className="space-y-3 p-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-2.5">
+                <Skeleton className="h-8 w-8 shrink-0 rounded-lg" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-3 w-3/4 rounded-full" />
+                  <Skeleton className="h-2 w-1/2 rounded-full" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Campaigns table */}
+      <div className="rounded-xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <Skeleton className="h-4 w-32 rounded-md" />
+          <Skeleton className="h-8 w-40 rounded-lg" />
+        </div>
+        <div className="divide-y divide-border">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-4 py-3">
+              <Skeleton className="h-8 w-8 shrink-0 rounded-lg" />
+              <Skeleton className="h-3.5 flex-1 rounded-full" style={{ maxWidth: `${42 - i * 4}%` }} />
+              <Skeleton className="ml-auto h-3.5 w-16 rounded-full" />
+              <Skeleton className="h-3.5 w-16 rounded-full" />
+              <Skeleton className="h-3.5 w-12 rounded-full" />
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

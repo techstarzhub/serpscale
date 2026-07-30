@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "SEO Tool Features — Rank Tracker, Site Audit, AI Copilot & More",
   description:
     "Explore every SerpScale feature: daily rank tracker, site audit, backlink checker, keyword research, AI SEO copilot and white-label reports in one SEO platform.",
+  keywords: ["SEO tool features","SEO platform features","SEO tool for agencies","rank tracker","site audit tool","backlink checker","keyword research tool","competitor gap analysis","AI SEO copilot","AI content writer","white label reports","SEO reporting","AI visibility tracking","Google Search Console integration","GA4 integration","all-in-one SEO platform","technical SEO","SEO dashboard","SEO automation","local rank tracking"],
   alternates: { canonical: "/features" },
   openGraph: {
     title: "SEO Tool Features — Rank Tracker, Site Audit, AI Copilot & More",
@@ -30,7 +31,6 @@ export default function FeaturesPage() {
             description:
               "All-in-one SEO platform: daily rank tracker, site audit, backlink checker, keyword research, competitor gap analysis, AI SEO copilot, AI visibility tracking, AI content writer and white-label reporting.",
             url: "/features",
-            rating: { value: "4.8", count: "180" },
           }),
         ]}
       />

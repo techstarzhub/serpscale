@@ -18,6 +18,20 @@ export class ClientsController {
     return this.clients.list(user);
   }
 
+  // Agency-client self-service branding (declared before :id so "me" doesn't
+  // get captured as an id). Only an agency client owner may use these.
+  @Get("me/branding")
+  myBranding(@CurrentUser() user: AuthUser) {
+    return this.clients.getMyBranding(user);
+  }
+
+  @Patch("me/branding")
+  async updateMyBranding(@CurrentUser() user: AuthUser, @Body() dto: { agencyName?: string; logoDataUrl?: string | null; logoBg?: string | null }) {
+    const r = await this.clients.updateMyBranding(user, dto);
+    await this.audit.log(user, "client.branding.update", {});
+    return r;
+  }
+
   @Get(":id")
   get(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.clients.get(user, id);
@@ -72,10 +86,38 @@ export class ClientsController {
   }
 
   @Post(":id/members")
-  async addMember(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { email?: string; name?: string; owner?: boolean }) {
+  async addMember(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body() dto: { email?: string; name?: string; owner?: boolean; password?: string; allCampaigns?: boolean; projectIds?: string[] },
+  ) {
     const created = await this.clients.addMember(user, id, dto);
     await this.audit.log(user, "client.member.add", { target: created.email, metadata: { clientId: id } });
     return created;
+  }
+
+  // The client's campaigns — for the "specific campaigns" picker when adding a member.
+  @Get(":id/campaigns")
+  campaigns(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.clients.clientCampaigns(user, id);
+  }
+
+  // Which campaigns a member can access (all vs a specific set of this client's campaigns).
+  @Get(":id/members/:userId/campaigns")
+  memberCampaigns(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("userId") userId: string) {
+    return this.clients.memberCampaigns(user, id, userId);
+  }
+
+  @Patch(":id/members/:userId/campaigns")
+  async setMemberCampaigns(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("userId") userId: string,
+    @Body() dto: { allCampaigns?: boolean; projectIds?: string[] },
+  ) {
+    const r = await this.clients.setMemberCampaigns(user, id, userId, dto);
+    await this.audit.log(user, "client.member.campaigns", { target: userId, metadata: { clientId: id, allCampaigns: r.allCampaigns } });
+    return r;
   }
 
   @Delete(":id/members/:userId")
@@ -83,5 +125,21 @@ export class ClientsController {
     const res = await this.clients.removeMember(user, id, userId);
     await this.audit.log(user, "client.member.remove", { target: userId, metadata: { clientId: id } });
     return res;
+  }
+
+  // Reset a client portal member's password (returns the new one to the admin).
+  @Post(":id/members/:userId/reset-password")
+  async resetMemberPassword(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("userId") userId: string, @Body() dto: { password?: string }) {
+    const r = await this.clients.resetMemberPassword(user, id, userId, dto?.password);
+    await this.audit.log(user, "client.member.password.reset", { target: r.email, metadata: { clientId: id } });
+    return r;
+  }
+
+  // Reset the client's main login password.
+  @Post(":id/reset-password")
+  async resetClientLogin(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { password?: string }) {
+    const r = await this.clients.resetClientLogin(user, id, dto?.password);
+    await this.audit.log(user, "client.password.reset", { target: r.email, metadata: { clientId: id } });
+    return r;
   }
 }

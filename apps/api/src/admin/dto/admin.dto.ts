@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsInt, IsObject, IsOptional, IsString, MaxLength, Min, MinLength } from "class-validator";
+import { IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, MaxLength, Min, MinLength } from "class-validator";
 
 export class CreatePlanDto {
   @IsString() @MinLength(1) @MaxLength(60) name!: string;
@@ -8,6 +8,8 @@ export class CreatePlanDto {
   @IsOptional() @IsString() interval?: string;
   @IsOptional() @IsObject() limits?: Record<string, unknown>;
   @IsOptional() @IsArray() features?: string[];
+  @IsOptional() @IsArray() pricingTiers?: { keywords: number; priceCents: number }[];
+  @IsOptional() @IsInt() @Min(0) trialDays?: number;
   @IsOptional() @IsBoolean() isActive?: boolean;
   @IsOptional() @IsBoolean() isPublic?: boolean;
   @IsOptional() @IsInt() sortOrder?: number;
@@ -20,6 +22,8 @@ export class UpdatePlanDto {
   @IsOptional() @IsString() interval?: string;
   @IsOptional() @IsObject() limits?: Record<string, unknown>;
   @IsOptional() @IsArray() features?: string[];
+  @IsOptional() @IsArray() pricingTiers?: { keywords: number; priceCents: number }[];
+  @IsOptional() @IsInt() @Min(0) trialDays?: number;
   @IsOptional() @IsBoolean() isActive?: boolean;
   @IsOptional() @IsBoolean() isPublic?: boolean;
   @IsOptional() @IsInt() sortOrder?: number;
@@ -37,6 +41,15 @@ export class RecordTransactionDto {
 
 export class SetActiveDto {
   @IsBoolean() isActive!: boolean;
+}
+
+// Update an org from the admin panel: suspend/activate, and/or assign a plan
+// (with optional per-tenant limit overrides + status). All fields optional.
+export class UpdateOrgDto {
+  @IsOptional() @IsBoolean() isActive?: boolean;
+  @IsOptional() @IsString() planId?: string; // "" / null clears the subscription
+  @IsOptional() @IsIn(["TRIALING", "ACTIVE", "PAST_DUE", "CANCELED"]) status?: string;
+  @IsOptional() @IsObject() limitOverrides?: Record<string, unknown>;
 }
 
 // Free-form settings blobs (super-admin only) — validated as objects, whitelisted.

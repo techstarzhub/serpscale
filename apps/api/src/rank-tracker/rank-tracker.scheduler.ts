@@ -38,10 +38,20 @@ export class RankTrackerScheduler implements OnModuleInit, OnModuleDestroy {
         {},
         { repeat: { pattern: "0 3 * * *" }, removeOnComplete: true, removeOnFail: 20 },
       );
+      // In Standard (queue) mode the daily job only POSTS cheap SERP tasks; a
+      // separate poller drains the finished results every few minutes.
+      if (process.env.RANK_TRACKER_STANDARD === "1") {
+        await this.queue.add(
+          "drain-serp-tasks",
+          {},
+          { repeat: { pattern: "*/5 * * * *" }, removeOnComplete: true, removeOnFail: 20 },
+        );
+      }
       this.worker = new Worker(
         QUEUE,
-        async () => {
-          await this.tracker.checkDue(500);
+        async (job) => {
+          if (job.name === "drain-serp-tasks") await this.tracker.drainSerpTasks();
+          else await this.tracker.checkDue(500);
         },
         { connection, concurrency: 1 },
       );

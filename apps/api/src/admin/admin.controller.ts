@@ -6,7 +6,8 @@ import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.deco
 import { PERMISSIONS } from "../auth/permissions";
 import { AuditService } from "../auth/audit.service";
 import { AdminService } from "./admin.service";
-import { CreatePlanDto, RecordTransactionDto, SetActiveDto, UpdatePlanDto } from "./dto/admin.dto";
+import { CreatePlanDto, RecordTransactionDto, SetActiveDto, UpdateOrgDto, UpdatePlanDto } from "./dto/admin.dto";
+import { catalogPayload } from "../entitlements/entitlements.catalog";
 
 // Every route here is platform-owner only (SUPER_ADMIN holds all platform.* perms).
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -18,6 +19,14 @@ export class AdminController {
   @RequirePermissions(PERMISSIONS.PLATFORM_ORGS_VIEW)
   overview() {
     return this.admin.overview();
+  }
+
+  // The gateable-module + limit catalog that drives the plan editor checkboxes.
+  // Static data, but served so the client never hardcodes the feature list.
+  @Get("feature-catalog")
+  @RequirePermissions(PERMISSIONS.PLATFORM_PLANS_MANAGE)
+  featureCatalog() {
+    return catalogPayload();
   }
 
   // ---- Plans ----
@@ -60,9 +69,9 @@ export class AdminController {
 
   @Patch("orgs/:id")
   @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
-  async setOrg(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: SetActiveDto) {
-    const res = await this.admin.setOrgActive(id, !!dto.isActive);
-    await this.audit.log(user, "org.setActive", { target: id, metadata: { isActive: !!dto.isActive } });
+  async setOrg(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: UpdateOrgDto) {
+    const res = await this.admin.updateOrg(id, dto);
+    await this.audit.log(user, "org.update", { target: id, metadata: { ...dto } });
     return res;
   }
 
@@ -85,13 +94,13 @@ export class AdminController {
   @Get("settings/smtp")
   @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
   getSmtp() {
-    return this.admin.getSetting("smtp");
+    return this.admin.getSettingSafe("smtp");
   }
 
   @Put("settings/smtp")
   @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
   async setSmtp(@CurrentUser() user: AuthUser, @Body() dto: any) {
-    const res = await this.admin.setSetting("smtp", dto);
+    const res = await this.admin.setSettingMerged("smtp", dto);
     await this.audit.log(user, "settings.smtp.update", {});
     return res;
   }
@@ -137,14 +146,25 @@ export class AdminController {
   @Get("settings/gateways")
   @RequirePermissions(PERMISSIONS.PLATFORM_GATEWAYS_MANAGE)
   getGateways() {
-    return this.admin.getSetting("payment_gateways");
+    return this.admin.getSettingSafe("payment_gateways");
   }
 
   @Put("settings/gateways")
   @RequirePermissions(PERMISSIONS.PLATFORM_GATEWAYS_MANAGE)
   async setGateways(@CurrentUser() user: AuthUser, @Body() dto: any) {
-    const res = await this.admin.setSetting("payment_gateways", dto);
+    const res = await this.admin.setSettingMerged("payment_gateways", dto);
     await this.audit.log(user, "settings.gateways.update", {});
     return res;
+  }
+}
+
+// ---- Public read API consumed by the marketing pricing page (no auth) ----
+@Controller("public/plans")
+export class PublicPlansController {
+  constructor(private readonly admin: AdminService) {}
+
+  @Get()
+  plans() {
+    return this.admin.publicPlans();
   }
 }

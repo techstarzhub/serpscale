@@ -18,7 +18,9 @@ export function RedirectIfAuthed({ children }: { children: React.ReactNode }) {
       .get("/auth/me")
       .then(() => {
         const next = new URLSearchParams(window.location.search).get("next");
-        router.replace(next && next.startsWith("/") ? next : "/dashboard");
+        // Only same-origin internal paths (reject "//host" + absolute URLs).
+        const safe = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+        router.replace(safe);
       })
       .catch(() => setChecking(false)); // not signed in — show the form
   }, [router]);

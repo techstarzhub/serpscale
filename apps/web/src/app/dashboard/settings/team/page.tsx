@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Shield, Users, Plus, Trash2, Loader2, Check, UserPlus, Copy } from "lucide-react";
+import { Shield, Users, Plus, Trash2, Loader2, Check, UserPlus, Copy, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
-import { useCan, useCurrentUser } from "@/components/providers/user-provider";
+import { useCan, useCurrentUser, useLimit } from "@/components/providers/user-provider";
+import { LockedFeature } from "@/components/ui/locked-feature";
 
 interface PermItem { key: string; label: string }
 interface PermGroup { group: string; items: PermItem[] }
@@ -15,6 +16,17 @@ interface Role { id: string; name: string; description: string | null; permissio
 interface Member { id: string; email: string; name: string | null; role: string; isActive: boolean; customRole: { id: string; name: string } | null }
 
 export default function TeamPage() {
+  const limit = useLimit();
+  const seats = limit("seats");
+  // A team needs more than the single owner seat. Solo plans stay visible but
+  // show an upgrade prompt instead of the members/roles UI.
+  if (!(seats == null || seats > 1)) {
+    return <LockedFeature title="Team management" description="Invite teammates and assign roles. Upgrade to a plan with more than one seat to unlock." />;
+  }
+  return <TeamInner />;
+}
+
+function TeamInner() {
   const can = useCan();
   const allowed = can("team.view") || can("roles.manage");
   const [groups, setGroups] = useState<PermGroup[]>([]);
@@ -322,12 +334,15 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
                   <td className="px-4 py-2 text-center"><span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", m.isActive ? "bg-chart-2/12 text-chart-2" : "bg-muted text-muted-foreground")}>{m.isActive ? "Active" : "Inactive"}</span></td>
                   {canManage && (
                     <td className="px-4 py-2 text-right">
-                      {m.role !== "ADMIN" && (
-                        <span className="inline-flex gap-1.5">
-                          <Button size="sm" variant="outline" onClick={() => openCampaigns(m)}>Campaigns</Button>
-                          <Button size="sm" variant="outline" onClick={async () => { try { await api.patch(`/team/members/${m.id}`, { isActive: !m.isActive }); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not update member"); } }}>{m.isActive ? "Deactivate" : "Activate"}</Button>
-                        </span>
-                      )}
+                      <span className="inline-flex gap-1.5">
+                        <Button size="sm" variant="outline" onClick={async () => { if (!confirm(`Reset password for ${m.name || m.email}? A new password will be generated and emailed.`)) return; try { const r = await api.post<{ email: string; tempPassword: string }>(`/team/members/${m.id}/reset-password`, {}); setTempPw({ email: r.email, pw: r.tempPassword }); } catch (e) { alert(e instanceof Error ? e.message : "Could not reset password"); } }}><KeyRound className="h-3.5 w-3.5" /> Reset</Button>
+                        {m.role !== "ADMIN" && (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => openCampaigns(m)}>Campaigns</Button>
+                            <Button size="sm" variant="outline" onClick={async () => { try { await api.patch(`/team/members/${m.id}`, { isActive: !m.isActive }); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not update member"); } }}>{m.isActive ? "Deactivate" : "Activate"}</Button>
+                          </>
+                        )}
+                      </span>
                     </td>
                   )}
                 </tr>

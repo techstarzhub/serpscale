@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trophy, Loader2, ExternalLink, Search, TrendingUp, LineChart } from "lucide-react";
+import { Trophy, Loader2, ExternalLink, Search, Globe2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
+import { Combobox } from "@/components/ui/combobox";
 import { api } from "@/lib/api";
 import { type Project } from "@/components/providers/projects-provider";
-import { BarCell, MetricCard } from "@/components/ui/metric";
+import { COUNTRIES } from "@/lib/locations";
+import { BarCell, InlineStats } from "@/components/ui/metric";
 import { KpiCardSkeleton, TableCardSkeleton } from "@/components/ui/panel-skeletons";
 
 interface RankedKw {
@@ -36,57 +38,77 @@ function posTone(p: number | null) {
  * Every keyword the domain organically ranks for on Google, via DataForSEO Labs
  * (far broader than GSC's sampled query set). Cached 7 days server-side.
  */
-export function RankedKeywords({ project, refreshNonce = 0 }: { project: Project; refreshNonce?: number }) {
+export function RankedKeywords({ project, refreshNonce = 0, base }: { project: Project; refreshNonce?: number; base?: string }) {
+  const apiBase = base ?? `/projects/${project.id}`;
   const [data, setData] = useState<RankedResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
+  const [country, setCountry] = useState("WW"); // default: Worldwide (global)
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     api
-      .get<RankedResp>(`/projects/${project.id}/ranked-keywords${refreshNonce ? "?fresh=1" : ""}`)
+      .get<RankedResp>(`${apiBase}/ranked-keywords?country=${country}${refreshNonce ? "&fresh=1" : ""}`)
       .then((d) => alive && (setData(d), setLoading(false)))
       .catch(() => alive && (setData(null), setLoading(false)));
     return () => {
       alive = false;
     };
-  }, [project.id, refreshNonce]);
+  }, [project.id, country, refreshNonce]);
 
   if (loading) {
     return (
       <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4"><KpiCardSkeleton /><KpiCardSkeleton /><KpiCardSkeleton /><KpiCardSkeleton /></div>
+        <div className="grid auto-rows-fr grid-cols-2 gap-2.5"><KpiCardSkeleton /><KpiCardSkeleton /><KpiCardSkeleton /><KpiCardSkeleton /></div>
         <TableCardSkeleton rows={8} title={false} />
       </div>
     );
   }
 
-  if (!data?.connected || !data.keywords || data.keywords.length === 0) {
-    return null; // silently omit when DataForSEO is unavailable or domain has no ranked keywords
+  if (!data?.connected) {
+    return null; // silently omit when DataForSEO is unavailable
   }
+  // Connected but empty for the chosen country → still render (with the country
+  // selector) so the user can switch markets instead of the panel disappearing.
 
   const t = data.totals;
-  const filtered = q.trim() ? data.keywords.filter((k) => k.keyword.toLowerCase().includes(q.toLowerCase())) : data.keywords;
+  const all = data.keywords ?? [];
+  const filtered = q.trim() ? all.filter((k) => k.keyword.toLowerCase().includes(q.toLowerCase())) : all;
   const volMax = Math.max(1, ...filtered.map((k) => k.volume));
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <Trophy className="h-4 w-4 text-primary" />
-        <h4 className="font-heading text-sm font-semibold">All keywords you rank for</h4>
+    <div className="flex h-full flex-col space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-start gap-2">
+          <Trophy className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <div>
+            <h4 className="font-heading text-sm font-semibold leading-tight">All keywords you rank for</h4>
+            <p className="text-xs text-muted-foreground">Database snapshot — can differ from the live Tracked positions.</p>
+          </div>
+        </div>
+        <Combobox
+          value={country}
+          onChange={setCountry}
+          options={COUNTRIES}
+          align="end"
+          className="w-[170px] shrink-0"
+          icon={<Globe2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+        />
       </div>
 
       {t && (
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-          <MetricCard icon={Search} accent="blue" label="Ranked keywords" value={fmtVol(t.count ?? 0)} />
-          <MetricCard icon={TrendingUp} accent="violet" label="Est. traffic / mo" value={fmtVol(t.etv ?? 0)} />
-          <MetricCard icon={Trophy} accent="green" label="Top 3" value={fmtVol((t.pos_1 ?? 0) + (t.pos_2_3 ?? 0))} />
-          <MetricCard icon={LineChart} accent="amber" label="Positions 4-10" value={fmtVol(t.pos_4_10 ?? 0)} />
-        </div>
+        <InlineStats
+          items={[
+            { label: "Ranked keywords", value: fmtVol(t.count ?? 0) },
+            { label: "Traffic / mo", value: fmtVol(t.etv ?? 0) },
+            { label: "Top 3", value: fmtVol((t.pos_1 ?? 0) + (t.pos_2_3 ?? 0)), tone: ((t.pos_1 ?? 0) + (t.pos_2_3 ?? 0)) ? "text-chart-2" : undefined },
+            { label: "Pos 4-10", value: fmtVol(t.pos_4_10 ?? 0) },
+          ]}
+        />
       )}
 
-      <Card>
+      <Card className="flex flex-1 flex-col overflow-hidden">
         <div className="flex items-center gap-2 border-b border-border p-3">
           <Search className="h-4 w-4 text-muted-foreground" />
           <input
@@ -108,6 +130,13 @@ export function RankedKeywords({ project, refreshNonce = 0 }: { project: Project
               </tr>
             </thead>
             <tbody>
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    {all.length === 0 ? "No ranked keywords found for this country." : "No keywords match your filter."}
+                  </td>
+                </tr>
+              )}
               {filtered.map((k, i) => (
                 <tr key={i} className="border-b border-border last:border-0 hover:bg-secondary/40">
                   <td className="px-4 py-2 font-medium">{k.keyword}</td>

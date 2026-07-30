@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { SiGoogleanalytics } from "react-icons/si";
+import { FcGoogle } from "react-icons/fc";
 import {
   Users,
   UserPlus,
   MousePointerClick,
   Timer,
-  Plug,
   BarChart3,
   Globe2,
   type LucideIcon,
@@ -83,21 +84,28 @@ function Kpi({ label, value, sub, icon: Icon }: { label: string; value: string; 
   );
 }
 
-export function GaTraffic({ project, refreshNonce = 0 }: { project: Project; refreshNonce?: number }) {
+export function GaTraffic({ project, refreshNonce = 0, base, readOnly = false, days: daysProp, range }: { project: Project; refreshNonce?: number; base?: string; readOnly?: boolean; days?: number; range?: { from: string; to: string } }) {
+  const apiBase = base ?? `/projects/${project.id}`;
+  const rangeQ = range ? `&from=${range.from}&to=${range.to}` : "";
   const [data, setData] = useState<GaData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [days, setDays] = useState(28);
+  const [days, setDays] = useState(daysProp ?? 28);
+
+  // A parent-provided global date filter (public view) drives the range.
+  useEffect(() => {
+    if (daysProp != null) setDays(daysProp);
+  }, [daysProp]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setData(await api.get<GaData>(`/projects/${project.id}/ga?days=${days}${refreshNonce ? "&fresh=1" : ""}`));
+      setData(await api.get<GaData>(`${apiBase}/ga?days=${days}${rangeQ}${refreshNonce ? "&fresh=1" : ""}`));
     } catch {
       setData(null);
     } finally {
       setLoading(false);
     }
-  }, [project.id, days, refreshNonce]);
+  }, [project.id, days, refreshNonce, rangeQ]);
 
   useEffect(() => {
     load();
@@ -117,16 +125,18 @@ export function GaTraffic({ project, refreshNonce = 0 }: { project: Project; ref
     return (
       <Card>
         <CardContent className="flex flex-col items-center gap-4 py-12 text-center">
-          <span className="grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary"><BarChart3 className="h-7 w-7" /></span>
+          <span className="grid h-14 w-14 place-items-center rounded-2xl bg-card shadow-soft ring-1 ring-border"><SiGoogleanalytics className="h-7 w-7" style={{ color: "#E37400" }} /></span>
           <div className="space-y-1">
             <h3 className="font-heading text-base font-semibold">Connect Google Analytics</h3>
             <p className="mx-auto max-w-sm text-sm text-muted-foreground">
-              Connect your Google account to pull real traffic, sessions, sources and engagement from GA4.
+              {readOnly ? "Analytics traffic hasn't been shared for this campaign yet." : "Connect your Google account to pull real traffic, sessions, sources and engagement from GA4."}
             </p>
           </div>
-          <Link href="/dashboard/settings/integrations" className={cn(buttonVariants(), "gap-2")}>
-            <Plug className="h-4 w-4" /> Connect Google
-          </Link>
+          {!readOnly && (
+            <Link href="/dashboard/settings/integrations" className={cn(buttonVariants(), "gap-2")}>
+              <FcGoogle className="h-4 w-4" /> Connect Google
+            </Link>
+          )}
         </CardContent>
       </Card>
     );

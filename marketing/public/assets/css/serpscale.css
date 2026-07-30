@@ -1,9 +1,16 @@
 /* SerpScale overrides on top of the Cloudly template */
-.serp-logo{font-family:"DM Sans",sans-serif;font-weight:800;font-size:28px;letter-spacing:-.02em;color:#0b0b16;line-height:1;display:inline-block;text-decoration:none;}
-.serp-logo span{color:#7B1FE4;}
-.serp-logo-light,.pp-footer-logo.serp-logo{color:#fff;}
-.serp-logo-light span{color:#c084fc;}
+/* Logo lockup: brand icon (::before) + SerpScale wordmark. Matches the template
+   theme (--pp-theme #7B1FE4 purple) + Black. Header (light bg) uses the light SVG
+   (purple swoosh + black chart); footer (dark bg) uses the dark SVG (purple swoosh
+   + white chart) with no white box. */
+.serp-logo{font-family:"DM Sans",sans-serif;font-weight:800;font-size:28px;letter-spacing:-.03em;color:#7B1FE4;line-height:1;display:inline-flex;align-items:center;text-decoration:none;}
+.serp-logo::before{content:"";width:40px;height:40px;flex-shrink:0;margin-right:11px;border-radius:10px;background:transparent url("/assets/img/serpscale-logo.svg") center/contain no-repeat;}
+.serp-logo span{color:#111827;}
+.serp-logo-light,.pp-footer-logo.serp-logo{color:#A78BFA;}
+.serp-logo-light span{color:#ffffff;}
+.serp-logo-light::before{background-image:url("/assets/img/serpscale-logo-dark.svg");}
 .offcanvas__logo .serp-logo{font-size:24px;}
+.offcanvas__logo .serp-logo::before{width:34px;height:34px;}
 /* keep header logo vertically centered like the original img logo */
 .logo .header-logo.serp-logo{display:inline-flex;align-items:center;height:100%;}
 
@@ -13,6 +20,28 @@
    the footer's own box — the dark base still comes from .section-bg-2 + top-shape. */
 .pp-footer-section::before{top:0;}
 
+/* Breathing room between the floating CTA card and the footer — otherwise the
+   purple CTA sits flush against the dark footer with no gap. */
+.pp-cta-section{margin-bottom:90px;}
+@media (max-width:575px){.pp-cta-section{margin-bottom:56px;}}
+
+/* Header "Login" link next to the Get Started button. */
+.pp-login-link{display:inline-flex;align-items:center;margin-right:18px;font-weight:600;font-size:15px;color:#1b1f2a;text-decoration:none;transition:color .15s;}
+.pp-login-link:hover{color:#7B1FE4;}
+
+/* Equal-height "One Platform, All the SEO Tools" cards regardless of text length.
+   The Bootstrap columns already stretch to the tallest per row; make the card
+   fill its column (minus its own 30px top margin) so all cards line up. */
+.pp-offer-box-item{height:calc(100% - 30px);}
+
+/* Mobile: the Login link belongs inside the hamburger menu, not the top bar. */
+.pp-login-mobile{display:none;}
+@media (max-width:1199px){
+  .pp-login-desktop{display:none;}
+  .pp-login-mobile{display:inline-flex;align-items:center;gap:8px;margin:4px 0 22px;padding:11px 22px;border:1.5px solid var(--pp-theme);border-radius:10px;color:var(--pp-theme);font-weight:600;font-size:16px;width:-moz-fit-content;width:fit-content;text-decoration:none;}
+  .pp-login-mobile:hover{background:var(--pp-theme);color:#fff;}
+}
+
 /* payment + integration icon chips */
 .pp-pay{display:inline-flex;align-items:center;justify-content:center;background:#fff;border-radius:8px;padding:7px 12px;box-shadow:0 4px 14px rgba(0,0,0,.12);}
 .pp-pay img{display:block;}
@@ -21,3 +50,17 @@
 .pp-int-chip img{width:24px;height:24px;display:block;}
 .pp-int-chip span{font-size:14px;white-space:nowrap;}
 
+
+/* Features page — real product screenshots instead of generic icon cards. */
+.pp-shot-card{height:100%;padding:20px 20px 30px;display:flex;flex-direction:column;}
+.pp-shot{display:block;border-radius:14px;overflow:hidden;border:1px solid #ece9f5;box-shadow:0 14px 34px -20px rgba(20,10,40,.35);background:#f4f5fa;line-height:0;}
+.pp-shot img{width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top center;display:block;transition:transform .5s ease;}
+.pp-shot-card:hover{transform:translateY(-4px);}
+.pp-shot-card:hover .pp-shot img{transform:scale(1.04);}
+.pp-shot-card .pp-offer-content{padding:20px 10px 0;}
+.pp-shot-card .pp-offer-content h3{font-size:20px;margin-bottom:10px;line-height:1.25;}
+.pp-shot-card .pp-offer-content h3 a{color:inherit;text-decoration:none;}
+.pp-shot-card .pp-offer-content h3 a:hover{color:#7B1FE4;}
+.pp-shot-card .pp-offer-content p{font-size:14.5px;line-height:1.62;color:#5b6270;max-width:none;margin:0;}
+.pp-offer-section .pp-section-title{margin-bottom:38px;}
+.pp-offer-section .pp-section-title .pp-sub-title{color:#7B1FE4;font-weight:700;letter-spacing:1px;display:inline-block;margin-bottom:8px;}

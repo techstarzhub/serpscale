@@ -2,17 +2,20 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Check, Loader2, CreditCard } from "lucide-react";
+import { Check, Loader2, CreditCard, Download, Receipt } from "lucide-react";
+import { FaPaypal } from "react-icons/fa";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 
-interface Plan { id: string; name: string; priceCents: number; currency: string; interval: string; limits: any; features: string[] | null }
+interface Tier { keywords: number; priceCents: number }
+interface Plan { id: string; name: string; priceCents: number; currency: string; interval: string; limits: any; features: string[] | null; featureLabels?: string[]; pricingTiers?: Tier[] | null; trialDays?: number | null }
 interface Subscription { status: string; currentPeriodEnd: string | null; plan: Plan | null }
 interface Meter { used: number; limit: number | null }
 interface Usage { plan: string | null; status: string | null; projects: Meter; seats: Meter; clients: Meter; keywords: { limit: number | null } }
+interface Txn { id: string; planName: string | null; amountCents: number; currency: string; status: string; gateway: string; createdAt: string }
 
 function UsageBar({ label, m }: { label: string; m: Meter }) {
   const pct = m.limit ? Math.min(100, Math.round((m.used / m.limit) * 100)) : 0;
@@ -43,26 +46,73 @@ function BillingInner() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [sub, setSub] = useState<Subscription | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [gateway, setGateway] = useState<string>(""); // active gateway set by super admin
+  const [txns, setTxns] = useState<Txn[]>([]);
+  const [tierIdx, setTierIdx] = useState<Record<string, number>>({}); // selected keyword tier per plan
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+
+  // Keyword pricing tiers (like the marketing page): pick a keyword count and the
+  // price follows. Plans without tiers are fixed-price.
+  const tiersOf = (p: Plan) => (Array.isArray(p.pricingTiers) ? [...p.pricingTiers].sort((a, b) => a.keywords - b.keywords) : []);
+  const selTier = (p: Plan): Tier | null => { const t = tiersOf(p); return t.length ? t[Math.min(tierIdx[p.id] ?? 0, t.length - 1)] : null; };
+  const planPrice = (p: Plan) => selTier(p)?.priceCents ?? p.priceCents;
+  const planKeywords = (p: Plan) => selTier(p)?.keywords ?? (p.limits?.keywords ?? null);
+  // "Unlimited" when a limit key is absent or effectively boundless.
+  const limLabel = (v: any) => { const n = Number(v); return v == null || !Number.isFinite(n) || n >= 100000 ? "Unlimited" : n.toLocaleString(); };
 
   const load = () => Promise.allSettled([
     api.get<Plan[]>("/billing/plans"),
     api.get<Subscription | null>("/billing/subscription"),
     api.get<Usage>("/billing/usage"),
-  ]).then(([p, s, u]) => {
+    api.get<{ active: string }>("/billing/gateway"),
+    api.get<Txn[]>("/billing/transactions"),
+  ]).then(([p, s, u, g, t]) => {
     if (p.status === "fulfilled") setPlans(Array.isArray(p.value) ? p.value : []);
     if (s.status === "fulfilled") setSub(s.value);
     if (u.status === "fulfilled") setUsage(u.value);
+    if (g.status === "fulfilled") setGateway(g.value?.active ?? "");
+    if (t.status === "fulfilled") setTxns(Array.isArray(t.value) ? t.value : []);
     setLoading(false);
   });
 
+  async function downloadInvoice(id: string) {
+    setBusy("inv" + id);
+    try {
+      const blob = await api.download(`/billing/transactions/${id}/invoice`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `invoice-${id.slice(-8).toUpperCase()}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not download invoice");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   useEffect(() => { load(); }, []);
 
-  async function subscribe(planId: string, gateway: string) {
+  async function startTrial(planId: string) {
+    setBusy("trial" + planId);
+    try {
+      await api.post("/billing/trial", { planId });
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not start trial");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function subscribe(planId: string, gateway: string, keywords?: number | null) {
     setBusy(planId + gateway);
     try {
-      const res = await api.post<{ url: string }>("/billing/checkout", { planId, gateway });
+      const res = await api.post<{ url: string }>("/billing/checkout", { planId, gateway, keywords: keywords ?? undefined });
       if (res.url) { window.location.href = res.url; return; }
     } catch (e) {
       alert(e instanceof Error ? e.message : "Could not start checkout");
@@ -95,7 +145,7 @@ function BillingInner() {
               <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary"><CreditCard className="h-5 w-5" /></span>
               <div>
                 <div className="flex items-center gap-2 font-semibold">{sub?.plan?.name ?? "No plan"} {sub && <Badge className={cn("px-1.5 py-0 text-[10px]", statusTone(sub.status))}>{sub.status}</Badge>}</div>
-                <div className="text-xs text-muted-foreground">{sub?.currentPeriodEnd ? `Renews ${new Date(sub.currentPeriodEnd).toLocaleDateString()}` : "No active billing period"}</div>
+                <div className="text-xs text-muted-foreground">{sub?.currentPeriodEnd ? `${sub.status === "TRIALING" ? "Trial ends" : "Renews"} ${new Date(sub.currentPeriodEnd).toLocaleDateString()}` : "No active billing period"}</div>
               </div>
             </div>
             {sub && sub.status === "ACTIVE" && <Button variant="outline" size="sm" onClick={cancel} disabled={busy === "cancel"}>{busy === "cancel" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Cancel plan"}</Button>}
@@ -114,33 +164,100 @@ function BillingInner() {
         </Card>
       )}
 
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><Receipt className="h-4 w-4" /> Payment history</CardTitle><CardDescription>Your transactions and downloadable invoices.</CardDescription></CardHeader>
+        {txns.length === 0 ? (
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">No payments yet — transactions and invoices will appear here after your first payment.</CardContent>
+        ) : (
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-secondary/40 text-left text-xs uppercase text-muted-foreground">
+                  <tr><th className="px-4 py-2 font-medium">Date</th><th className="px-4 py-2 font-medium">Plan</th><th className="px-4 py-2 font-medium">Method</th><th className="px-4 py-2 text-right font-medium">Amount</th><th className="px-4 py-2 text-center font-medium">Status</th><th className="px-4 py-2 text-right font-medium">Invoice</th></tr>
+                </thead>
+                <tbody>
+                  {txns.map((t) => (
+                    <tr key={t.id} className="border-t border-border">
+                      <td className="px-4 py-2 whitespace-nowrap">{new Date(t.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-2">{t.planName ?? "—"}</td>
+                      <td className="px-4 py-2">
+                        {t.gateway === "paypal" ? (
+                          <span className="inline-flex items-center gap-1.5 font-medium text-[#003087]"><FaPaypal className="h-4 w-4 text-[#009cde]" />Pay<span className="-ml-1 text-[#009cde]">Pal</span></span>
+                        ) : t.gateway === "stripe" ? (
+                          <span className="inline-flex items-center gap-1.5"><CreditCard className="h-3.5 w-3.5" /> Card</span>
+                        ) : (
+                          <span className="capitalize">{t.gateway}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums">{money(t.amountCents, t.currency)}</td>
+                      <td className="px-4 py-2 text-center"><Badge className={cn("px-1.5 py-0 text-[10px]", t.status === "succeeded" ? "bg-chart-2/12 text-chart-2" : t.status === "failed" ? "bg-destructive/10 text-destructive" : "bg-chart-3/15 text-chart-3")}>{t.status}</Badge></td>
+                      <td className="px-4 py-2 text-right">
+                        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => downloadInvoice(t.id)} disabled={busy === "inv" + t.id}>
+                          {busy === "inv" + t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Invoice
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        )}
+      </Card>
+
       <div>
         <h3 className="mb-2 font-heading text-base font-semibold">Available plans</h3>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {plans.map((p) => {
-            const current = sub?.plan?.id === p.id && sub?.status === "ACTIVE";
+            const isCurrent = sub?.plan?.id === p.id; // the plan you're on, any status
+            const current = isCurrent && sub?.status === "ACTIVE"; // active + paying
             const limits = p.limits ?? {};
             return (
-              <Card key={p.id} className={cn(current && "ring-2 ring-primary")}>
+              <Card key={p.id} className={cn(isCurrent && "ring-2 ring-primary")}>
                 <CardContent className="flex h-full flex-col p-5">
-                  <div className="font-heading text-lg font-semibold">{p.name}</div>
-                  <div className="mt-1 text-2xl font-bold">{p.priceCents === 0 ? "Free" : money(p.priceCents, p.currency)}<span className="text-sm font-normal text-muted-foreground">{p.priceCents > 0 ? `/${p.interval === "year" ? "yr" : "mo"}` : ""}</span></div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-heading text-lg font-semibold">{p.name}</div>
+                    {isCurrent && (
+                      <Badge className={cn("px-1.5 py-0 text-[10px]", statusTone(sub?.status))}>
+                        {current ? "Current plan" : `Current · ${sub?.status}`}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-1 text-2xl font-bold">{p.priceCents === 0 ? "Free" : money(planPrice(p), p.currency)}<span className="text-sm font-normal text-muted-foreground">{p.priceCents > 0 ? `/${p.interval === "year" ? "yr" : "mo"}` : ""}</span></div>
+                  {tiersOf(p).length > 0 && (
+                    <div className="mt-2.5">
+                      <label className="mb-1 block text-xs text-muted-foreground">Keywords to track</label>
+                      <select
+                        value={Math.min(tierIdx[p.id] ?? 0, tiersOf(p).length - 1)}
+                        disabled={!!busy}
+                        onChange={(e) => setTierIdx((s) => ({ ...s, [p.id]: Number(e.target.value) }))}
+                        className="h-9 w-full rounded-md border border-border bg-card px-2 text-sm disabled:opacity-50"
+                      >
+                        {tiersOf(p).map((t, i) => <option key={i} value={i}>{t.keywords.toLocaleString()} keywords — {money(t.priceCents, p.currency)}/{p.interval === "year" ? "yr" : "mo"}</option>)}
+                      </select>
+                    </div>
+                  )}
                   <ul className="mt-3 space-y-1.5 text-sm">
-                    {Number(limits.projects) > 0 && <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-chart-2" /> {limits.projects} projects</li>}
-                    {Number(limits.keywords) > 0 && <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-chart-2" /> {limits.keywords} keywords</li>}
-                    {Number(limits.seats) > 0 && <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-chart-2" /> {limits.seats} seats</li>}
-                    {(Array.isArray(p.features) ? p.features : []).map((f) => <li key={f} className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-chart-2" /> {f}</li>)}
+                    <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-chart-2" /> {limLabel(limits.projects)} campaigns</li>
+                    {planKeywords(p) != null && <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-chart-2" /> {Number(planKeywords(p)).toLocaleString()} keywords tracked</li>}
+                    <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-chart-2" /> {limLabel(limits.seats)} team seats</li>
+                    {(limits.clients == null || Number(limits.clients) > 0) && <li className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-chart-2" /> {limLabel(limits.clients)} clients</li>}
+                    {(p.featureLabels ?? (Array.isArray(p.features) ? p.features : [])).map((f) => <li key={f} className="flex items-center gap-2"><Check className="h-3.5 w-3.5 text-chart-2" /> {f}</li>)}
                   </ul>
-                  <div className="mt-auto pt-4">
+                  <div className="mt-auto space-y-1.5 pt-4">
+                    {!sub && (p.trialDays ?? 0) > 0 && (
+                      <Button className="w-full gap-2" onClick={() => startTrial(p.id)} disabled={!!busy}>{busy === "trial" + p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : `Start ${p.trialDays}-day free trial`}</Button>
+                    )}
                     {current ? (
                       <Button className="w-full" variant="outline" disabled>Current plan</Button>
                     ) : p.priceCents === 0 ? (
                       <Button className="w-full" onClick={() => subscribe(p.id, "manual")} disabled={!!busy}>{busy === p.id + "manual" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Switch to Free"}</Button>
+                    ) : gateway === "stripe" ? (
+                      <Button className="w-full gap-2" onClick={() => subscribe(p.id, "stripe", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "stripe" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CreditCard className="h-4 w-4" /> Pay with card</>}</Button>
+                    ) : gateway === "paypal" ? (
+                      <Button className="w-full gap-2 bg-[#003087] text-white hover:bg-[#00256b]" onClick={() => subscribe(p.id, "paypal", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "paypal" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FaPaypal className="h-4 w-4 text-[#009cde]" /> <span>Pay<span className="text-[#009cde]">Pal</span></span></>}</Button>
                     ) : (
-                      <div className="space-y-1.5">
-                        <Button className="w-full" onClick={() => subscribe(p.id, "stripe")} disabled={!!busy}>{busy === p.id + "stripe" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Pay with card"}</Button>
-                        <Button className="w-full" variant="outline" onClick={() => subscribe(p.id, "paypal")} disabled={!!busy}>{busy === p.id + "paypal" ? <Loader2 className="h-4 w-4 animate-spin" /> : "PayPal"}</Button>
-                      </div>
+                      <Button className="w-full" variant="outline" disabled>Payments not available</Button>
                     )}
                   </div>
                 </CardContent>

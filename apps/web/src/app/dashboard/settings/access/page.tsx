@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
-import { useCan, useCurrentUser } from "@/components/providers/user-provider";
+import { useCan, useCurrentUser, useLimit } from "@/components/providers/user-provider";
+import { LockedFeature } from "@/components/ui/locked-feature";
 import { Combobox } from "@/components/ui/combobox";
 import { CampaignRequestInput } from "@/components/access/campaign-request-input";
 import { ReviewerPicker } from "@/components/access/reviewer-picker";
@@ -26,6 +27,17 @@ function StatusBadge({ s }: { s: string }) {
 }
 
 export default function AccessRequestPage() {
+  const limit = useLimit();
+  const seats = limit("seats");
+  // Access requests are a team feature. Solo plans stay visible with an upgrade
+  // prompt instead of the request/review UI.
+  if (!(seats == null || seats > 1)) {
+    return <LockedFeature title="Access requests" description="Let teammates request campaign or permission access for review. Upgrade to a multi-seat plan to unlock." />;
+  }
+  return <AccessRequestInner />;
+}
+
+function AccessRequestInner() {
   const can = useCan();
   const { user } = useCurrentUser();
   const isReviewer = can("team.manage");

@@ -11,7 +11,7 @@ import { detectCannibalization, type CannibalPage } from "./cannibalization";
 import { detectNearDuplicates } from "./near-duplicate";
 import { runAccessibilityAudit } from "./accessibility";
 import { computeAiReadiness } from "./ai-readiness";
-import { buildReportHtml, renderPdf, type ReportExtra } from "./report";
+import { buildReportHtml, renderPdf, type ReportExtra, type ReportBrand } from "./report";
 
 function computeHealth(pages: number, errors: number, warnings: number, notices: number): number {
   if (pages === 0) return 0;
@@ -291,8 +291,23 @@ export class CrawlService implements OnModuleInit {
     const crawl = await this.prisma.crawl.create({
       data: { projectId: project.id, status: "RUNNING", startUrl, maxPages },
     });
+    // Keep only the latest few audits per project — avoids unbounded row growth
+    // from repeated re-runs (which slows the "latest audit" lookup + history).
+    void this.pruneOldCrawls(project.id, 5);
     void this.run(crawl.id, startUrl, maxPages, project.id, byUserId);
     return crawl;
+  }
+
+  private async pruneOldCrawls(projectId: string, keep: number) {
+    try {
+      const old = await this.prisma.crawl.findMany({
+        where: { projectId },
+        orderBy: { startedAt: "desc" },
+        skip: keep,
+        select: { id: true },
+      });
+      if (old.length) await this.prisma.crawl.deleteMany({ where: { id: { in: old.map((c) => c.id) } } });
+    } catch { /* best-effort cleanup */ }
   }
 
   // Cancel the running audit for a project: stop the crawl and mark it cancelled.
@@ -876,7 +891,7 @@ export class CrawlService implements OnModuleInit {
   }
 
   // Build a branded PDF of the latest completed audit.
-  async reportPdf(project: { id: string; name: string; domain: string }, brand: string, extra: ReportExtra = {}): Promise<Buffer | null> {
+  async reportPdf(project: { id: string; name: string; domain: string }, brand: ReportBrand, extra: ReportExtra = {}): Promise<Buffer | null> {
     const crawl = await this.prisma.crawl.findFirst({
       where: { projectId: project.id, status: "COMPLETED" },
       orderBy: { startedAt: "desc" },

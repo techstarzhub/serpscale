@@ -4,14 +4,17 @@ import { PermissionsGuard } from "../../auth/guards/permissions.guard";
 import { RequirePermissions } from "../../auth/decorators/require-permissions.decorator";
 import { PERMISSIONS } from "../../auth/permissions";
 import { CurrentUser, type AuthUser } from "../../auth/decorators/current-user.decorator";
+import { FeaturesGuard } from "../../entitlements/features.guard";
+import { RequireFeature } from "../../entitlements/require-feature.decorator";
 import { SearchOrchestrator } from "../application/search-orchestrator";
 import { RunSearchSchema, type JobStatusOutput } from "../application/dto";
 import { DomainError } from "../domain/errors";
 import { SERP_TOKENS } from "../serp.tokens";
 import type { ISerpJobRepository, ISnapshotRepository } from "../domain/ports";
 
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, FeaturesGuard)
 @RequirePermissions(PERMISSIONS.KEYWORDS_RESEARCH)
+@RequireFeature("keywords")
 @Controller("serp")
 export class SerpController {
   constructor(

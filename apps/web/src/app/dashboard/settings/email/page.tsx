@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { useFeature } from "@/components/providers/user-provider";
+import { LockedFeature } from "@/components/ui/locked-feature";
 
 interface Smtp {
   host: string;
@@ -23,6 +25,16 @@ const label = "mb-1 block text-xs font-medium text-muted-foreground";
 
 // Agency's own SMTP — invites and password resets for this org send from here.
 export default function EmailSettingsPage() {
+  const hasFeature = useFeature();
+  // Per-tenant email is a white-label capability. Stays visible with an upgrade
+  // prompt on plans that don't include it.
+  if (!hasFeature("white_label")) {
+    return <LockedFeature title="Custom email (SMTP)" description="Send invites and reports from your own email domain. Upgrade to a white-label plan to unlock." />;
+  }
+  return <EmailInner />;
+}
+
+function EmailInner() {
   const [s, setS] = useState<Smtp>({ host: "", port: 587, secure: false, user: "", fromName: "", fromEmail: "", hasPass: false, enabled: false });
   const [pass, setPass] = useState("");
   const [loading, setLoading] = useState(true);

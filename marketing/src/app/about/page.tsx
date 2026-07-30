@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "About SerpScale — The All-in-One SEO Platform",
   description:
     "SerpScale is the all-in-one SEO platform for agencies — rank tracker, site audit, backlink checker and keyword research in one affordable SEMrush alternative.",
+  keywords: ["about SerpScale","SerpScale","all-in-one SEO platform","SEO tool company","affordable SEO software","SEMrush alternative","SEO platform for agencies","SEO software","rank tracker","site audit tool","backlink checker","keyword research tool","white label SEO","SEO reporting tool","SEO dashboard","SEO tools","Ahrefs alternative","SEO software company","professional SEO software","SEO tools for marketers","SEO analytics platform","keyword rank tracker","SEO audit tool"],
   alternates: { canonical: "/about" },
   openGraph: {
     title: "About SerpScale — The All-in-One SEO Platform",

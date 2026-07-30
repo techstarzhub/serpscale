@@ -42,10 +42,13 @@ export const THEME_TOKENS: ThemeToken[] = [
 ];
 
 export const FONT_OPTIONS = [
+  { label: "Geist", value: "var(--font-geist-sans), system-ui, sans-serif" },
+  { label: "Plus Jakarta Sans", value: "'Plus Jakarta Sans', system-ui, sans-serif" },
+  { label: "Space Grotesk", value: "'Space Grotesk', system-ui, sans-serif" },
+  { label: "Sora", value: "'Sora', system-ui, sans-serif" },
   { label: "Inter", value: "'Inter', system-ui, sans-serif" },
-  { label: "System", value: "system-ui, -apple-system, sans-serif" },
-  { label: "Roboto", value: "'Roboto', system-ui, sans-serif" },
   { label: "Poppins", value: "'Poppins', system-ui, sans-serif" },
+  { label: "System", value: "system-ui, -apple-system, sans-serif" },
   { label: "Georgia (serif)", value: "Georgia, 'Times New Roman', serif" },
   { label: "Mono", value: "'JetBrains Mono', ui-monospace, monospace" },
 ];
@@ -55,4 +58,9 @@ export type ThemeOverrides = Record<string, string>;
 
 export const THEME_STORAGE_KEY = "seo-platform-theme";
 export const THEME_MODE_KEY = "seo-platform-theme-mode";
+// Bump when the built-in defaults change (e.g. fonts). On a version mismatch we
+// drop any stale font override from a user's saved theme so the new premium
+// defaults apply everywhere — while keeping their custom colours.
+export const THEME_VERSION = "3";
+export const THEME_VERSION_KEY = "seo-platform-theme-version";
 export type ThemeMode = "light" | "dark";

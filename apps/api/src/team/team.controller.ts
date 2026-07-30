@@ -74,15 +74,13 @@ export class TeamController {
     await this.audit.log(user, "user.invite", { target: created.email });
     // Email the credentials if SMTP is configured (otherwise the UI shows them).
     const web = process.env.WEB_ORIGIN || "http://localhost:3000";
-    const emailed = await this.email.send(
+    const emailed = await this.email.sendBranded(
       created.email,
       "You've been invited",
-      this.email.wrap(
-        "You've been added to the team",
-        `An account was created for you. Sign in with:<br><br><b>Email:</b> ${created.email}<br><b>Temporary password:</b> ${created.tempPassword}<br><br>Please change your password after signing in.`,
-        { label: "Sign in", url: `${web}/login` },
-      ),
-      user.orgId, // send from the agency's own SMTP if the admin configured one
+      "You've been added to the team",
+      `An account was created for you. Sign in with:<br><br><b>Email:</b> ${created.email}<br><b>Temporary password:</b> ${created.tempPassword}<br><br>Please change your password after signing in.`,
+      { label: "Sign in", url: `${web}/login` },
+      user.orgId, // agency's own SMTP + branding if configured
     );
     void this.notifications.notify(created.id, "team", {
       title: "Welcome to the team",
@@ -136,6 +134,15 @@ export class TeamController {
     const res = await this.team.updateMember(user, id, dto);
     await this.audit.log(user, "user.update", { target: res.email, metadata: dto as Record<string, unknown> });
     return res;
+  }
+
+  // Admin resets a member's password (returns the new one).
+  @Post("members/:id/reset-password")
+  @RequirePermissions(PERMISSIONS.TEAM_MANAGE)
+  async resetMemberPassword(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { password?: string }) {
+    const r = await this.team.resetPassword(user, id, dto?.password);
+    await this.audit.log(user, "user.password.reset", { target: r.email });
+    return r;
   }
 
   // ---- Campaign assignment ----

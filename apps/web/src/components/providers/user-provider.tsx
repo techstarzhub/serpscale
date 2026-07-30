@@ -14,8 +14,22 @@ export interface CurrentUser {
   // Client-portal users: which client they belong to, and if they can manage its members.
   clientId?: string | null;
   clientOwner?: boolean;
+  clientCanManageTeam?: boolean;
+  isAgencyClient?: boolean;
   // White-label branding for the org (agency name + logo) — shown in the sidebar.
   branding?: { agencyName: string | null; logoDataUrl: string | null; logoBg: string | null };
+  // Plan entitlements — which feature modules + numeric limits the org's plan
+  // grants. Drives feature gating across the dashboard. Derived server-side from
+  // the plan the super admin assigned; nothing is hardcoded on the client.
+  entitlements?: {
+    planName: string | null;
+    planSlug: string | null;
+    status: string | null;
+    active: boolean;
+    trialEndsAt: string | null;
+    features: string[];
+    limits: Record<string, number | null>;
+  };
 }
 
 interface UserContextValue {
@@ -69,6 +83,44 @@ export function useCan(): (perm: string) => boolean {
     if (user.role === "ADMIN") return true;
     return (user.permissions ?? []).includes(perm);
   };
+}
+
+/** Plan-feature check hook. SUPER_ADMIN + org ADMIN see everything; otherwise the
+ *  module key must be in the org plan's entitlements. Returns a stable checker. */
+export function useFeature(): (key: string) => boolean {
+  const { user } = useCurrentUser();
+  return (key: string) => {
+    if (!user) return false;
+    if (user.role === "SUPER_ADMIN") return true;
+    return (user.entitlements?.features ?? []).includes(key);
+  };
+}
+
+/** Returns the plan's cap for a limit key (null = unlimited / not set). */
+export function useLimit(): (key: string) => number | null {
+  const { user } = useCurrentUser();
+  return (key: string) => {
+    const v = user?.entitlements?.limits?.[key];
+    return v == null ? null : v;
+  };
+}
+
+/** Days left in an active trial (rounded up), or null when not trialing. */
+export function trialDaysLeft(user: CurrentUser | null): number | null {
+  const e = user?.entitlements;
+  if (!e || e.status !== "TRIALING" || !e.trialEndsAt) return null;
+  const ms = new Date(e.trialEndsAt).getTime() - Date.now();
+  return ms <= 0 ? 0 : Math.ceil(ms / (24 * 3600 * 1000));
+}
+
+/** True when an org owner/member has no active plan — either they never
+ *  subscribed (paid signup before payment) or their plan lapsed (trial ended,
+ *  payment failed, canceled). The dashboard is locked behind a subscribe/upgrade
+ *  wall. Super admins + client-portal users are never locked here. */
+export function accessPaused(user: CurrentUser | null): boolean {
+  if (!user || !user.entitlements) return false;
+  if (user.role === "SUPER_ADMIN" || user.role === "CLIENT") return false;
+  return user.entitlements.active === false;
 }
 
 // Display helpers.

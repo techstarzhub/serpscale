@@ -4,6 +4,8 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
+import { BillingBanner } from "./billing-banner";
+import { DashboardGate } from "./dashboard-gate";
 
 export function AppShell({ children, initialCollapsed = false }: { children: React.ReactNode; initialCollapsed?: boolean }) {
   // Seeded from the server-read cookie, so the first render already matches the
@@ -46,7 +48,10 @@ export function AppShell({ children, initialCollapsed = false }: { children: Rea
           onToggleSidebar={() => changeCollapsed(!collapsed)}
           onOpenMobile={() => setMobileOpen(true)}
         />
-        <main className="p-3.5 lg:p-4">{children}</main>
+        <main className="p-3.5 lg:p-4">
+          <BillingBanner />
+          <DashboardGate>{children}</DashboardGate>
+        </main>
       </div>
     </div>
   );

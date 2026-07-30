@@ -16,7 +16,6 @@ import {
   Gauge,
   Activity,
   Users,
-  TrendingUp,
   Trophy,
   ArrowUpRight,
   ArrowDownRight,
@@ -31,6 +30,7 @@ import {
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
+import { SiGooglesearchconsole, SiGoogleanalytics } from "react-icons/si";
 import { cn } from "@/lib/utils";
 import {
   Card,
@@ -53,11 +53,39 @@ import { LoadDataCard } from "./dataforseo-panels";
 // import { GithubConnectCard } from "./autofix-panel";
 
 const ACCENTS: Record<string, string> = {
-  blue: "bg-chart-1/12 text-chart-1",
-  green: "bg-chart-2/12 text-chart-2",
-  amber: "bg-chart-3/15 text-chart-3",
-  violet: "bg-chart-4/12 text-chart-4",
+  blue: "bg-gradient-to-br from-chart-1/20 to-chart-1/5 text-chart-1 ring-1 ring-inset ring-chart-1/20",
+  green: "bg-gradient-to-br from-chart-2/20 to-chart-2/5 text-chart-2 ring-1 ring-inset ring-chart-2/20",
+  amber: "bg-gradient-to-br from-chart-3/25 to-chart-3/5 text-chart-3 ring-1 ring-inset ring-chart-3/20",
+  violet: "bg-gradient-to-br from-chart-4/20 to-chart-4/5 text-chart-4 ring-1 ring-inset ring-chart-4/20",
 };
+// Accent key -> the chart CSS var name, so the sparkline matches the icon tint.
+const ACCENT_VAR: Record<string, string> = { blue: "chart-1", green: "chart-2", amber: "chart-3", violet: "chart-4" };
+
+// Tiny dependency-free trend line (with a soft gradient area) for a stat card —
+// the signature "at-a-glance trend" look. Renders nothing with < 2 points.
+function Sparkline({ data, color = "chart-1", className }: { data: number[]; color?: string; className?: string }) {
+  const pts = data.filter((n) => Number.isFinite(n));
+  if (pts.length < 2) return null;
+  const w = 100, h = 26;
+  const min = Math.min(...pts), max = Math.max(...pts), range = max - min || 1;
+  const step = w / (pts.length - 1);
+  const coords = pts.map((v, i) => [i * step, h - ((v - min) / range) * (h - 4) - 2] as const);
+  const line = coords.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const gid = `spark-${color}`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className={cn("h-6 w-full overflow-visible", className)} aria-hidden>
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={`hsl(var(--${color}))`} stopOpacity="0.22" />
+          <stop offset="100%" stopColor={`hsl(var(--${color}))`} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={`${line} L${w},${h} L0,${h} Z`} fill={`url(#${gid})`} />
+      <path d={line} fill="none" stroke={`hsl(var(--${color}))`} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
 function StatCard({
   label,
   value,
@@ -66,6 +94,7 @@ function StatCard({
   hint,
   delta,
   deltaGoodDown,
+  spark,
 }: {
   label: string;
   value: string;
@@ -74,12 +103,13 @@ function StatCard({
   hint?: string;
   delta?: number | null;
   deltaGoodDown?: boolean; // for metrics where a drop is good (e.g. avg. position)
+  spark?: number[]; // optional trend series for the mini sparkline
 }) {
   const hasDelta = delta != null && isFinite(delta) && Math.abs(delta) >= 0.5;
   const up = (delta ?? 0) > 0;
   const good = deltaGoodDown ? !up : up;
   return (
-    <Card className="group transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
+    <Card className="group relative overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-elevated">
       <CardContent className="p-4">
         <div className="flex items-start justify-between">
           <span className={cn("grid h-10 w-10 place-items-center rounded-xl transition-transform group-hover:scale-105", ACCENTS[accent])}>
@@ -92,9 +122,14 @@ function StatCard({
             </span>
           )}
         </div>
-        <div className="mt-3 text-2xl font-bold leading-none tracking-tight">{value}</div>
-        <div className="mt-1.5 text-sm font-medium text-muted-foreground">{label}</div>
+        <div className="mt-3 font-heading text-[28px] font-bold leading-none tracking-tight">{value}</div>
+        <div className="mt-2 text-sm font-medium text-muted-foreground">{label}</div>
         {hint && <p className="mt-1 text-xs text-muted-foreground/80">{hint}</p>}
+        {spark && spark.length > 1 && (
+          <div className="mt-2.5 -mb-1">
+            <Sparkline data={spark} color={ACCENT_VAR[accent]} />
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -276,10 +311,23 @@ const SEV_DOT: Record<string, string> = {
 
 // One audit issue on the Overview, with an inline, stack-aware AI fix that
 // expands on demand (shares the /audit-fix endpoint used by the full audit tab).
-function IssueFixRow({ projectId, issue }: { projectId: string; issue: IssueSummary }) {
+function IssueFixRow({ projectId, issue, readOnly = false }: { projectId: string; issue: IssueSummary; readOnly?: boolean }) {
   const [open, setOpen] = useState(false);
   const [fix, setFix] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Public / read-only view: show the issue as plain info — no AI-fix action.
+  if (readOnly) {
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-border px-3.5 py-3">
+        <span className={cn("h-2 w-2 shrink-0 rounded-full", SEV_DOT[issue.severity] ?? "bg-muted-foreground")} />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{issue.message}</span>
+        <span className="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold text-muted-foreground">
+          {issue.count} {issue.count === 1 ? "page" : "pages"}
+        </span>
+      </div>
+    );
+  }
 
   async function runFix() {
     setLoading(true);
@@ -341,7 +389,7 @@ function IssueFixRow({ projectId, issue }: { projectId: string; issue: IssueSumm
   );
 }
 
-function TopIssues({ projectId, issues }: { projectId: string; issues: IssueSummary[] }) {
+function TopIssues({ projectId, issues, readOnly = false }: { projectId: string; issues: IssueSummary[]; readOnly?: boolean }) {
   const rank = (s: string) => (s === "high" ? 0 : s === "medium" ? 1 : 2);
   const sorted = [...issues].sort((a, b) => rank(a.severity) - rank(b.severity) || b.count - a.count).slice(0, 8);
   return (
@@ -349,8 +397,8 @@ function TopIssues({ projectId, issues }: { projectId: string; issues: IssueSumm
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-base">Top issues to fix</CardTitle>
-            <CardDescription>Tap any issue for a step-by-step fix tailored to your site.</CardDescription>
+            <CardTitle className="text-base">{readOnly ? "Top issues found" : "Top issues to fix"}</CardTitle>
+            <CardDescription>{readOnly ? "Technical & on-page issues from the latest audit." : "Tap any issue for a step-by-step fix tailored to your site."}</CardDescription>
           </div>
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-chart-3/15 text-chart-3">
             <Wrench className="h-[18px] w-[18px]" />
@@ -363,14 +411,20 @@ function TopIssues({ projectId, issues }: { projectId: string; issues: IssueSumm
             <ShieldCheck className="h-4 w-4 text-chart-2" /> No issues found in the latest audit. Nice work.
           </div>
         ) : (
-          sorted.map((i) => <IssueFixRow key={i.code} projectId={projectId} issue={i} />)
+          sorted.map((i) => <IssueFixRow key={i.code} projectId={projectId} issue={i} readOnly={readOnly} />)
         )}
       </CardContent>
     </Card>
   );
 }
 
-export function OverviewPanel({ project, refreshNonce = 0 }: { project: Project; refreshNonce?: number }) {
+export function OverviewPanel({ project, refreshNonce = 0, base, readOnly = false, days = 28, range }: { project: Project; refreshNonce?: number; base?: string; readOnly?: boolean; days?: number; range?: { from: string; to: string } }) {
+  // Explicit from/to range overrides the day count (both handled by the API).
+  const rangeQ = range ? `&from=${range.from}&to=${range.to}` : "";
+  // API path root — defaults to the authed project route, but the public
+  // read-only view passes `/public/projects/<shareKey>` so the same panel
+  // renders from the unauthenticated endpoints.
+  const apiBase = base ?? `/projects/${project.id}`;
   const [gsc, setGsc] = useState<GscOverview | null>(null);
   const [ga, setGa] = useState<GaOverview | null>(null);
   const [bl, setBl] = useState<BlOverview | null>(null);
@@ -390,12 +444,12 @@ export function OverviewPanel({ project, refreshNonce = 0 }: { project: Project;
     // a live/paid refetch happens solely on the explicit Refresh button.
     const dfq = refreshNonce ? "?fresh=1" : "?cachedOnly=1";
     Promise.allSettled([
-      api.get<GscOverview>(`/projects/${project.id}/gsc?days=28${f}`),
-      api.get<GaOverview>(`/projects/${project.id}/ga?days=28${f}`),
-      api.get<BlOverview>(`/projects/${project.id}/backlinks${dfq}`),
-      api.get<RankedOverview>(`/projects/${project.id}/ranked-keywords${dfq}`),
-      api.get<{ healthScore: number | null; issuesSummary: IssueSummary[] | null } | null>(`/projects/${project.id}/crawl/latest`),
-      api.get<CompOverview>(`/projects/${project.id}/competitors${dfq}`),
+      api.get<GscOverview>(`${apiBase}/gsc?days=${days}${rangeQ}${f}`),
+      api.get<GaOverview>(`${apiBase}/ga?days=${days}${rangeQ}${f}`),
+      api.get<BlOverview>(`${apiBase}/backlinks${dfq}`),
+      api.get<RankedOverview>(`${apiBase}/ranked-keywords${dfq}`),
+      api.get<{ healthScore: number | null; issuesSummary: IssueSummary[] | null } | null>(`${apiBase}/crawl/latest`),
+      api.get<CompOverview>(`${apiBase}/competitors${dfq}`),
     ]).then((res) => {
       if (!alive) return;
       if (res[0].status === "fulfilled") setGsc(res[0].value);
@@ -412,7 +466,7 @@ export function OverviewPanel({ project, refreshNonce = 0 }: { project: Project;
     return () => {
       alive = false;
     };
-  }, [project.id, refreshNonce]);
+  }, [project.id, refreshNonce, days, rangeQ]);
 
   // PageSpeed is slow (~15s uncached) — fetch it separately so it never blocks
   // the rest of the dashboard. Cached 24h server-side, so repeat loads are instant.
@@ -422,7 +476,7 @@ export function OverviewPanel({ project, refreshNonce = 0 }: { project: Project;
     setPsi(null);
     const root = project.domain.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
     api
-      .get<PsiData>(`/projects/${project.id}/pagespeed?url=${encodeURIComponent(`https://${root}`)}${refreshNonce ? "&fresh=1" : ""}`)
+      .get<PsiData>(`${apiBase}/pagespeed?url=${encodeURIComponent(`https://${root}`)}${refreshNonce ? "&fresh=1" : ""}`)
       .then((d) => alive && setPsi(d))
       .catch(() => alive && setPsi(null))
       .finally(() => alive && setPsiLoading(false));
@@ -508,28 +562,28 @@ export function OverviewPanel({ project, refreshNonce = 0 }: { project: Project;
     <div className="space-y-2.5">
       {/* KPI row 1 — search & health */}
       <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Ranking keywords" value={dash(gscLive ? String(gsc!.queries?.length ?? 0) : "—")} icon={Search} accent="blue" hint={gscLive ? "Search Console · 28d" : "Connect Google"} />
-        <StatCard label="Clicks / 28d" value={dash(gscLive ? fmtNum(gsc!.totals?.clicks) : "—")} icon={MousePointerClick} accent="green" hint={gscLive ? `${pct(gsc!.totals?.ctr)} CTR · ${fmtNum(gsc!.totals?.impressions)} impr.` : "Connect Google"} delta={clicksDelta} />
+        <StatCard label="Ranking keywords" value={dash(gscLive ? String(gsc!.queries?.length ?? 0) : "—")} icon={Search} accent="blue" hint={gscLive ? "Search Console · 28d" : "Connect Google"} spark={gscLive ? gsc!.trend?.map((t) => t.impressions) : undefined} />
+        <StatCard label="Clicks / 28d" value={dash(gscLive ? fmtNum(gsc!.totals?.clicks) : "—")} icon={MousePointerClick} accent="green" hint={gscLive ? `${pct(gsc!.totals?.ctr)} CTR · ${fmtNum(gsc!.totals?.impressions)} impr.` : "Connect Google"} delta={clicksDelta} spark={gscLive ? gsc!.trend?.map((t) => t.clicks) : undefined} />
         <StatCard label="Avg. position" value={dash(gscLive ? (gsc!.totals?.position ?? 0).toFixed(1) : "—")} icon={Gauge} accent="violet" hint={gscLive ? "Search Console · 28d" : "Connect Google"} />
         <StatCard label="Site health" value={dash(health != null ? String(health) : "—")} icon={Activity} accent="amber" hint={health != null ? "Latest audit" : "Run an audit"} />
       </div>
 
       {/* KPI row 2 — traffic & authority */}
       <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Sessions / 28d" value={dash(gaLive ? fmtNum(ga!.totals?.sessions) : "—")} icon={Users} accent="blue" hint={gaLive ? `${fmtNum(ga!.totals?.users)} users · ${pct(ga!.totals?.engagementRate)} engaged` : "Connect Analytics"} delta={sessionsDelta} />
+        <StatCard label="Sessions / 28d" value={dash(gaLive ? fmtNum(ga!.totals?.sessions) : "—")} icon={Users} accent="blue" hint={gaLive ? `${fmtNum(ga!.totals?.users)} users · ${pct(ga!.totals?.engagementRate)} engaged` : "Connect Analytics"} delta={sessionsDelta} spark={gaLive ? ga!.trend?.map((t) => t.sessions) : undefined} />
         <StatCard label="Keywords in top 10" value={dash(top10 != null ? fmtNum(top10) : "—")} icon={Trophy} accent="green" hint={ranked?.totals ? `${fmtNum(ranked.totals.count)} ranked · ${fmtNum(ranked.totals.etv)} est. visits` : "Page-1 keywords"} />
         <StatCard label="Backlinks" value={dash(blLive ? fmtNum(bl!.summary?.backlinks) : "—")} icon={Link2} accent="violet" hint={blLive ? `${fmtNum(bl!.summary?.dofollow)} dofollow` : "No data yet"} />
         <StatCard label="Referring domains" value={dash(blLive ? fmtNum(bl!.summary?.referringDomains) : "—")} icon={Globe} accent="amber" hint={blLive ? `spam score ${bl!.summary?.spamScore}%` : "No data yet"} deltaGoodDown />
       </div>
 
       {/* Top audit issues with inline, stack-aware AI fixes */}
-      {health != null && issues.length > 0 && <TopIssues projectId={project.id} issues={issues} />}
+      {!readOnly && health != null && issues.length > 0 && <TopIssues projectId={project.id} issues={issues} readOnly={readOnly} />}
 
       {/* Trend charts — search performance + website traffic */}
       {chartCount > 0 ? (
         <div className={cn("grid gap-2.5", colsClass(chartCount))}>
           {gscLive && (gsc!.trend?.length ?? 0) > 1 && (
-            <ChartCard title="Search performance" subtitle="Clicks & impressions · last 28 days">
+            <ChartCard title="Search performance" subtitle="Clicks & impressions · last 28 days" action={<SiGooglesearchconsole className="h-4 w-4" style={{ color: "#458CF5" }} title="Google Search Console" />}>
               <TrendChart
                 data={gsc!.trend!}
                 xKey="date"
@@ -545,7 +599,7 @@ export function OverviewPanel({ project, refreshNonce = 0 }: { project: Project;
             </ChartCard>
           )}
           {gaLive && (ga!.trend?.length ?? 0) > 1 && (
-            <ChartCard title="Website traffic" subtitle="Sessions & users · last 28 days">
+            <ChartCard title="Website traffic" subtitle="Sessions & users · last 28 days" action={<SiGoogleanalytics className="h-4 w-4" style={{ color: "#E37400" }} title="Google Analytics" />}>
               <TrendChart
                 data={ga!.trend!}
                 xKey="date"
@@ -622,7 +676,7 @@ export function OverviewPanel({ project, refreshNonce = 0 }: { project: Project;
           {queries.length > 0 && (
             <Card className={gaCountries.length > 0 ? "lg:col-span-2" : "lg:col-span-3"}>
               <CardHeader className="pb-2">
-                <div className="flex items-center gap-2"><TrendingUp className="h-4 w-4 text-primary" /><CardTitle className="text-base">Top search queries</CardTitle></div>
+                <div className="flex items-center gap-2"><SiGooglesearchconsole className="h-4 w-4" style={{ color: "#458CF5" }} /><CardTitle className="text-base">Top search queries</CardTitle></div>
                 <CardDescription>Best-performing Google queries · last 28 days.</CardDescription>
               </CardHeader>
               <CardContent className="p-0">
@@ -864,7 +918,8 @@ type BacklinksData = {
   tld?: Record<string, number>;
 };
 
-export function BacklinksPanel({ project, refreshNonce = 0 }: { project: Project; refreshNonce?: number }) {
+export function BacklinksPanel({ project, refreshNonce = 0, base }: { project: Project; refreshNonce?: number; base?: string }) {
+  const apiBase = base ?? `/projects/${project.id}`;
   const [data, setData] = useState<BacklinksData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -873,7 +928,7 @@ export function BacklinksPanel({ project, refreshNonce = 0 }: { project: Project
       setLoading(true);
       const q = mode === "cached" ? "?cachedOnly=1" : "?fresh=1";
       api
-        .get<BacklinksData>(`/projects/${project.id}/backlinks${q}`)
+        .get<BacklinksData>(`${apiBase}/backlinks${q}`)
         .then((d) => (setData(d), setLoading(false)))
         .catch(() => (setData(null), setLoading(false)));
     },

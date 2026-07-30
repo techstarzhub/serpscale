@@ -30,13 +30,15 @@ export class GoogleService {
   // Stale-while-revalidate cache for slow external APIs (GA4/GSC). Fresh cache is
   // returned instantly; stale cache is returned instantly AND refreshed in the
   // background; a cold miss fetches synchronously. Errors never overwrite good data.
-  async cached<T>(key: string, ttlMs: number, producer: () => Promise<T>, force = false): Promise<T> {
+  async cached<T>(key: string, ttlMs: number, producer: () => Promise<T>, force = false, cacheEmpty = false): Promise<T> {
     const hit = force ? null : await this.prisma.dataCache.findUnique({ where: { key } }).catch(() => null);
     const store = async () => {
       try {
         const p = await producer();
         // Never cache a failed/unconnected result — avoids poisoning the cache.
-        const ok = !!p && (p as any).connected !== false && (p as any).matched !== false;
+        // cacheEmpty=true overrides this (e.g. GMB "not connected / quota pending":
+        // we DO want to cache that so we don't hammer the API on every refresh).
+        const ok = cacheEmpty ? p != null : !!p && (p as any).connected !== false && (p as any).matched !== false;
         if (ok) await this.prisma.dataCache.upsert({ where: { key }, create: { key, payload: p as any }, update: { payload: p as any } });
         return p;
       } catch {
@@ -159,15 +161,16 @@ export class GoogleService {
   }
 
   // Search Console overview for a project (auto-matched by domain).
-  async gscForProject(project: { orgId: string | null; createdById: string | null; domain: string }, days = 28) {
+  async gscForProject(project: { orgId: string | null; createdById: string | null; domain: string }, days = 28, range?: { from?: string; to?: string }) {
     const ownerKey = this.ownerKeyForProject(project);
     const sites = await this.listSites(ownerKey);
     if (sites.length === 0) return { connected: false, matched: false, sites: [] as string[] };
     const match = this.matchSite(sites, project.domain);
     if (!match) return { connected: true, matched: false, sites: sites.map((s) => s.siteUrl) };
 
-    const startDate = this.ymd(days + 2);
-    const endDate = this.ymd(2); // GSC data lags ~2 days
+    // Explicit from/to range wins; otherwise the last `days` (GSC lags ~2 days).
+    const startDate = range?.from || this.ymd(days + 2);
+    const endDate = range?.to || this.ymd(2);
 
     const [totalsRes, queriesRes, pagesRes, countriesRes, devicesRes, trendRes] = await Promise.all([
       this.searchAnalytics(match.integrationId, match.siteUrl, { startDate, endDate, dimensions: [] }),
@@ -300,14 +303,15 @@ export class GoogleService {
   }
 
   // GA4 traffic overview for a project (auto-matched by domain).
-  async gaForProject(project: { orgId: string | null; createdById: string | null; domain: string }, days = 28) {
+  async gaForProject(project: { orgId: string | null; createdById: string | null; domain: string }, days = 28, range?: { from?: string; to?: string }) {
     const ownerKey = this.ownerKeyForProject(project);
     const props = await this.listGaProperties(ownerKey);
     if (props.length === 0) return { connected: false, matched: false, properties: [] as string[] };
     const match = this.matchProperty(props, project.domain);
     if (!match) return { connected: true, matched: false, properties: props.map((p) => p.displayName) };
 
-    const dateRanges = [{ startDate: `${days}daysAgo`, endDate: "today" }];
+    // Explicit from/to range wins; otherwise the last `days` up to today.
+    const dateRanges = [range?.from && range?.to ? { startDate: range.from, endDate: range.to } : { startDate: `${days}daysAgo`, endDate: "today" }];
     const id = match.propertyId;
 
     // One GA4 property can collect data from several hostnames (e.g. the same

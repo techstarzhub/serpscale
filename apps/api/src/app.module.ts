@@ -13,6 +13,7 @@ import { CrawlModule } from "./crawl/crawl.module";
 import { IntegrationsModule } from "./integrations/integrations.module";
 import { SerpModule } from "./serp/serp.module";
 import { TeamModule } from "./team/team.module";
+import { BlogModule } from "./blog/blog.module";
 import { ClientsModule } from "./clients/clients.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { AccessRequestModule } from "./access-request/access-request.module";
@@ -21,6 +22,8 @@ import { BillingModule } from "./billing/billing.module";
 import { AutofixModule } from "./autofix/autofix.module";
 import { ContentModule } from "./content/content.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
+import { PublicModule } from "./public/public.module";
+import { EntitlementsModule } from "./entitlements/entitlements.module";
 
 @Module({
   imports: [
@@ -29,6 +32,7 @@ import { DashboardModule } from "./dashboard/dashboard.module";
     // this further with @Throttle / @SkipThrottle.
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     PrismaModule,
+    EntitlementsModule,
     StorageModule,
     AuthModule,
     AuthzModule,
@@ -39,6 +43,7 @@ import { DashboardModule } from "./dashboard/dashboard.module";
     IntegrationsModule,
     SerpModule,
     TeamModule,
+    BlogModule,
     ClientsModule,
     NotificationsModule,
     AccessRequestModule,
@@ -47,6 +52,7 @@ import { DashboardModule } from "./dashboard/dashboard.module";
     AutofixModule,
     ContentModule,
     DashboardModule,
+    PublicModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

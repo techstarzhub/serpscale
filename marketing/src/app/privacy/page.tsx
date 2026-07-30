@@ -6,7 +6,7 @@ import { breadcrumb } from "@/lib/schema";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — SerpScale",
+  title: "Privacy Policy",
   description:
     "How SerpScale collects, uses and protects your data on our all-in-one SEO platform — integrations, cookies, retention and your privacy rights.",
   alternates: { canonical: "/privacy" },

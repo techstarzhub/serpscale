@@ -72,6 +72,13 @@ const config: Config = {
       boxShadow: {
         card: "0 1px 2px 0 hsl(224 30% 12% / 0.04), 0 2px 6px -1px hsl(224 30% 12% / 0.06)",
         soft: "0 4px 16px -2px hsl(224 30% 12% / 0.08)",
+        // Deeper ambient lift for elevated chrome (topbar, popovers, profile card).
+        elevated: "0 2px 4px -1px hsl(224 30% 12% / 0.06), 0 8px 24px -6px hsl(224 30% 12% / 0.12)",
+        // Right-edge depth so the sidebar reads as a raised panel over the canvas.
+        rail: "8px 0 24px -14px hsl(224 30% 12% / 0.22)",
+        // Brand-coloured glow for the primary call-to-action — follows the theme.
+        glow: "0 6px 16px -4px hsl(var(--primary) / 0.45)",
+        "glow-lg": "0 10px 28px -6px hsl(var(--primary) / 0.55)",
       },
     },
   },

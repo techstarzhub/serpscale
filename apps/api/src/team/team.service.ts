@@ -6,6 +6,7 @@ import { EmailService } from "../email/email.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { ALL_PERMS, type Permission } from "../auth/permissions";
 import type { AuthUser } from "../auth/decorators/current-user.decorator";
+import { EntitlementsService } from "../entitlements/entitlements.service";
 
 const VALID = new Set<string>(ALL_PERMS);
 
@@ -16,6 +17,7 @@ export class TeamService {
     private readonly prisma: PrismaService,
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   private orgOf(user: AuthUser): string {
@@ -86,6 +88,10 @@ export class TeamService {
     if (!email || !email.includes("@")) throw new BadRequestException("Valid email required");
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new BadRequestException("A user with this email already exists");
+
+    // Enforce the plan's team-member (seats) cap.
+    const seatCount = await this.prisma.user.count({ where: { orgId, isActive: true } });
+    await this.entitlements.assertWithinLimit(orgId, "seats", seatCount);
 
     // Only a full admin can create another admin (privilege escalation guard).
     const makeAdmin = dto.role === "ADMIN";
@@ -199,6 +205,31 @@ export class TeamService {
       });
     }
     return updated;
+  }
+
+  // Admin resets an org member's password (given or auto-generated), emails it,
+  // and returns it so the admin can share it directly if email delivery is off.
+  async resetPassword(user: AuthUser, memberId: string, password?: string) {
+    const orgId = this.orgOf(user);
+    const member = await this.prisma.user.findFirst({ where: { id: memberId, orgId }, select: { id: true, email: true } });
+    if (!member) throw new NotFoundException("Member not found");
+    const pw = password?.trim();
+    if (pw && pw.length < 6) throw new BadRequestException("Password must be at least 6 characters.");
+    const newPassword = pw || randomBytes(6).toString("base64url");
+    await this.prisma.user.update({ where: { id: memberId }, data: { passwordHash: await bcrypt.hash(newPassword, 12) } });
+    const web = process.env.WEB_ORIGIN || "http://localhost:3000";
+    await this.email
+      .sendBranded(
+        member.email,
+        "Your password was reset",
+        "Password reset",
+        `An administrator reset your password.<br><br><b>Email:</b> ${member.email}<br><b>New password:</b> ${newPassword}<br><br>Please change it after signing in.`,
+        { label: "Sign in", url: `${web}/login` },
+        orgId,
+      )
+      .catch(() => {});
+    void this.notifications.notify(memberId, "team", { title: "Your password was reset", body: "Check your email for the new password.", link: "/dashboard/settings/security" });
+    return { email: member.email, tempPassword: newPassword };
   }
 
   // ---- Agency branding (white-label) ----

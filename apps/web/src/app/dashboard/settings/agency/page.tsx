@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import { useCurrentUser } from "@/components/providers/user-provider";
+import { useCurrentUser, useFeature } from "@/components/providers/user-provider";
+import { LockedFeature } from "@/components/ui/locked-feature";
 
 interface Branding {
   agencyName: string;
@@ -18,9 +19,14 @@ const field = "w-full rounded-lg border border-border bg-background px-3 py-2 te
 const label = "mb-1 block text-xs font-medium text-muted-foreground";
 
 export default function AgencySettingsPage() {
+  const hasFeature = useFeature();
   return (
     <div className="space-y-5">
-      <BrandingCard />
+      {hasFeature("white_label") ? (
+        <BrandingCard />
+      ) : (
+        <LockedFeature title="White-label branding" description="Replace the platform brand with your own agency name and logo. Available on agency plans." />
+      )}
     </div>
   );
 }

@@ -20,6 +20,8 @@
           The all-in-one SEO platform — rank tracking, site audits, backlinks and keyword research in one dashboard.
         </p>
         <div class="mobile-menu fix mb-3"></div>
+        <!-- Login lives inside the mobile menu (hidden in the top bar on mobile). -->
+        <a href="{{APP_URL}}/login" class="pp-login-link pp-login-mobile">Login</a>
         <div class="offcanvas__contact">
           <h4>Contact Info</h4>
           <ul>
@@ -29,15 +31,17 @@
             </li>
             <li class="d-flex align-items-center">
               <div class="offcanvas__contact-icon mr-15"><i class="fal fa-clock"></i></div>
-              <div class="offcanvas__contact-text"><a href="#">Mon-Fri, 9am-6pm</a></div>
+              <div class="offcanvas__contact-text"><span>Mon-Fri, 9am-6pm</span></div>
             </li>
           </ul>
+          <!-- Social icons hidden until real profiles exist (no dead "#" links).
           <div class="social-icon d-flex align-items-center">
             <a href="#"><i class="fab fa-facebook-f"></i></a>
             <a href="#"><i class="fab fa-twitter"></i></a>
             <a href="#"><i class="fab fa-linkedin-in"></i></a>
             <a href="#"><i class="fab fa-youtube"></i></a>
           </div>
+          -->
         </div>
       </div>
     </div>
@@ -67,6 +71,7 @@
           </div>
         </div>
         <div class="header-right d-flex justify-content-end align-items-center">
+          <a href="{{APP_URL}}/login" class="pp-login-link pp-login-desktop">Login</a>
           <a href="/pricing" class="pp-theme-btn">
             Get Started <i class="fa-solid fa-arrow-right-long"></i>
           </a>

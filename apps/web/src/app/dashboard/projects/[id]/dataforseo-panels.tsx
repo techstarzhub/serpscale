@@ -5,6 +5,8 @@ import {
   Users, Loader2, Swords, Search, ExternalLink, Globe2, Layers, Mail, Phone,
   Sparkles, CheckCircle2, XCircle, Cpu, TrendingUp, Coins, RefreshCw, ChevronDown,
 } from "lucide-react";
+import { SiGooglegemini, SiClaude, SiPerplexity } from "react-icons/si";
+import { RiOpenaiFill } from "react-icons/ri";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -65,7 +67,8 @@ interface CompResp { connected: boolean; loaded?: boolean; target?: string; over
 interface GapKw { keyword: string; volume: number; cpc: number | null; difficulty: number | null; yourPosition: number | null; competitorPosition: number | null }
 interface GapResp { connected: boolean; competitor?: string; keywords: GapKw[] }
 
-export function CompetitorsPanel({ project, refreshNonce = 0 }: { project: Project; refreshNonce?: number }) {
+export function CompetitorsPanel({ project, refreshNonce = 0, base, readOnly = false }: { project: Project; refreshNonce?: number; base?: string; readOnly?: boolean }) {
+  const apiBase = base ?? `/projects/${project.id}`;
   const [country, setCountry] = useState("US");
   const [language, setLanguage] = useState("en");
   const [data, setData] = useState<CompResp | null>(null);
@@ -82,7 +85,7 @@ export function CompetitorsPanel({ project, refreshNonce = 0 }: { project: Proje
       setData(null);
       const q = mode === "cached" ? "&cachedOnly=1" : "&fresh=1";
       api
-        .get<CompResp>(`/projects/${project.id}/competitors?country=${country}&language=${language}${q}`)
+        .get<CompResp>(`${apiBase}/competitors?country=${country}&language=${language}${q}`)
         .then((d) => (setData(d), setLoading(false)))
         .catch(() => (setData(null), setLoading(false)));
     },
@@ -92,6 +95,7 @@ export function CompetitorsPanel({ project, refreshNonce = 0 }: { project: Proje
   useEffect(() => { if (refreshNonce) load("live"); }, [refreshNonce]); // global Refresh → paid
 
   function runGap(domain: string) {
+    if (readOnly) return; // keyword-gap is a paid live call — not exposed publicly
     setGapTarget(domain);
     setGap(null);
     setGapLoading(true);
@@ -320,12 +324,14 @@ export function DomainPanel({ project, refreshNonce = 0 }: { project: Project; r
 interface AiModelResult { engine: string; label: string; model: string; connected: boolean; mentioned: boolean; text: string }
 interface AiMultiResp { brand: string; prompt: string; results: AiModelResult[]; mentionedCount: number; answered: number; total: number }
 
-// Each assistant gets a distinct theme-token colour (never hardcoded hex).
-const MODEL_TONE: Record<string, { chip: string; bar: string }> = {
-  chat_gpt: { chip: "bg-chart-2/12 text-chart-2", bar: "bg-chart-2" },
-  gemini: { chip: "bg-chart-1/12 text-chart-1", bar: "bg-chart-1" },
-  claude: { chip: "bg-chart-4/12 text-chart-4", bar: "bg-chart-4" },
-  perplexity: { chip: "bg-chart-3/12 text-chart-3", bar: "bg-chart-3" },
+// Each assistant gets a distinct theme-token colour (never hardcoded hex) plus
+// its real brand logo, tinted with that same token so it stays on-theme.
+type BrandIcon = React.ComponentType<{ className?: string }>;
+const MODEL_TONE: Record<string, { chip: string; bar: string; Icon: BrandIcon }> = {
+  chat_gpt: { chip: "bg-chart-2/12 text-chart-2", bar: "bg-chart-2", Icon: RiOpenaiFill },
+  gemini: { chip: "bg-chart-1/12 text-chart-1", bar: "bg-chart-1", Icon: SiGooglegemini },
+  claude: { chip: "bg-chart-4/12 text-chart-4", bar: "bg-chart-4", Icon: SiClaude },
+  perplexity: { chip: "bg-chart-3/12 text-chart-3", bar: "bg-chart-3", Icon: SiPerplexity },
 };
 
 function HighlightBrand({ text, brand }: { text: string; brand: string }) {
@@ -340,12 +346,15 @@ function HighlightBrand({ text, brand }: { text: string; brand: string }) {
 
 function ModelCard({ m, r, brand }: { m: { engine: string; label: string; model: string }; r?: AiModelResult; brand: string }) {
   const [open, setOpen] = useState(true); // answers shown by default — no click needed
-  const tone = MODEL_TONE[m.engine] ?? { chip: "bg-secondary text-muted-foreground", bar: "bg-muted-foreground" };
+  const tone = MODEL_TONE[m.engine] ?? { chip: "bg-secondary text-muted-foreground", bar: "bg-muted-foreground", Icon: undefined };
+  const BrandLogo = tone.Icon;
   const pending = !r;
   return (
     <div className={cn("overflow-hidden rounded-xl border border-border bg-card transition-opacity", pending && "opacity-70")}>
       <div className="flex items-center gap-2.5 p-3">
-        <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-lg text-sm font-bold", tone.chip)}>{m.label[0]}</span>
+        <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-lg text-sm font-bold", tone.chip)}>
+          {BrandLogo ? <BrandLogo className="h-5 w-5" /> : m.label[0]}
+        </span>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold leading-tight">{m.label}</div>
           <div className="truncate text-[11px] text-muted-foreground">{m.model}</div>
@@ -471,7 +480,15 @@ export function AiVisibilityPanel({ project }: { project: Project }) {
               <button key={s} onClick={() => run(s)} className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground hover:border-primary hover:text-primary">{s}</button>
             ))}
           </div>
-          <p className="mt-2.5 text-[11px] text-muted-foreground">Checks ChatGPT, Gemini, Claude &amp; Perplexity at once. Results are cached, so re-asking the same question is free.</p>
+          <div className="mt-2.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <RiOpenaiFill className="h-3.5 w-3.5 text-chart-2" title="ChatGPT" />
+              <SiGooglegemini className="h-3.5 w-3.5 text-chart-1" title="Gemini" />
+              <SiClaude className="h-3.5 w-3.5 text-chart-4" title="Claude" />
+              <SiPerplexity className="h-3.5 w-3.5 text-chart-3" title="Perplexity" />
+            </span>
+            <span>Checks ChatGPT, Gemini, Claude &amp; Perplexity at once. Results are cached, so re-asking the same question is free.</span>
+          </div>
         </CardContent>
       </Card>
 
@@ -522,7 +539,13 @@ export function AiVisibilityPanel({ project }: { project: Project }) {
       )}
 
       {phase === "idle" && models.length === 0 && (
-        <Card><CardContent className="flex flex-col items-center gap-3 py-14 text-center"><span className="grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary"><Sparkles className="h-7 w-7" /></span><h3 className="font-heading text-lg font-semibold">AI Visibility</h3><p className="max-w-md text-sm text-muted-foreground">See how your brand shows up across AI assistants — ChatGPT, Gemini, Claude and Perplexity. Ask a question your customers would ask and check who recommends you.</p></CardContent></Card>
+        <Card><CardContent className="flex flex-col items-center gap-3 py-14 text-center"><span className="grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary"><Sparkles className="h-7 w-7" /></span><h3 className="font-heading text-lg font-semibold">AI Visibility</h3><p className="max-w-md text-sm text-muted-foreground">See how your brand shows up across AI assistants — ChatGPT, Gemini, Claude and Perplexity. Ask a question your customers would ask and check who recommends you.</p>
+        <div className="mt-1 flex items-center gap-4 text-muted-foreground">
+          <RiOpenaiFill className="h-6 w-6 text-chart-2" title="ChatGPT" />
+          <SiGooglegemini className="h-6 w-6 text-chart-1" title="Gemini" />
+          <SiClaude className="h-6 w-6 text-chart-4" title="Claude" />
+          <SiPerplexity className="h-6 w-6 text-chart-3" title="Perplexity" />
+        </div></CardContent></Card>
       )}
     </div>
   );

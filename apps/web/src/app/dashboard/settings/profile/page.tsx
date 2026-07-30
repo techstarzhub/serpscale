@@ -161,6 +161,80 @@ export default function ProfilePage() {
           </form>
         </CardContent>
       </Card>
+
+      {user?.isAgencyClient && <AgencyBrandingCard onSaved={refresh} />}
     </div>
+  );
+}
+
+function AgencyBrandingCard({ onSaved }: { onSaved: () => void }) {
+  const [b, setB] = useState<{ agencyName: string; logoDataUrl: string | null; logoBg: string | null }>({ agencyName: "", logoDataUrl: null, logoBg: null });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const logoRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    api.get<typeof b>("/clients/me/branding").then((r) => setB({ agencyName: r.agencyName || "", logoDataUrl: r.logoDataUrl, logoBg: r.logoBg })).catch(() => {}).finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function pickLogo(file: File) {
+    if (file.size > 500 * 1024) { setMsg({ type: "err", text: "Logo must be under 500 KB." }); return; }
+    const r = new FileReader();
+    r.onload = () => setB((p) => ({ ...p, logoDataUrl: String(r.result) }));
+    r.readAsDataURL(file);
+  }
+
+  async function save() {
+    setSaving(true); setMsg(null);
+    try {
+      await api.patch("/clients/me/branding", b);
+      setMsg({ type: "ok", text: "Branding saved." });
+      onSaved();
+    } catch (e) {
+      setMsg({ type: "err", text: e instanceof Error ? e.message : "Could not save." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Agency branding</CardTitle>
+        <CardDescription>Your agency name and logo — shown across your portal and on white-label reports.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {msg && <p className={msg.type === "ok" ? "text-sm text-success" : "text-sm text-destructive"}>{msg.text}</p>}
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+        ) : (
+          <>
+            <div className="flex items-center gap-5">
+              <span className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-border" style={{ backgroundColor: b.logoBg || "hsl(var(--card))" }}>
+                {b.logoDataUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={b.logoDataUrl} alt="Logo" className="h-full w-full object-contain" />
+                ) : <Upload className="h-6 w-6 text-muted-foreground" />}
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <input ref={logoRef} type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden" onChange={(e) => e.target.files?.[0] && pickLogo(e.target.files[0])} />
+                <Button variant="outline" className="gap-2" onClick={() => logoRef.current?.click()}><Upload className="h-4 w-4" /> Upload logo</Button>
+                {b.logoDataUrl && <Button variant="ghost" onClick={() => setB((p) => ({ ...p, logoDataUrl: null }))}>Remove</Button>}
+                <input type="color" value={b.logoBg || "#4f46e5"} onChange={(e) => setB((p) => ({ ...p, logoBg: e.target.value }))} className="h-9 w-10 cursor-pointer rounded-lg border border-border bg-background p-1" title="Logo background" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="agencyName">Agency name</Label>
+              <Input id="agencyName" value={b.agencyName} onChange={(e) => setB((p) => ({ ...p, agencyName: e.target.value }))} placeholder="Your agency name" />
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={save} disabled={saving}>{saving && <Loader2 className="h-4 w-4 animate-spin" />} Save branding</Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

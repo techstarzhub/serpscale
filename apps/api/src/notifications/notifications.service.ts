@@ -50,7 +50,7 @@ export class NotificationsService {
     if (pref.email) {
       const web = process.env.WEB_ORIGIN || "http://localhost:3000";
       const cta = payload.link ? { label: "Open", url: `${web}${payload.link}` } : undefined;
-      await this.email.send(user.email, payload.title, this.email.wrap(payload.title, payload.body ?? "", cta), user.orgId).catch(() => {});
+      await this.email.sendBranded(user.email, payload.title, payload.title, payload.body ?? "", cta, user.orgId).catch(() => {});
     }
   }
 
