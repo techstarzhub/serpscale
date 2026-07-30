@@ -10,6 +10,11 @@ export interface CurrentUser {
   role: "SUPER_ADMIN" | "ADMIN" | "MEMBER" | "CLIENT";
   orgId: string | null;
   avatarUrl: string | null;
+  // Null until the user finishes the first-login onboarding wizard.
+  onboardedAt?: string | null;
+  // Server-persisted dashboard theme (dynamic CSS tokens + light/dark), so it
+  // follows the user across devices. Hydrated into ThemeProvider on load.
+  themeOverrides?: { overrides?: Record<string, string>; mode?: "light" | "dark" } | null;
   permissions?: string[];
   // Client-portal users: which client they belong to, and if they can manage its members.
   clientId?: string | null;

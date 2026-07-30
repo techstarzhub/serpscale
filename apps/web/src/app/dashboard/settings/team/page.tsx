@@ -343,6 +343,9 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
                             <Button size="sm" variant="outline" onClick={async () => { try { await api.patch(`/team/members/${m.id}`, { isActive: !m.isActive }); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not update member"); } }}>{m.isActive ? "Deactivate" : "Activate"}</Button>
                           </>
                         )}
+                        {m.id !== user?.id && (m.role !== "ADMIN" || isAdmin) && (
+                          <Button size="sm" variant="outline" className="text-destructive hover:border-destructive/40" onClick={async () => { if (!confirm(`Permanently delete ${m.name || m.email}? This removes their account and access. This cannot be undone.`)) return; try { await api.del(`/team/members/${m.id}`); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not delete member"); } }}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
+                        )}
                       </span>
                     </td>
                   )}

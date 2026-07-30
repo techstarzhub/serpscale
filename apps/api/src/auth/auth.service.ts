@@ -116,7 +116,8 @@ export class AuthService {
       }
     }
     const user = await this.prisma.user.create({
-      data: { email: p.email, name: p.name, passwordHash: p.passwordHash, role: Role.ADMIN, orgId: org.id },
+      // Owner picked their own password at signup — no onboarding wizard needed.
+      data: { email: p.email, name: p.name, passwordHash: p.passwordHash, role: Role.ADMIN, orgId: org.id, onboardedAt: new Date() },
     });
     // Platform-owner alert: full details of every new signup / trial.
     this.email.notifySuperAdmins(
@@ -214,6 +215,7 @@ export class AuthService {
         role: true,
         orgId: true,
         themeOverrides: true,
+        onboardedAt: true,
         avatarKey: true,
         clientId: true,
         clientOwner: true,

@@ -71,6 +71,47 @@ export class UsersService {
     return { ok: true };
   }
 
+  // Persist the user's dashboard theme (dynamic CSS tokens + light/dark mode) so it
+  // follows them across devices. Stored as { overrides, mode }; merged, not replaced.
+  async setTheme(userId: string, input: { themeOverrides?: Record<string, string>; mode?: "light" | "dark" }) {
+    const current = (await this.prisma.user.findUnique({ where: { id: userId }, select: { themeOverrides: true } }))?.themeOverrides as any;
+    const next = {
+      overrides: input.themeOverrides ?? current?.overrides ?? {},
+      mode: input.mode ?? current?.mode ?? "light",
+    };
+    await this.prisma.user.update({ where: { id: userId }, data: { themeOverrides: next } });
+    return { ok: true, theme: next };
+  }
+
+  // First-login onboarding: set the user's own password (no current password —
+  // they're already authenticated with the temp one), name and initial theme,
+  // then flag onboarding complete. Idempotent-guarded so it can't re-run.
+  async completeOnboarding(
+    userId: string,
+    input: { name?: string; newPassword?: string; themeOverrides?: Record<string, string>; mode?: "light" | "dark" },
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException();
+    if (user.onboardedAt) throw new BadRequestException("Onboarding already completed.");
+
+    const data: Record<string, unknown> = { onboardedAt: new Date() };
+    if (input.name != null) data.name = input.name;
+    if (input.newPassword) {
+      data.passwordHash = await bcrypt.hash(input.newPassword, 12);
+      data.passwordChangedAt = new Date();
+    }
+    if (input.themeOverrides || input.mode) {
+      data.themeOverrides = {
+        overrides: input.themeOverrides ?? (user.themeOverrides as any)?.overrides ?? {},
+        mode: input.mode ?? (user.themeOverrides as any)?.mode ?? "light",
+      };
+    }
+    const updated = await this.prisma.user.update({ where: { id: userId }, data });
+    // A fresh password invalidates any other sessions minted with the temp one.
+    if (input.newPassword) await this.prisma.refreshToken.deleteMany({ where: { userId } }).catch(() => {});
+    return this.toPublic(updated);
+  }
+
   async setAvatar(userId: string, file: Express.Multer.File) {
     if (!file) throw new BadRequestException("No file uploaded.");
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.mimetype)) {

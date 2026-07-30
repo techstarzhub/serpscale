@@ -253,6 +253,39 @@ export class TeamService {
     return updated;
   }
 
+  /** Permanently remove a member from the organization. Guarded so you can't
+   *  delete yourself, delete another admin unless you are one, or remove the org's
+   *  only remaining admin (which would lock everyone out of team/billing). Audit
+   *  history is kept — AuditLog.userId is a loose reference, not a FK. */
+  async deleteMember(user: AuthUser, id: string) {
+    const orgId = this.orgOf(user);
+    const member = await this.prisma.user.findFirst({
+      where: { id, orgId },
+      select: { id: true, email: true, name: true, role: true },
+    });
+    if (!member) throw new NotFoundException("Member not found");
+    if (member.id === user.id) throw new BadRequestException("You cannot delete your own account.");
+    if (member.role === "ADMIN" && user.role !== "ADMIN") {
+      throw new ForbiddenException("Only an admin can remove another admin.");
+    }
+    if (member.role === "ADMIN") {
+      const otherAdmins = await this.prisma.user.count({
+        where: { orgId, role: "ADMIN", isActive: true, id: { not: member.id } },
+      });
+      if (otherAdmins === 0) throw new BadRequestException("This is the organization's only admin. Promote another admin first.");
+    }
+    // Clear the two dependents whose FK to User does not cascade, then delete.
+    // Everything else cascades (tokens/notifications/copilot/access requests) or
+    // set-nulls (authored articles), and implicit campaign-access rows drop with
+    // the user.
+    await this.prisma.$transaction([
+      this.prisma.refreshToken.deleteMany({ where: { userId: id } }),
+      this.prisma.passwordReset.deleteMany({ where: { userId: id } }),
+      this.prisma.user.delete({ where: { id } }),
+    ]);
+    return { ok: true, email: member.email, name: member.name };
+  }
+
   // Admin resets an org member's password (given or auto-generated), emails it,
   // and returns it so the admin can share it directly if email delivery is off.
   async resetPassword(user: AuthUser, memberId: string, password?: string) {
@@ -274,7 +307,14 @@ export class TeamService {
         orgId,
       )
       .catch(() => {});
-    void this.notifications.notify(memberId, "team", { title: "Your password was reset", body: "Check your email for the new password.", link: "/dashboard/settings/security" });
+    // In-app bell only — the credentials email above is the single email that
+    // carries the new password (no second, contentless "check your email" mail).
+    void this.notifications.notify(
+      memberId,
+      "team",
+      { title: "Your password was reset", body: "An administrator set a new password for you. Check your email for it.", link: "/dashboard/settings/security" },
+      { inApp: true, email: false },
+    );
     return { email: member.email, tempPassword: newPassword };
   }
 

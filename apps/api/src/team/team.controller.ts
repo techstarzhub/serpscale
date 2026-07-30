@@ -72,21 +72,29 @@ export class TeamController {
   async invite(@CurrentUser() user: AuthUser, @Body() dto: InviteMemberDto) {
     const created = await this.team.inviteMember(user, dto);
     await this.audit.log(user, "user.invite", { target: created.email });
-    // Email the credentials if SMTP is configured (otherwise the UI shows them).
+    // Send ONE welcome email that also carries the login credentials, so the new
+    // member gets everything they need in a single message (otherwise the UI shows
+    // the temp password). We deliberately keep the in-app notification below
+    // email-less so we don't send a second, contentless "Welcome" email.
     const web = process.env.WEB_ORIGIN || "http://localhost:3000";
     const emailed = await this.email.sendBranded(
       created.email,
-      "You've been invited",
-      "You've been added to the team",
+      "Welcome to the team",
+      "Welcome to the team",
       `An account was created for you. Sign in with:<br><br><b>Email:</b> ${created.email}<br><b>Temporary password:</b> ${created.tempPassword}<br><br>Please change your password after signing in.`,
       { label: "Sign in", url: `${web}/login` },
       user.orgId, // agency's own SMTP + branding if configured
     );
-    void this.notifications.notify(created.id, "team", {
-      title: "Welcome to the team",
-      body: "You've been given access. Explore your campaigns from the dashboard.",
-      link: "/dashboard",
-    });
+    void this.notifications.notify(
+      created.id,
+      "team",
+      {
+        title: "Welcome to the team",
+        body: "You've been given access. Explore your campaigns from the dashboard.",
+        link: "/dashboard",
+      },
+      { inApp: true, email: false }, // credentials email above is the only email
+    );
     return { ...created, emailed };
   }
 
@@ -133,6 +141,15 @@ export class TeamController {
   async updateMember(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: UpdateMemberDto) {
     const res = await this.team.updateMember(user, id, dto);
     await this.audit.log(user, "user.update", { target: res.email, metadata: dto as Record<string, unknown> });
+    return res;
+  }
+
+  // Permanently remove a member from the organization.
+  @Delete("members/:id")
+  @RequirePermissions(PERMISSIONS.TEAM_MANAGE)
+  async deleteMember(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const res = await this.team.deleteMember(user, id);
+    await this.audit.log(user, "user.delete", { target: res.email });
     return res;
   }
 

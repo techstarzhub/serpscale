@@ -34,13 +34,22 @@ export class NotificationsService {
     return { inApp: p.inApp ?? def.inApp, email: p.email ?? def.email };
   }
 
-  /** Deliver a notification to a user, honouring their on/off preferences. */
-  async notify(userId: string, type: string, payload: Payload): Promise<void> {
+  /** Deliver a notification to a user, honouring their on/off preferences.
+   *  `channels` force-overrides those preferences when a caller needs to control
+   *  delivery explicitly — e.g. the invite flow sends its own credentials email
+   *  and only wants the in-app bell here, not a second (contentless) email. */
+  async notify(
+    userId: string,
+    type: string,
+    payload: Payload,
+    channels?: { inApp?: boolean; email?: boolean },
+  ): Promise<void> {
     const user = await this.prisma.user
       .findUnique({ where: { id: userId }, select: { email: true, orgId: true, notifPrefs: true, isActive: true } })
       .catch(() => null);
     if (!user || !user.isActive) return;
-    const pref = this.effective(user.notifPrefs, type);
+    const defaults = this.effective(user.notifPrefs, type);
+    const pref = { inApp: channels?.inApp ?? defaults.inApp, email: channels?.email ?? defaults.email };
 
     if (pref.inApp) {
       await this.prisma.notification
