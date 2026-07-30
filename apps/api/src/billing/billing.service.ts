@@ -28,7 +28,46 @@ export class BillingService {
 
   async subscription(orgId: string) {
     const sub = await this.prisma.subscription.findUnique({ where: { orgId }, include: { plan: true } });
-    return sub && sub.plan ? { ...sub, plan: withFeatureLabels(sub.plan) } : sub;
+    if (!sub) return sub;
+    const pendingPlan = sub.pendingPlanId ? await this.prisma.plan.findUnique({ where: { id: sub.pendingPlanId } }) : null;
+    return {
+      ...sub,
+      plan: sub.plan ? withFeatureLabels(sub.plan) : sub.plan,
+      pendingPlan: pendingPlan ? { id: pendingPlan.id, name: pendingPlan.name } : null,
+    };
+  }
+
+  /** Schedule a plan change (typically a downgrade) for the next renewal. The
+   *  current plan keeps running until currentPeriodEnd, then the pending plan is
+   *  applied. Upgrades go through checkout instead (immediate). */
+  async scheduleChange(orgId: string, planId: string, keywords?: number | null) {
+    const sub = await this.prisma.subscription.findUnique({ where: { orgId } });
+    if (!sub || !["ACTIVE", "TRIALING"].includes(sub.status)) throw new BadRequestException("You need an active subscription to schedule a plan change.");
+    if (planId === sub.planId) throw new BadRequestException("You're already on this plan.");
+    const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
+    if (!plan) throw new BadRequestException("Plan not found.");
+    await this.prisma.subscription.update({ where: { orgId }, data: { pendingPlanId: planId, pendingKeywords: keywords ?? null } });
+    await this.notifyOrgAdmins(orgId, { title: "Plan change scheduled", body: `You'll switch to the ${plan.name} plan at your next renewal.`, link: "/dashboard/settings/billing" });
+    return { scheduled: true, planName: plan.name, effectiveAt: sub.currentPeriodEnd };
+  }
+
+  /** Cancel a scheduled (pending) plan change — stay on the current plan. */
+  async cancelScheduledChange(orgId: string) {
+    await this.prisma.subscription.update({ where: { orgId }, data: { pendingPlanId: null, pendingKeywords: null } }).catch(() => {});
+    return { ok: true };
+  }
+
+  /** Apply a scheduled plan change (called at renewal): switch the plan +
+   *  keyword override and clear the pending fields. */
+  private async applyPendingChange(orgId: string) {
+    const sub = await this.prisma.subscription.findUnique({ where: { orgId } });
+    if (!sub?.pendingPlanId) return;
+    const plan = await this.prisma.plan.findUnique({ where: { id: sub.pendingPlanId } });
+    if (!plan) { await this.prisma.subscription.update({ where: { orgId }, data: { pendingPlanId: null, pendingKeywords: null } }); return; }
+    const overrides: any = { ...((sub.limitOverrides as any) || {}) };
+    if (sub.pendingKeywords != null) overrides.keywords = sub.pendingKeywords; else delete overrides.keywords;
+    await this.prisma.subscription.update({ where: { orgId }, data: { planId: plan.id, limitOverrides: Object.keys(overrides).length ? overrides : null, pendingPlanId: null, pendingKeywords: null } });
+    await this.notifyOrgAdmins(orgId, { title: "Plan updated", body: `Your subscription is now on the ${plan.name} plan.`, link: "/dashboard/settings/billing" });
   }
 
   // The one payment gateway the super admin turned on (or "" if none configured).
@@ -48,7 +87,10 @@ export class BillingService {
       // Only ACTIVE means the subscription is truly billing (APPROVED is transient
       // and can precede the first charge).
       if (sub?.status === "ACTIVE") {
-        await this.activate(orgId, txn.planId, "paypal", null, txn.gatewayRef, null);
+        // Store PayPal's real next charge date so the UI shows "Renews <date>"
+        // instead of "No active billing period".
+        const nextBilling = sub?.billing_info?.next_billing_time ? new Date(sub.billing_info.next_billing_time) : null;
+        await this.activate(orgId, txn.planId, "paypal", null, txn.gatewayRef, nextBilling);
         return { active: true };
       }
     } catch {
@@ -286,7 +328,13 @@ export class BillingService {
       const tier = txn ? tiers.find((t) => Number(t.priceCents) === txn.amountCents) : null;
       if (tier) limitOverrides = { ...(limitOverrides || {}), keywords: tier.keywords };
     }
-    const data: any = { planId, status: "ACTIVE", gateway, gatewayCustomerId: customerId, gatewaySubscriptionId: subscriptionId, currentPeriodEnd: periodEnd, ...(limitOverrides !== undefined ? { limitOverrides } : {}) };
+    // Upgrade/plan-change: if a different gateway subscription was already
+    // running, cancel the old one at the gateway so the customer isn't billed
+    // twice. Also clear any scheduled (pending) change — this new plan wins.
+    if (existing?.gatewaySubscriptionId && existing.gatewaySubscriptionId !== subscriptionId) {
+      await this.cancelGatewaySub(existing.gateway, existing.gatewaySubscriptionId);
+    }
+    const data: any = { planId, status: "ACTIVE", gateway, gatewayCustomerId: customerId, gatewaySubscriptionId: subscriptionId, currentPeriodEnd: periodEnd, pendingPlanId: null, pendingKeywords: null, ...(limitOverrides !== undefined ? { limitOverrides } : {}) };
     if (existing) await this.prisma.subscription.update({ where: { orgId }, data });
     else await this.prisma.subscription.create({ data: { orgId, ...data } });
     await this.prisma.transaction.updateMany({ where: { orgId, planId, status: "pending", gateway }, data: { status: "succeeded" } });
@@ -321,13 +369,28 @@ export class BillingService {
       const { token, base } = await this.ppToken();
       await this.pp(`/v1/billing/subscriptions/${sub.gatewaySubscriptionId}/cancel`, "POST", { reason: "user requested" }, token, base).catch(() => {});
     }
-    await this.prisma.subscription.update({ where: { orgId }, data: { status: "CANCELED" } });
+    await this.prisma.subscription.update({ where: { orgId }, data: { status: "CANCELED", pendingPlanId: null, pendingKeywords: null } });
     await this.notifyOrgAdmins(orgId, {
       title: "Subscription canceled",
       body: "Your subscription was canceled. Access continues until the period ends.",
       link: "/dashboard/settings/billing",
     });
     return { ok: true };
+  }
+
+  /** Cancel a subscription at the payment gateway (best effort) — used when an
+   *  upgrade replaces an old subscription, so the customer is never charged twice. */
+  private async cancelGatewaySub(gateway: string | null | undefined, subId: string | null | undefined) {
+    if (!subId) return;
+    try {
+      if (gateway === "stripe") {
+        const stripe = await this.gw.stripe();
+        await stripe?.subscriptions.cancel(subId).catch(() => {});
+      } else if (gateway === "paypal") {
+        const { token, base } = await this.ppToken();
+        await this.pp(`/v1/billing/subscriptions/${subId}/cancel`, "POST", { reason: "plan changed" }, token, base).catch(() => {});
+      }
+    } catch { /* best effort — never block activation */ }
   }
 
   // ------------------------------------------------------------------ webhooks
@@ -383,11 +446,14 @@ export class BillingService {
         const txn =
           (subId && (await this.prisma.transaction.findFirst({ where: { orgId, gateway: "paypal", status: "pending", gatewayRef: subId } }))) ||
           (await this.prisma.transaction.findFirst({ where: { orgId, gateway: "paypal", status: "pending" }, orderBy: { createdAt: "desc" } }));
-        await this.activate(orgId, txn?.planId ?? null, "paypal", null, subId ?? null, null);
+        const nextBilling = res?.billing_info?.next_billing_time ? new Date(res.billing_info.next_billing_time) : null;
+        await this.activate(orgId, txn?.planId ?? null, "paypal", null, subId ?? null, nextBilling);
       } else if (type === "PAYMENT.SALE.COMPLETED" && subId) {
         const local = await this.prisma.subscription.findFirst({ where: { gatewaySubscriptionId: subId } });
         if (local) {
           await this.prisma.subscription.update({ where: { orgId: local.orgId }, data: { status: "ACTIVE" } });
+          // A new billing period started — apply any scheduled plan change (downgrade).
+          await this.applyPendingChange(local.orgId);
           await this.notifyOrgAdmins(local.orgId, { title: "Payment received", body: "Your subscription renewed successfully.", link: "/dashboard/settings/billing" });
         }
       } else if ((type === "BILLING.SUBSCRIPTION.CANCELLED" || type === "BILLING.SUBSCRIPTION.SUSPENDED") && subId) {

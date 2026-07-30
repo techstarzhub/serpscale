@@ -3,15 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  Search,
-  BarChart3,
-  Store,
   Loader2,
   CheckCircle2,
   AlertTriangle,
   Plus,
-  type LucideIcon,
 } from "lucide-react";
+import { SiGooglesearchconsole, SiGoogleanalytics, SiGooglemaps } from "react-icons/si";
+import { FcGoogle } from "react-icons/fc";
+import type { ComponentType, CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import {
   Card,
@@ -36,10 +35,10 @@ interface Status {
   googleConfigured: boolean;
 }
 
-const GOOGLE_SERVICES: { name: string; desc: string; icon: LucideIcon }[] = [
-  { name: "Search Console", desc: "Organic rankings, impressions & clicks", icon: Search },
-  { name: "Analytics (GA4)", desc: "Traffic, sessions, and conversions", icon: BarChart3 },
-  { name: "Business Profile", desc: "Local listings (needs Google approval)", icon: Store },
+const GOOGLE_SERVICES: { name: string; desc: string; icon: ComponentType<{ className?: string; style?: CSSProperties }>; color: string }[] = [
+  { name: "Search Console", desc: "Organic rankings, impressions & clicks", icon: SiGooglesearchconsole, color: "#458CF5" },
+  { name: "Analytics (GA4)", desc: "Traffic, sessions, and conversions", icon: SiGoogleanalytics, color: "#E37400" },
+  { name: "Business Profile", desc: "Local listings (needs Google approval)", icon: SiGooglemaps, color: "#34A853" },
 ];
 
 export default function IntegrationsPage() {
@@ -105,7 +104,7 @@ export default function IntegrationsPage() {
           <Card>
             <CardHeader className="flex-row items-center justify-between space-y-0">
               <div className="flex items-center gap-3">
-                <span className="grid h-11 w-11 place-items-center rounded-xl border border-border bg-card font-heading text-lg font-bold text-primary">G</span>
+                <span className="grid h-11 w-11 place-items-center rounded-xl border border-border bg-card"><FcGoogle className="h-6 w-6" /></span>
                 <div>
                   <CardTitle>Google accounts</CardTitle>
                   <CardDescription>
@@ -148,7 +147,7 @@ export default function IntegrationsPage() {
                 <Card key={s.name}>
                   <CardContent className="space-y-3 p-4">
                     <div className="flex items-center justify-between">
-                      <span className="grid h-10 w-10 place-items-center rounded-lg bg-primary/10 text-primary"><Icon className="h-5 w-5" /></span>
+                      <span className="grid h-10 w-10 place-items-center rounded-lg border border-border bg-card"><Icon className="h-5 w-5" style={{ color: s.color }} /></span>
                       <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", connected ? "bg-chart-2/12 text-chart-2" : "bg-secondary text-muted-foreground")}>
                         {connected ? "Active" : "Not connected"}
                       </span>

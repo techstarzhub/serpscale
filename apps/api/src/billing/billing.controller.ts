@@ -84,4 +84,16 @@ export class BillingController {
   cancel(@CurrentUser() user: AuthUser) {
     return this.billing.cancel(this.orgOf(user));
   }
+
+  @Post("schedule-change")
+  @RequirePermissions(PERMISSIONS.BILLING_MANAGE)
+  scheduleChange(@CurrentUser() user: AuthUser, @Body() body: { planId: string; keywords?: number }) {
+    return this.billing.scheduleChange(this.orgOf(user), body.planId, body.keywords);
+  }
+
+  @Post("cancel-scheduled-change")
+  @RequirePermissions(PERMISSIONS.BILLING_MANAGE)
+  cancelScheduledChange(@CurrentUser() user: AuthUser) {
+    return this.billing.cancelScheduledChange(this.orgOf(user));
+  }
 }

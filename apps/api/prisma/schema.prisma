@@ -260,6 +260,12 @@ model Subscription {
   // Overrides on top of the plan for a specific tenant (custom deals). Optional.
   limitOverrides   Json?
 
+  // Scheduled plan change (e.g. a downgrade) that takes effect at the next
+  // renewal — the current plan keeps running until currentPeriodEnd, then this
+  // pending plan is applied and cleared.
+  pendingPlanId    String?
+  pendingKeywords  Int?
+
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 }

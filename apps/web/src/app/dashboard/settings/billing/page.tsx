@@ -12,7 +12,7 @@ import { api } from "@/lib/api";
 
 interface Tier { keywords: number; priceCents: number }
 interface Plan { id: string; name: string; priceCents: number; currency: string; interval: string; limits: any; features: string[] | null; featureLabels?: string[]; pricingTiers?: Tier[] | null; trialDays?: number | null }
-interface Subscription { status: string; currentPeriodEnd: string | null; plan: Plan | null }
+interface Subscription { status: string; currentPeriodEnd: string | null; plan: Plan | null; pendingPlan?: { id: string; name: string } | null }
 interface Meter { used: number; limit: number | null }
 interface Usage { plan: string | null; status: string | null; projects: Meter; seats: Meter; clients: Meter; keywords: { limit: number | null } }
 interface Txn { id: string; planName: string | null; amountCents: number; currency: string; status: string; gateway: string; createdAt: string }
@@ -121,9 +121,26 @@ function BillingInner() {
   }
 
   async function cancel() {
-    if (!confirm("Cancel your subscription? Access continues until the period ends.")) return;
+    if (!confirm("Cancel your subscription? Access continues until the period ends, and no further payments will be taken.")) return;
     setBusy("cancel");
     try { await api.post("/billing/cancel"); await load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } finally { setBusy(null); }
+  }
+
+  // Downgrade → scheduled at the next renewal (current plan keeps running; no extra charge).
+  async function scheduleDowngrade(planId: string, planName: string, keywords?: number | null) {
+    const when = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString() : "your next renewal";
+    if (!confirm(`Downgrade to ${planName}?\n\nYour current plan stays active until ${when}. After that you'll move to ${planName}. You won't be charged anything extra.`)) return;
+    setBusy("sched" + planId);
+    try { await api.post("/billing/schedule-change", { planId, keywords: keywords ?? undefined }); await load(); }
+    catch (e) { alert(e instanceof Error ? e.message : "Could not schedule the change"); }
+    finally { setBusy(null); }
+  }
+
+  async function cancelScheduled() {
+    setBusy("cancelsched");
+    try { await api.post("/billing/cancel-scheduled-change"); await load(); }
+    catch (e) { alert(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(null); }
   }
 
   if (loading) return <Card><CardContent className="flex items-center gap-3 py-10 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading billing…</CardContent></Card>;
@@ -145,11 +162,17 @@ function BillingInner() {
               <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary"><CreditCard className="h-5 w-5" /></span>
               <div>
                 <div className="flex items-center gap-2 font-semibold">{sub?.plan?.name ?? "No plan"} {sub && <Badge className={cn("px-1.5 py-0 text-[10px]", statusTone(sub.status))}>{sub.status}</Badge>}</div>
-                <div className="text-xs text-muted-foreground">{sub?.currentPeriodEnd ? `${sub.status === "TRIALING" ? "Trial ends" : "Renews"} ${new Date(sub.currentPeriodEnd).toLocaleDateString()}` : "No active billing period"}</div>
+                <div className="text-xs text-muted-foreground">{sub?.currentPeriodEnd ? `${sub.status === "TRIALING" ? "Trial ends" : "Renews"} ${new Date(sub.currentPeriodEnd).toLocaleDateString()}` : sub && (sub.status === "ACTIVE" || sub.status === "TRIALING") ? "Renews automatically" : "No active billing period"}</div>
               </div>
             </div>
             {sub && sub.status === "ACTIVE" && <Button variant="outline" size="sm" onClick={cancel} disabled={busy === "cancel"}>{busy === "cancel" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Cancel plan"}</Button>}
           </div>
+          {sub?.pendingPlan && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-chart-3/30 bg-chart-3/10 px-3.5 py-2.5 text-sm">
+              <span>Scheduled: switches to <b>{sub.pendingPlan.name}</b> {sub.currentPeriodEnd ? `on ${new Date(sub.currentPeriodEnd).toLocaleDateString()}` : "at your next renewal"}. No extra charge.</span>
+              <Button variant="outline" size="sm" onClick={cancelScheduled} disabled={busy === "cancelsched"}>{busy === "cancelsched" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Keep current plan"}</Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -211,6 +234,10 @@ function BillingInner() {
           {plans.map((p) => {
             const isCurrent = sub?.plan?.id === p.id; // the plan you're on, any status
             const current = isCurrent && sub?.status === "ACTIVE"; // active + paying
+            // Upgrade vs downgrade, relative to the current active/trialing plan.
+            const hasActivePlan = !!sub && (sub.status === "ACTIVE" || sub.status === "TRIALING") && !!sub.plan;
+            const isDowngrade = hasActivePlan && !isCurrent && p.priceCents < sub!.plan!.priceCents;
+            const isUpgrade = hasActivePlan && !isCurrent && p.priceCents > sub!.plan!.priceCents;
             const limits = p.limits ?? {};
             return (
               <Card key={p.id} className={cn(isCurrent && "ring-2 ring-primary")}>
@@ -250,15 +277,18 @@ function BillingInner() {
                     )}
                     {current ? (
                       <Button className="w-full" variant="outline" disabled>Current plan</Button>
+                    ) : isDowngrade ? (
+                      <Button className="w-full" variant="outline" onClick={() => scheduleDowngrade(p.id, p.name, selTier(p)?.keywords)} disabled={!!busy}>{busy === "sched" + p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : `Downgrade to ${p.name}`}</Button>
                     ) : p.priceCents === 0 ? (
                       <Button className="w-full" onClick={() => subscribe(p.id, "manual")} disabled={!!busy}>{busy === p.id + "manual" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Switch to Free"}</Button>
                     ) : gateway === "stripe" ? (
-                      <Button className="w-full gap-2" onClick={() => subscribe(p.id, "stripe", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "stripe" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CreditCard className="h-4 w-4" /> Pay with card</>}</Button>
+                      <Button className="w-full gap-2" onClick={() => subscribe(p.id, "stripe", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "stripe" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CreditCard className="h-4 w-4" /> {isUpgrade ? "Upgrade — card" : "Pay with card"}</>}</Button>
                     ) : gateway === "paypal" ? (
-                      <Button className="w-full gap-2 bg-[#003087] text-white hover:bg-[#00256b]" onClick={() => subscribe(p.id, "paypal", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "paypal" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FaPaypal className="h-4 w-4 text-[#009cde]" /> <span>Pay<span className="text-[#009cde]">Pal</span></span></>}</Button>
+                      <Button className="w-full gap-2 bg-[#003087] text-white hover:bg-[#00256b]" onClick={() => subscribe(p.id, "paypal", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "paypal" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FaPaypal className="h-4 w-4 text-[#009cde]" /> <span>{isUpgrade ? "Upgrade · " : ""}Pay<span className="text-[#009cde]">Pal</span></span></>}</Button>
                     ) : (
                       <Button className="w-full" variant="outline" disabled>Payments not available</Button>
                     )}
+                    {isUpgrade && <p className="text-center text-[11px] text-muted-foreground">Takes effect immediately · old plan auto-canceled</p>}
                   </div>
                 </CardContent>
               </Card>

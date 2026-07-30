@@ -18,6 +18,25 @@ interface Tokens {
   refreshToken: string;
 }
 
+// Canonicalize an email so alias tricks can't spin up duplicate accounts / free
+// trials. Plus-addressing (user+tag@) is an alias of the base address, so it's
+// stripped for every provider; Gmail additionally ignores dots in the local
+// part (and googlemail == gmail), so those are collapsed too. This makes
+// techstarzhub+1@gmail.com, techstarzhub+99@gmail.com and tech.starzhub@gmail.com
+// all resolve to the same account.
+export function normalizeEmail(raw: string): string {
+  const e = (raw || "").trim().toLowerCase();
+  const at = e.lastIndexOf("@");
+  if (at < 1 || at === e.length - 1) return e;
+  let local = e.slice(0, at);
+  let domain = e.slice(at + 1);
+  const plus = local.indexOf("+");
+  if (plus >= 0) local = local.slice(0, plus); // strip +tag alias (all providers)
+  if (domain === "googlemail.com") domain = "gmail.com";
+  if (domain === "gmail.com") local = local.replace(/\./g, ""); // Gmail ignores dots
+  return `${local}@${domain}`;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -31,7 +50,9 @@ export class AuthService {
   // ---- Signup: email-OTP verified. The account is only created once the code
   // is confirmed, so unverified emails never become real accounts. ----
   async signup(input: { name?: string; email: string; password: string; plan?: string; keywords?: number; trial?: boolean }): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
-    const email = input.email.toLowerCase();
+    // Normalize first so +tag / dot aliases can't register (and re-trial) around a
+    // banned or existing account.
+    const email = normalizeEmail(input.email);
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new ConflictException("An account with this email already exists.");
     const passwordHash = await bcrypt.hash(input.password, 12);
@@ -47,7 +68,7 @@ export class AuthService {
 
   // ---- Login: password first, then an email OTP (2FA) when SMTP is set up. ----
   async login(input: { email: string; password: string }): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
-    const email = input.email.toLowerCase();
+    const email = normalizeEmail(input.email);
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user || !user.isActive) throw new UnauthorizedException("Invalid email or password.");
     const ok = await bcrypt.compare(input.password, user.passwordHash);
@@ -60,7 +81,8 @@ export class AuthService {
   }
 
   // ---- Verify the emailed code and complete signup or login. ----
-  async verifyOtp(purpose: "SIGNUP" | "LOGIN", email: string, code: string): Promise<Tokens> {
+  async verifyOtp(purpose: "SIGNUP" | "LOGIN", emailInput: string, code: string): Promise<Tokens> {
+    const email = normalizeEmail(emailInput);
     const payload = await this.otp.verify(email, purpose, code);
     if (purpose === "SIGNUP") {
       const p = payload ?? {};
@@ -72,14 +94,14 @@ export class AuthService {
       const user = await this.createAccount(p);
       return this.issueTokens(user);
     }
-    const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user || !user.isActive) throw new UnauthorizedException("Account not found.");
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     return this.issueTokens(user);
   }
 
   async resendOtp(purpose: "SIGNUP" | "LOGIN", email: string) {
-    return this.otp.resend(email, purpose);
+    return this.otp.resend(normalizeEmail(email), purpose);
   }
 
   // Create a tenant + its ADMIN. Trial (or organic) signups start on the default
@@ -115,7 +137,7 @@ export class AuthService {
   }
 
   async forgotPassword(email: string) {
-    const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const user = await this.prisma.user.findUnique({ where: { email: normalizeEmail(email) } });
     // Respond identically whether or not the email exists (no account enumeration).
     // Deactivated accounts cannot reset (would let them regain access).
     if (user && user.isActive) {
