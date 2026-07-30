@@ -60,6 +60,10 @@ model User {
   // (set password, profile photo, theme). Invited members / clients start null so
   // they get the wizard; self-signup owners and existing users are marked done.
   onboardedAt    DateTime?
+  // True for users created with a temporary password (invited members / clients)
+  // so the onboarding wizard shows the "set your password" step. Self-signup
+  // owners chose their own password, so this stays false and that step is hidden.
+  mustSetPassword Boolean  @default(false)
   // When the password was last changed/reset. Access tokens (stateless JWTs)
   // issued BEFORE this instant are rejected by JwtStrategy, so a password reset
   // invalidates already-minted access tokens — not just refresh tokens.

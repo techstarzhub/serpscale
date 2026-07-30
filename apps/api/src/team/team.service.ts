@@ -136,6 +136,7 @@ export class TeamService {
         orgId,
         customRoleId: makeAdmin ? null : dto.customRoleId ?? null,
         passwordHash: await bcrypt.hash(tempPassword, 12),
+        mustSetPassword: true, // temp password → wizard asks them to set their own
       },
       select: { id: true, email: true, name: true },
     });

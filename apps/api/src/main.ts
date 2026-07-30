@@ -27,8 +27,23 @@ async function bootstrap() {
     process.env.WEB_ORIGIN || "http://localhost:3000",
     process.env.MARKETING_ORIGIN || "http://localhost:3020",
   ];
+  const appDomain = (process.env.APP_DOMAIN || "serpscale.com").toLowerCase();
   app.enableCors({
-    origin: allowedOrigins,
+    // Allow the dashboard + marketing origins, plus ANY white-label tenant
+    // subdomain of the app domain (‹agency›.serpscale.com) and *.localhost in dev.
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // non-browser / same-origin
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      try {
+        const host = new URL(origin).hostname.toLowerCase();
+        if (host === appDomain || host.endsWith("." + appDomain) || host.endsWith(".localhost") || host === "localhost") {
+          return cb(null, true);
+        }
+      } catch {
+        /* fall through */
+      }
+      return cb(new Error("Not allowed by CORS"), false);
+    },
     credentials: true,
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

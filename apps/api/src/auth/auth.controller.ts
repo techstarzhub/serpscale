@@ -3,6 +3,7 @@ import { Throttle } from "@nestjs/throttler";
 import { Request, Response } from "express";
 import { AuthService } from "./auth.service";
 import { setAuthCookies, clearAuthCookies } from "./cookies.util";
+import { tenantSlugFromRequest } from "../common/tenant.util";
 import { LoginDto } from "./dto/login.dto";
 import { SignupDto } from "./dto/signup.dto";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
@@ -33,16 +34,16 @@ export class AuthController {
 
   @Throttle({ default: { limit: 8, ttl: 60_000 } })
   @Post("login")
-  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
-    const r = await this.auth.login(dto);
+  async login(@Body() dto: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const r = await this.auth.login(dto, tenantSlugFromRequest(req));
     if ("tokens" in r) { setAuthCookies(res, r.tokens); return { ok: true }; }
     return r; // { otpRequired, email }
   }
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post("verify-otp")
-  async verifyOtp(@Body() dto: VerifyOtpDto, @Res({ passthrough: true }) res: Response) {
-    setAuthCookies(res, await this.auth.verifyOtp(dto.purpose, dto.email, dto.code));
+  async verifyOtp(@Body() dto: VerifyOtpDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    setAuthCookies(res, await this.auth.verifyOtp(dto.purpose, dto.email, dto.code, tenantSlugFromRequest(req)));
     return { ok: true };
   }
 
@@ -51,10 +52,10 @@ export class AuthController {
   // for a first-time member). GET so it works straight from an email link.
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Get("magic")
-  async magic(@Query("token") token: string, @Res() res: Response) {
+  async magic(@Query("token") token: string, @Req() req: Request, @Res() res: Response) {
     const web = process.env.WEB_ORIGIN || "http://localhost:3000";
     try {
-      setAuthCookies(res, await this.auth.consumeLoginLink(token));
+      setAuthCookies(res, await this.auth.consumeLoginLink(token, tenantSlugFromRequest(req)));
       return res.redirect(`${web}/dashboard`);
     } catch {
       return res.redirect(`${web}/login?link=expired`);

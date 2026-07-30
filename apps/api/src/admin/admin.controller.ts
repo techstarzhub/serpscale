@@ -171,3 +171,14 @@ export class PublicPlansController {
     return this.admin.publicPlans();
   }
 }
+
+// White-label brand for a tenant subdomain, read by the sign-in form (no auth).
+@Controller("public/branding")
+export class PublicBrandingController {
+  constructor(private readonly admin: AdminService) {}
+
+  @Get(":slug")
+  branding(@Param("slug") slug: string) {
+    return this.admin.publicBranding(slug);
+  }
+}

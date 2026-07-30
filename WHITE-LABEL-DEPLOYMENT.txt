@@ -1,0 +1,94 @@
+================================================================================
+ WHITE-LABEL SUBDOMAINS — SERVER / DEPLOYMENT NOTES
+================================================================================
+
+WHAT THIS IS
+------------
+Agency-tier customers (plans bigger than Freelancer: Agency / Agency Plus /
+Enterprise) enter an "Agency name" at signup. That name becomes:
+  - the organization's public name + white-label brand (shown in the sidebar), and
+  - the organization's `slug`, which is their SUBDOMAIN, e.g.
+        techstarz-hub.serpscale.com
+
+Each subdomain is LOCKED to its own organization:
+  - Only that org's users (and their clients) can sign in / use that subdomain.
+  - A user from another org gets: "This account isn't part of this workspace."
+  - An unknown subdomain (e.g. abc.serpscale.com that maps to no org) is blocked
+    with "Workspace not found." — both the sign-in form and the API reject it.
+  - The platform SUPER ADMIN is exempt (can access any workspace).
+
+Enforcement is done SERVER-SIDE in the API (auth login, OTP verify, magic-link,
+and on every authenticated request via the JWT strategy), because cookies can be
+shared across subdomains — the API therefore checks the request Origin on every
+call. The web "Workspace not found" page is just the friendly front door.
+
+
+REQUIRED TO GO LIVE (infra you must set up)
+-------------------------------------------
+1) WILDCARD DNS
+   Point a wildcard record at the WEB app (the Next.js dashboard):
+        *.serpscale.com   ->   (same target as app.serpscale.com)
+   On Vercel/Netlify: add "*.serpscale.com" as a domain on the web project.
+
+2) WILDCARD TLS CERTIFICATE
+   Issue/enable a cert for  *.serpscale.com
+   (Let's Encrypt DNS-01 challenge, or your host's managed wildcard cert.
+    Vercel/Netlify issue this automatically once the wildcard domain is added.)
+
+3) ENVIRONMENT VARIABLES
+   API  (apps/api):
+        APP_DOMAIN=serpscale.com
+        WEB_ORIGIN=https://app.serpscale.com        (your main app origin)
+        MARKETING_ORIGIN=https://serpscale.com
+   WEB  (apps/web):
+        NEXT_PUBLIC_APP_DOMAIN=serpscale.com
+        NEXT_PUBLIC_MARKETING_URL=https://serpscale.com
+   (APP_DOMAIN / NEXT_PUBLIC_APP_DOMAIN are what strip the subdomain to find the
+    tenant slug. If they are wrong, tenant resolution breaks.)
+
+4) COOKIES / API HOST  *** IMPORTANT ***
+   Session cookies are httpOnly and set by the API (SameSite=Lax, Secure in prod).
+   For them to be sent from every "*.serpscale.com" subdomain to the API, the API
+   MUST run on a subdomain of the SAME registrable domain, e.g.:
+        api.serpscale.com
+   Because api.serpscale.com and techstarz-hub.serpscale.com are the SAME site,
+   SameSite=Lax cookies are sent correctly.
+
+   If you host the API on a DIFFERENT domain (e.g. serpscale-api.com), the browser
+   treats calls as cross-site and Lax cookies will NOT be sent. In that case switch
+   the two cookies to  SameSite=None; Secure  in:
+        apps/api/src/auth/cookies.util.ts   (setAuthCookies)
+   Ask the dev to flip these if the API lives on a separate domain.
+
+5) CORS (already handled in code)
+   apps/api/src/main.ts allows the WEB/MARKETING origins plus any subdomain of
+   APP_DOMAIN and *.localhost (dev). No change needed as long as APP_DOMAIN is set.
+
+
+HOW A SUBDOMAIN IS CREATED
+--------------------------
+Automatically at signup for agency-tier plans: the "Agency name" is slugified into
+a unique org slug (e.g. "TechStarz Hub" -> "techstarz-hub"). Nothing manual needed.
+The agency owner then uploads their logo during onboarding; it appears on the
+sidebar AND on their subdomain's sign-in page.
+
+
+LOCAL / DEV TESTING (no DNS needed)
+-----------------------------------
+Chrome resolves *.localhost automatically. With the app on localhost:3000:
+    http://techstarz-hub.localhost:3000/login     -> that agency's branded login
+    http://abc.localhost:3000/login               -> "Workspace not found"
+    http://localhost:3000/login                   -> default SerpScale login
+The API reads the Origin header, so the same rules apply to every API call.
+
+
+QUICK VERIFICATION CHECKLIST
+----------------------------
+[ ] *.serpscale.com resolves and serves the app over HTTPS
+[ ] Sign up on Agency plan -> subdomain (slug) is created, sidebar shows agency name
+[ ] Visit <slug>.serpscale.com/login -> shows the agency's brand
+[ ] Log in there as that org's user -> works
+[ ] Log in there as a DIFFERENT org's user -> "This account isn't part of this workspace."
+[ ] Visit a random <unknown>.serpscale.com -> "Workspace not found."
+[ ] Main app.serpscale.com/login -> default SerpScale brand, everyone can log in
+================================================================================

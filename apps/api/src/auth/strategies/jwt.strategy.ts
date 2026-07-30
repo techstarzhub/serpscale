@@ -3,6 +3,7 @@ import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { Request } from "express";
 import { PrismaService } from "../../prisma/prisma.service";
+import { tenantSlugFromRequest } from "../../common/tenant.util";
 
 // Read the JWT from the httpOnly access_token cookie.
 function cookieExtractor(req: Request): string | null {
@@ -30,10 +31,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         return s;
       })(),
       ignoreExpiration: false,
+      passReqToCallback: true,
     });
   }
 
-  async validate(payload: JwtPayload) {
+  async validate(req: Request, payload: JwtPayload) {
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || !user.isActive) throw new UnauthorizedException();
     // Reject access tokens minted before the user's last password change/reset —
@@ -41,6 +43,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // victim resets their password. (1s skew tolerance for issue/write ordering.)
     if (user.passwordChangedAt && payload.iat && payload.iat * 1000 < user.passwordChangedAt.getTime() - 1000) {
       throw new UnauthorizedException("Session expired.");
+    }
+    // White-label subdomain lock: a session may only be used on its own org's
+    // subdomain (or the main app domain). This is the real boundary — cookies can
+    // be shared across subdomains, so we verify the request's Origin every call.
+    const tenantSlug = tenantSlugFromRequest(req);
+    if (tenantSlug && user.role !== "SUPER_ADMIN") {
+      const org = await this.prisma.organization.findUnique({ where: { slug: tenantSlug }, select: { id: true, isActive: true } });
+      if (!org || !org.isActive || org.id !== user.orgId) {
+        throw new UnauthorizedException("This account isn't part of this workspace.");
+      }
     }
     return {
       id: user.id,

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
@@ -26,6 +26,20 @@ function SignupForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [otpEmail, setOtpEmail] = useState<string | null>(null);
+  // Agency-tier plans (bigger than Freelancer) collect an agency name at signup.
+  const [isAgencyTier, setIsAgencyTier] = useState(false);
+
+  useEffect(() => {
+    if (!plan) return;
+    api
+      .get<{ slug: string; sortOrder: number }[]>("/public/plans")
+      .then((plans) => {
+        const sel = plans.find((p) => p.slug === plan);
+        const free = plans.find((p) => p.slug === "freelancer");
+        if (sel && free && sel.sortOrder > free.sortOrder) setIsAgencyTier(true);
+      })
+      .catch(() => {});
+  }, [plan]);
 
   // After the account exists + the user is signed in: paid plans go to checkout
   // and only reach the dashboard once payment succeeds; everyone else goes in.
@@ -64,6 +78,7 @@ function SignupForm() {
         plan: plan ?? undefined,
         keywords: keywords ? Number(keywords) : undefined,
         trial: isTrial,
+        agencyName: isAgencyTier ? String(form.get("agencyName") || "").trim() || undefined : undefined,
       });
       if (res.otpRequired) setOtpEmail(res.email ?? String(form.get("email")));
       else await finish();
@@ -96,6 +111,14 @@ function SignupForm() {
           <Label htmlFor="name">Full name</Label>
           <Input id="name" name="name" type="text" placeholder="Jane Doe" required autoComplete="name" />
         </div>
+
+        {isAgencyTier && (
+          <div className="space-y-2">
+            <Label htmlFor="agencyName">Agency name</Label>
+            <Input id="agencyName" name="agencyName" type="text" placeholder="e.g. TechStarz Hub" required autoComplete="organization" />
+            <p className="text-xs text-muted-foreground">Shown across your white-labeled dashboard and used for your subdomain.</p>
+          </div>
+        )}
 
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>

@@ -1,8 +1,7 @@
 import { RedirectIfAuthed } from "@/components/providers/redirect-if-authed";
+import { WhiteLabelBrand } from "@/components/auth/white-label-brand";
+import { TenantGate } from "@/components/auth/tenant-gate";
 import { Search, LineChart, Link2, FileSearch, Check } from "lucide-react";
-
-// Clicking the logo returns to the marketing home page.
-const MARKETING_HOME = process.env.NEXT_PUBLIC_MARKETING_URL || "https://serpscale.com";
 
 const FEATURES = [
   { icon: Search, label: "Keyword research with real search volume" },
@@ -22,12 +21,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <div className="pointer-events-none absolute -bottom-32 -right-16 -z-10 h-[26rem] w-[26rem] rounded-full bg-cyan-300/20 blur-3xl auth-float-slow" />
         <div className="pointer-events-none absolute inset-0 -z-10 opacity-[0.07] [background-image:linear-gradient(white_1px,transparent_1px),linear-gradient(90deg,white_1px,transparent_1px)] [background-size:38px_38px]" />
 
-        {/* Logo lockup → home */}
-        <a href={MARKETING_HOME} className="flex items-center gap-3 transition-opacity hover:opacity-90">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/serpscale-logo.svg" alt="SerpScale" className="h-10 w-10 rounded-xl bg-white p-1 shadow-lg" />
-          <span className="font-heading text-xl font-extrabold tracking-tight">SerpScale</span>
-        </a>
+        {/* Logo lockup → home (white-label on a tenant subdomain) */}
+        <WhiteLabelBrand variant="panel" />
 
         {/* Headline + features */}
         <div className="space-y-6">
@@ -76,15 +71,13 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <div className="pointer-events-none absolute -bottom-40 -left-24 h-80 w-80 rounded-full bg-primary/[0.04] blur-3xl" />
         <div className="relative w-full max-w-sm">
           {/* Mobile brand mark → home (brand panel is hidden on small screens) */}
-          <a href={MARKETING_HOME} className="mb-8 flex items-center gap-2.5 lg:hidden">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/serpscale-logo.svg" alt="SerpScale" className="h-9 w-9" />
-            <span className="font-heading text-lg font-extrabold tracking-tight">
-              <span className="text-primary">Serp</span>Scale
-            </span>
-          </a>
+          <div className="mb-8 lg:hidden">
+            <WhiteLabelBrand variant="mark" />
+          </div>
           <div className="auth-rise">
-            <RedirectIfAuthed>{children}</RedirectIfAuthed>
+            <TenantGate>
+              <RedirectIfAuthed>{children}</RedirectIfAuthed>
+            </TenantGate>
           </div>
           {/* Trust footer */}
           <div className="mt-9 flex items-center justify-center gap-2 text-[11.5px] text-muted-foreground">

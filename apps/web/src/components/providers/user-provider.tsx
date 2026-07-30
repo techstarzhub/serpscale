@@ -12,6 +12,9 @@ export interface CurrentUser {
   avatarUrl: string | null;
   // Null until the user finishes the first-login onboarding wizard.
   onboardedAt?: string | null;
+  // True for temp-password users (invited/clients) → onboarding shows a
+  // "set your password" step. Self-signup owners already have a password.
+  mustSetPassword?: boolean;
   // True when an admin is "viewing as" this user (impersonation session).
   impersonating?: boolean;
   // Server-persisted dashboard theme (dynamic CSS tokens + light/dark), so it

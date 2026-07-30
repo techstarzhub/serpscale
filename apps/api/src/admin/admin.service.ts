@@ -34,6 +34,24 @@ export class AdminService {
 
   // Public, unauthenticated: the active/public plans rendered on the marketing
   // pricing page (name, price, keyword tiers, features — no internal fields).
+  // White-label branding for a tenant subdomain (‹slug›.serpscale.com), consumed
+  // by the sign-in form so it shows the agency's brand. Public + safe: only the
+  // display name + logo, nothing sensitive.
+  async publicBranding(slug: string) {
+    const org = await this.prisma.organization
+      .findUnique({ where: { slug: (slug || "").toLowerCase() }, select: { branding: true, isActive: true } })
+      .catch(() => null);
+    // `exists` lets the sign-in form block unknown subdomains (abc.serpscale.com).
+    if (!org || !org.isActive) return { exists: false, agencyName: null, logoDataUrl: null, logoBg: null };
+    const b = (org.branding as any) ?? {};
+    return {
+      exists: true,
+      agencyName: b.agencyName || null,
+      logoDataUrl: b.logoDataUrl || null,
+      logoBg: b.logoBg || null,
+    };
+  }
+
   async publicPlans() {
     const plans = await this.prisma.plan.findMany({
       where: { isActive: true, isPublic: true },

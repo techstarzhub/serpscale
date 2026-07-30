@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Shield, Users, Plus, Trash2, Loader2, Check, UserPlus, Copy, KeyRound, Eye } from "lucide-react";
+import { Shield, Users, Plus, Trash2, Loader2, Check, UserPlus, Copy, KeyRound, Eye, Megaphone, Power } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 import { useCan, useCurrentUser, useLimit } from "@/components/providers/user-provider";
 import { LockedFeature } from "@/components/ui/locked-feature";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { DropdownMenu } from "@/components/ui/dropdown-menu";
 
 interface PermItem { key: string; label: string }
 interface PermGroup { group: string; items: PermItem[] }
@@ -339,22 +340,43 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
                 <span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", m.isActive ? "bg-chart-2/12 text-chart-2" : "bg-muted text-muted-foreground")}>{m.isActive ? "Active" : "Inactive"}</span>
               </div>
 
-              {/* Actions — wrap on small screens so nothing overflows */}
+              {/* Actions — collapsed into a single ⋮ menu */}
               {canManage && (
-                <div className="flex flex-wrap gap-1.5 lg:justify-end">
-                  {canImpersonate && m.id !== user?.id && m.role !== "ADMIN" && (
-                    <Button size="sm" variant="outline" onClick={async () => { if (!(await confirm({ title: "Login as this member?", description: `You'll browse the dashboard as ${m.name || m.email}. A banner lets you return to your own account anytime.`, confirmText: "Login as" }))) return; try { await api.post("/auth/impersonate", { userId: m.id }); window.location.href = "/dashboard"; } catch (e) { alert(e instanceof Error ? e.message : "Could not view as this user"); } }}><Eye className="h-3.5 w-3.5" /> Login as</Button>
-                  )}
-                  <Button size="sm" variant="outline" onClick={async () => { if (!(await confirm({ title: "Reset password?", description: `A new password will be generated for ${m.name || m.email} and emailed to them.`, confirmText: "Reset password" }))) return; try { const r = await api.post<{ email: string; tempPassword: string }>(`/team/members/${m.id}/reset-password`, {}); setTempPw({ email: r.email, pw: r.tempPassword }); } catch (e) { alert(e instanceof Error ? e.message : "Could not reset password"); } }}><KeyRound className="h-3.5 w-3.5" /> Reset</Button>
-                  {m.role !== "ADMIN" && (
-                    <>
-                      <Button size="sm" variant="outline" onClick={() => openCampaigns(m)}>Campaigns</Button>
-                      <Button size="sm" variant="outline" onClick={async () => { try { await api.patch(`/team/members/${m.id}`, { isActive: !m.isActive }); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not update member"); } }}>{m.isActive ? "Deactivate" : "Activate"}</Button>
-                    </>
-                  )}
-                  {m.id !== user?.id && (m.role !== "ADMIN" || isAdmin) && (
-                    <Button size="sm" variant="outline" className="text-destructive hover:border-destructive/40" onClick={async () => { if (!(await confirm({ title: "Delete member?", description: `Permanently delete ${m.name || m.email}. This removes their account and access and cannot be undone.`, confirmText: "Delete", destructive: true }))) return; try { await api.del(`/team/members/${m.id}`); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not delete member"); } }}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
-                  )}
+                <div className="flex justify-start lg:justify-end">
+                  <DropdownMenu
+                    items={[
+                      {
+                        label: "Login as",
+                        icon: <Eye className="h-4 w-4" />,
+                        hidden: !(canImpersonate && m.id !== user?.id && m.role !== "ADMIN"),
+                        onClick: async () => { if (!(await confirm({ title: "Login as this member?", description: `You'll browse the dashboard as ${m.name || m.email}. A banner lets you return to your own account anytime.`, confirmText: "Login as" }))) return; try { await api.post("/auth/impersonate", { userId: m.id }); window.location.href = "/dashboard"; } catch (e) { alert(e instanceof Error ? e.message : "Could not view as this user"); } },
+                      },
+                      {
+                        label: "Reset password",
+                        icon: <KeyRound className="h-4 w-4" />,
+                        onClick: async () => { if (!(await confirm({ title: "Reset password?", description: `A new password will be generated for ${m.name || m.email} and emailed to them.`, confirmText: "Reset password" }))) return; try { const r = await api.post<{ email: string; tempPassword: string }>(`/team/members/${m.id}/reset-password`, {}); setTempPw({ email: r.email, pw: r.tempPassword }); } catch (e) { alert(e instanceof Error ? e.message : "Could not reset password"); } },
+                      },
+                      {
+                        label: "Campaigns",
+                        icon: <Megaphone className="h-4 w-4" />,
+                        hidden: m.role === "ADMIN",
+                        onClick: () => openCampaigns(m),
+                      },
+                      {
+                        label: m.isActive ? "Deactivate" : "Activate",
+                        icon: <Power className="h-4 w-4" />,
+                        hidden: m.role === "ADMIN",
+                        onClick: async () => { try { await api.patch(`/team/members/${m.id}`, { isActive: !m.isActive }); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not update member"); } },
+                      },
+                      {
+                        label: "Delete",
+                        icon: <Trash2 className="h-4 w-4" />,
+                        destructive: true,
+                        hidden: !(m.id !== user?.id && (m.role !== "ADMIN" || isAdmin)),
+                        onClick: async () => { if (!(await confirm({ title: "Delete member?", description: `Permanently delete ${m.name || m.email}. This removes their account and access and cannot be undone.`, confirmText: "Delete", destructive: true }))) return; try { await api.del(`/team/members/${m.id}`); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not delete member"); } },
+                      },
+                    ]}
+                  />
                 </div>
               )}
             </div>

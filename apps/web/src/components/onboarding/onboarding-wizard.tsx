@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, Loader2, Lock, Palette, Plus, Sparkles, Upload, UserRound } from "lucide-react";
+import { Building2, Check, ChevronRight, Loader2, Lock, Palette, Plus, Sparkles, Upload, UserRound } from "lucide-react";
 import { api } from "@/lib/api";
 import { useCurrentUser } from "@/components/providers/user-provider";
 import { useTheme } from "@/components/theme/theme-provider";
@@ -28,21 +28,40 @@ const ACCENTS = [
 
 const FONTS = FONT_OPTIONS.slice(0, 6);
 
-const STEPS = ["Welcome", "Password", "Profile", "Personalize"] as const;
+type StepKey = "welcome" | "password" | "profile" | "agency" | "personalize";
 
 export function OnboardingWizard() {
   const { user, refresh } = useCurrentUser();
   const { overrides, mode, setToken, setMode, applyMany } = useTheme();
 
+  const needsPassword = !!user?.mustSetPassword;
+  const isOwner = user?.role === "ADMIN" && !!user?.orgId; // agency owner → branding step
+
+  // Steps are adaptive: password only for temp-password users, agency branding
+  // only for org owners.
+  const steps = useMemo<StepKey[]>(() => {
+    const s: StepKey[] = ["welcome"];
+    if (needsPassword) s.push("password");
+    s.push("profile");
+    if (isOwner) s.push("agency");
+    s.push("personalize");
+    return s;
+  }, [needsPassword, isOwner]);
+
   const [step, setStep] = useState(0);
+  const current = steps[step];
+
   const [name, setName] = useState(user?.name ?? "");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(user?.avatarUrl ?? null);
+  const [agencyName, setAgencyName] = useState(user?.branding?.agencyName ?? "");
+  const [agencyLogo, setAgencyLogo] = useState<string | null>(user?.branding?.logoDataUrl ?? null);
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const logoRef = useRef<HTMLInputElement>(null);
 
   const brandName = user?.branding?.agencyName || "SerpScale";
   const brandLogo = user?.branding?.logoDataUrl || null;
@@ -51,10 +70,7 @@ export function OnboardingWizard() {
   const activeAccent = overrides["primary"] ?? null;
   const activeFont = overrides["font-sans"] ?? null;
 
-  const canNext = useMemo(() => {
-    if (step === 1) return pwValid; // password is the only required step
-    return true;
-  }, [step, pwValid]);
+  const canNext = current === "password" ? pwValid : true;
 
   function pickAccent(hex: string) {
     const hsl = hexToHslChannels(hex);
@@ -78,18 +94,34 @@ export function OnboardingWizard() {
     }
   }
 
+  function onLogoFile(file?: File) {
+    if (!file) return;
+    if (file.size > 500 * 1024) {
+      setError("Logo must be under 500 KB.");
+      return;
+    }
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = () => setAgencyLogo(String(reader.result));
+    reader.readAsDataURL(file);
+  }
+
   async function finish() {
-    if (!pwValid) {
-      setStep(1);
+    if (needsPassword && !pwValid) {
+      setStep(steps.indexOf("password"));
       setError("Please set a password of at least 8 characters.");
       return;
     }
     setError(null);
     setSubmitting(true);
     try {
+      // Owners: persist agency name + logo first so the sidebar reflects it.
+      if (isOwner && (agencyLogo !== (user?.branding?.logoDataUrl ?? null) || agencyName.trim() !== (user?.branding?.agencyName ?? ""))) {
+        await api.put("/team/branding", { agencyName: agencyName.trim() || undefined, logoDataUrl: agencyLogo });
+      }
       await api.post("/users/me/onboarding", {
         name: name.trim() || undefined,
-        newPassword: pw,
+        newPassword: needsPassword ? pw : undefined,
         themeOverrides: overrides,
         mode,
       });
@@ -102,7 +134,7 @@ export function OnboardingWizard() {
 
   function next() {
     setError(null);
-    if (step < STEPS.length - 1) setStep((s) => s + 1);
+    if (step < steps.length - 1) setStep((s) => s + 1);
     else void finish();
   }
 
@@ -128,7 +160,7 @@ export function OnboardingWizard() {
             </span>
           )}
           <div className="ml-auto flex items-center gap-1.5">
-            {STEPS.map((_, i) => (
+            {steps.map((_, i) => (
               <span
                 key={i}
                 className={cn(
@@ -142,7 +174,7 @@ export function OnboardingWizard() {
 
         {/* Body */}
         <div key={step} className="fade-up px-6 py-7">
-          {step === 0 && (
+          {current === "welcome" && (
             <div className="space-y-4 text-center">
               <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary">
                 <Sparkles className="h-7 w-7" />
@@ -150,14 +182,13 @@ export function OnboardingWizard() {
               <div>
                 <h2 className="font-heading text-2xl font-bold">Welcome{name ? `, ${name.split(" ")[0]}` : ""}!</h2>
                 <p className="mx-auto mt-2 max-w-sm text-sm text-muted-foreground">
-                  Let&apos;s set up your account in a few quick steps — secure your password, add a
-                  profile photo, and make the dashboard yours.
+                  Let&apos;s set up your account in a few quick steps and make the dashboard yours.
                 </p>
               </div>
             </div>
           )}
 
-          {step === 1 && (
+          {current === "password" && (
             <div className="space-y-4">
               <StepHeading icon={<Lock className="h-5 w-5" />} title="Set your password" subtitle="Replace the temporary password you were emailed." />
               <div className="space-y-1.5">
@@ -178,7 +209,7 @@ export function OnboardingWizard() {
             </div>
           )}
 
-          {step === 2 && (
+          {current === "profile" && (
             <div className="space-y-5">
               <StepHeading icon={<UserRound className="h-5 w-5" />} title="Your profile" subtitle="Add a name and a photo (optional)." />
               <div className="flex items-center gap-4">
@@ -205,7 +236,45 @@ export function OnboardingWizard() {
             </div>
           )}
 
-          {step === 3 && (
+          {current === "agency" && (
+            <div className="space-y-5">
+              <StepHeading icon={<Building2 className="h-5 w-5" />} title="Your agency brand" subtitle="Add your logo — it replaces the SerpScale brand across your dashboard." />
+              <div className="flex items-center gap-4">
+                <span className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-muted">
+                  {agencyLogo ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={agencyLogo} alt="Agency logo" className="h-full w-full object-contain" />
+                  ) : (
+                    <Building2 className="h-6 w-6 text-muted-foreground" />
+                  )}
+                </span>
+                <div>
+                  <input
+                    ref={logoRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    className="hidden"
+                    onChange={(e) => onLogoFile(e.target.files?.[0])}
+                  />
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => logoRef.current?.click()}>
+                      <Upload className="h-4 w-4" /> {agencyLogo ? "Change logo" : "Upload logo"}
+                    </Button>
+                    {agencyLogo && (
+                      <Button variant="ghost" size="sm" onClick={() => setAgencyLogo(null)}>Remove</Button>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">PNG, SVG or JPG, up to 500 KB.</p>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ob-agency">Agency name</Label>
+                <Input id="ob-agency" value={agencyName} onChange={(e) => setAgencyName(e.target.value)} placeholder="Your agency name" />
+              </div>
+            </div>
+          )}
+
+          {current === "personalize" && (
             <div className="space-y-5">
               <StepHeading icon={<Palette className="h-5 w-5" />} title="Make it yours" subtitle="Pick a look — you can fine-tune everything later in Settings → Appearance." />
 
@@ -298,10 +367,10 @@ export function OnboardingWizard() {
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-border px-6 py-4">
           <span className="text-xs text-muted-foreground">
-            Step {step + 1} of {STEPS.length}
+            Step {step + 1} of {steps.length}
           </span>
           <div className="flex items-center gap-2">
-            {step > 1 && !submitting && (
+            {step > 0 && !submitting && (
               <Button variant="ghost" size="sm" onClick={() => setStep((s) => s - 1)}>
                 Back
               </Button>
@@ -309,7 +378,7 @@ export function OnboardingWizard() {
             <Button onClick={next} disabled={!canNext || submitting}>
               {submitting ? (
                 <><Loader2 className="h-4 w-4 animate-spin" /> Finishing…</>
-              ) : step === STEPS.length - 1 ? (
+              ) : step === steps.length - 1 ? (
                 <>Finish <Check className="h-4 w-4" /></>
               ) : (
                 <>Continue <ChevronRight className="h-4 w-4" /></>

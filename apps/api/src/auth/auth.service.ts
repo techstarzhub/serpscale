@@ -37,14 +37,14 @@ export class AuthService {
 
   // ---- Signup: email-OTP verified. The account is only created once the code
   // is confirmed, so unverified emails never become real accounts. ----
-  async signup(input: { name?: string; email: string; password: string; plan?: string; keywords?: number; trial?: boolean }): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
+  async signup(input: { name?: string; email: string; password: string; plan?: string; keywords?: number; trial?: boolean; agencyName?: string }): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
     // Normalize first so +tag / dot aliases can't register (and re-trial) around a
     // banned or existing account.
     const email = normalizeEmail(input.email);
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new ConflictException("An account with this email already exists.");
     const passwordHash = await bcrypt.hash(input.password, 12);
-    const intent = { name: input.name ?? null, email, passwordHash, plan: input.plan ?? null, keywords: input.keywords ?? null, trial: input.trial ?? false };
+    const intent = { name: input.name ?? null, email, passwordHash, plan: input.plan ?? null, keywords: input.keywords ?? null, trial: input.trial ?? false, agencyName: input.agencyName?.trim() || null };
     // Only gate on OTP when we can actually deliver the code. Until the platform
     // SMTP is configured, create the account directly so no one is locked out.
     if (!(await this.email.platformReady())) {
@@ -54,13 +54,27 @@ export class AuthService {
     return this.otp.issue(email, "SIGNUP", intent);
   }
 
+  /** White-label subdomain lock: a tenant subdomain (‹slug›.serpscale.com) may
+   *  only be used by that org's own users. An unknown subdomain, or a user from a
+   *  different org, is rejected. The super admin (platform owner) is exempt, and
+   *  the main app domain (no tenant slug) has no restriction. */
+  async assertTenantAccess(user: { orgId: string | null; role: string }, tenantSlug: string | null) {
+    if (!tenantSlug) return;
+    if (user.role === "SUPER_ADMIN") return;
+    const org = await this.prisma.organization.findUnique({ where: { slug: tenantSlug }, select: { id: true, isActive: true } });
+    if (!org || !org.isActive) throw new UnauthorizedException("Workspace not found.");
+    if (org.id !== user.orgId) throw new UnauthorizedException("This account isn't part of this workspace.");
+  }
+
   // ---- Login: password first, then an email OTP (2FA) when SMTP is set up. ----
-  async login(input: { email: string; password: string }): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
+  async login(input: { email: string; password: string }, tenantSlug?: string | null): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
     const email = normalizeEmail(input.email);
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user || !user.isActive) throw new UnauthorizedException("Invalid email or password.");
     const ok = await bcrypt.compare(input.password, user.passwordHash);
     if (!ok) throw new UnauthorizedException("Invalid email or password.");
+    // Enforce the subdomain lock before doing anything else with the session.
+    await this.assertTenantAccess(user, tenantSlug ?? null);
     if (!(await this.email.platformReady())) {
       await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
       return { tokens: await this.issueTokens(user) };
@@ -69,7 +83,7 @@ export class AuthService {
   }
 
   // ---- Verify the emailed code and complete signup or login. ----
-  async verifyOtp(purpose: "SIGNUP" | "LOGIN", emailInput: string, code: string): Promise<Tokens> {
+  async verifyOtp(purpose: "SIGNUP" | "LOGIN", emailInput: string, code: string, tenantSlug?: string | null): Promise<Tokens> {
     const email = normalizeEmail(emailInput);
     const payload = await this.otp.verify(email, purpose, code);
     if (purpose === "SIGNUP") {
@@ -84,6 +98,7 @@ export class AuthService {
     }
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user || !user.isActive) throw new UnauthorizedException("Account not found.");
+    await this.assertTenantAccess(user, tenantSlug ?? null);
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     return this.issueTokens(user);
   }
@@ -95,9 +110,22 @@ export class AuthService {
   // Create a tenant + its ADMIN. Trial (or organic) signups start on the default
   // trial plan; a paid "Get started" signup gets NO subscription yet — the client
   // sends them to checkout, and access stays locked until they subscribe.
-  private async createAccount(p: { name: string | null; email: string; passwordHash: string; plan?: string | null; trial?: boolean }) {
+  private async createAccount(p: { name: string | null; email: string; passwordHash: string; plan?: string | null; trial?: boolean; agencyName?: string | null }) {
+    // Agency-tier plans (bigger than Freelancer) collect an agency name at signup:
+    // it becomes the org's public name, white-label brand, and subdomain slug, and
+    // the owner is routed through onboarding to add their logo.
+    let isAgency = false;
+    if (p.agencyName && p.plan) {
+      const [sel, free] = await Promise.all([
+        this.prisma.plan.findFirst({ where: { slug: p.plan }, select: { sortOrder: true } }),
+        this.prisma.plan.findFirst({ where: { slug: "freelancer" }, select: { sortOrder: true } }),
+      ]);
+      if (sel && free && sel.sortOrder > free.sortOrder) isAgency = true;
+    }
     const org = await this.prisma.organization.create({
-      data: { name: p.name ? `${p.name}'s Workspace` : "My Workspace", slug: await this.uniqueSlug(p.name || p.email.split("@")[0]) },
+      data: isAgency
+        ? { name: p.agencyName!, slug: await this.uniqueSlug(p.agencyName!), branding: { agencyName: p.agencyName } }
+        : { name: p.name ? `${p.name}'s Workspace` : "My Workspace", slug: await this.uniqueSlug(p.name || p.email.split("@")[0]) },
     });
     // A trial signup, or an organic signup with no chosen plan, starts on the
     // default trial plan. A paid plan choice defers to checkout (no subscription).
@@ -119,8 +147,10 @@ export class AuthService {
       }
     }
     const user = await this.prisma.user.create({
-      // Owner picked their own password at signup — no onboarding wizard needed.
-      data: { email: p.email, name: p.name, passwordHash: p.passwordHash, role: Role.ADMIN, orgId: org.id, onboardedAt: new Date() },
+      // Owner picked their own password at signup, so no password step is needed.
+      // Agency owners still go through onboarding (onboardedAt null) to add their
+      // logo + personalize; everyone else skips the wizard (onboardedAt now).
+      data: { email: p.email, name: p.name, passwordHash: p.passwordHash, role: Role.ADMIN, orgId: org.id, onboardedAt: isAgency ? null : new Date() },
     });
     // Platform-owner alert: full details of every new signup / trial.
     this.email.notifySuperAdmins(
@@ -221,6 +251,7 @@ export class AuthService {
         orgId: true,
         themeOverrides: true,
         onboardedAt: true,
+        mustSetPassword: true,
         avatarKey: true,
         clientId: true,
         clientOwner: true,
@@ -326,11 +357,14 @@ export class AuthService {
 
   /** Validate a magic-link token and mint a session. Reusable within the 24h
    *  window (not consumed on use) so an accidental double-click still works. */
-  async consumeLoginLink(token: string): Promise<Tokens> {
+  async consumeLoginLink(token: string, tenantSlug?: string | null): Promise<Tokens> {
     if (!token) throw new UnauthorizedException("Invalid or expired sign-in link.");
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
     const link = await this.prisma.magicLink.findUnique({ where: { tokenHash } });
     if (!link || link.expiresAt < new Date()) throw new UnauthorizedException("This sign-in link is invalid or has expired.");
+    const user = await this.prisma.user.findUnique({ where: { id: link.userId }, select: { orgId: true, role: true } });
+    if (!user) throw new UnauthorizedException("This sign-in link is invalid or has expired.");
+    await this.assertTenantAccess(user, tenantSlug ?? null);
     return this.issueTokensFor(link.userId);
   }
 

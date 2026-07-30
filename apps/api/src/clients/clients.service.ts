@@ -129,6 +129,7 @@ export class ClientsService {
         clientId: client.id,
         clientOwner: true,
         passwordHash: await bcrypt.hash(password, 12),
+        mustSetPassword: true, // temp password → onboarding asks them to set their own
       },
       select: { id: true },
     });
@@ -407,6 +408,7 @@ export class ClientsService {
         clientOwner: !!dto.owner,
         clientAllCampaigns: allCampaigns,
         passwordHash: await bcrypt.hash(tempPassword, 12),
+        mustSetPassword: true, // temp password → onboarding asks them to set their own
         ...(assign.length ? { assignedProjects: { connect: assign.map((id) => ({ id })) } } : {}),
       },
       select: { id: true, email: true, name: true, clientOwner: true, isActive: true, lastLoginAt: true },
