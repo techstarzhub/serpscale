@@ -24,3 +24,6 @@ venv/
 *.log
 .turbo/
 coverage/
+
+# Local DB dumps — contain live secrets (OAuth tokens, SMTP key), never commit
+backups/
