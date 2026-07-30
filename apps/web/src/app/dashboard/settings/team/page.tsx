@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Shield, Users, Plus, Trash2, Loader2, Check, UserPlus, Copy, KeyRound } from "lucide-react";
+import { Shield, Users, Plus, Trash2, Loader2, Check, UserPlus, Copy, KeyRound, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -176,6 +176,8 @@ function RoleEditor({ groups, role, onDone, onCancel }: { groups: PermGroup[]; r
 function MembersSection({ members, roles, onChange, canManage }: { members: Member[]; roles: Role[]; onChange: () => void; canManage: boolean }) {
   const { user } = useCurrentUser();
   const confirm = useConfirm();
+  // Only a real admin (not already viewing as someone) can "view as" a member.
+  const canImpersonate = (user?.role === "ADMIN" || user?.role === "SUPER_ADMIN") && !user?.impersonating;
   const isAdmin = user?.role === "ADMIN"; // only a full admin can create/promote admins
   const [inviting, setInviting] = useState(false);
   const [email, setEmail] = useState("");
@@ -340,6 +342,9 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
               {/* Actions — wrap on small screens so nothing overflows */}
               {canManage && (
                 <div className="flex flex-wrap gap-1.5 lg:justify-end">
+                  {canImpersonate && m.id !== user?.id && m.role !== "ADMIN" && (
+                    <Button size="sm" variant="outline" onClick={async () => { if (!(await confirm({ title: "Login as this member?", description: `You'll browse the dashboard as ${m.name || m.email}. A banner lets you return to your own account anytime.`, confirmText: "Login as" }))) return; try { await api.post("/auth/impersonate", { userId: m.id }); window.location.href = "/dashboard"; } catch (e) { alert(e instanceof Error ? e.message : "Could not view as this user"); } }}><Eye className="h-3.5 w-3.5" /> Login as</Button>
+                  )}
                   <Button size="sm" variant="outline" onClick={async () => { if (!(await confirm({ title: "Reset password?", description: `A new password will be generated for ${m.name || m.email} and emailed to them.`, confirmText: "Reset password" }))) return; try { const r = await api.post<{ email: string; tempPassword: string }>(`/team/members/${m.id}/reset-password`, {}); setTempPw({ email: r.email, pw: r.tempPassword }); } catch (e) { alert(e instanceof Error ? e.message : "Could not reset password"); } }}><KeyRound className="h-3.5 w-3.5" /> Reset</Button>
                   {m.role !== "ADMIN" && (
                     <>

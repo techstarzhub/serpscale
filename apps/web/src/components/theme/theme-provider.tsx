@@ -8,6 +8,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { usePathname } from "next/navigation";
 import {
   THEME_MODE_KEY,
   THEME_STORAGE_KEY,
@@ -37,24 +38,46 @@ function applyVar(key: string, value: string | null) {
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [overrides, setOverrides] = useState<ThemeOverrides>({});
   const [mode, setModeState] = useState<ThemeMode>("light");
+  const pathname = usePathname();
+  // Theme customization is a DASHBOARD-only concept. Everywhere else (the sign-in
+  // form, marketing) must stay on the default brand look.
+  const inDashboard = (pathname ?? "").startsWith("/dashboard");
 
-  // Load saved theme once on mount and apply it.
+  // Load any saved theme into state on mount. No DOM writes here — the
+  // route-scoped effect below owns the DOM so the theme only ever paints inside
+  // the dashboard.
   useEffect(() => {
     try {
       const savedMode = (localStorage.getItem(THEME_MODE_KEY) as ThemeMode) || "light";
       setModeState(savedMode);
-      document.documentElement.classList.toggle("dark", savedMode === "dark");
-
       const raw = localStorage.getItem(THEME_STORAGE_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw) as ThemeOverrides;
-        setOverrides(saved);
-        Object.entries(saved).forEach(([k, v]) => applyVar(k, v));
-      }
+      if (raw) setOverrides(JSON.parse(raw) as ThemeOverrides);
     } catch {
       // ignore malformed storage
     }
   }, []);
+
+  // Inside the dashboard we paint the user's tokens; anywhere else we strip them
+  // AND forget the saved theme. This is what keeps one user's customization off
+  // the login page and out of the next user who signs in on the same browser.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (inDashboard) {
+      Object.entries(overrides).forEach(([k, v]) => applyVar(k, v));
+      root.classList.toggle("dark", mode === "dark");
+    } else {
+      Object.keys(overrides).forEach((k) => applyVar(k, null));
+      root.classList.remove("dark");
+      try {
+        localStorage.removeItem(THEME_STORAGE_KEY);
+        localStorage.removeItem(THEME_MODE_KEY);
+      } catch {
+        // ignore
+      }
+      if (Object.keys(overrides).length) setOverrides({});
+      if (mode !== "light") setModeState("light");
+    }
+  }, [inDashboard, overrides, mode]);
 
   const persist = useCallback((next: ThemeOverrides) => {
     try {

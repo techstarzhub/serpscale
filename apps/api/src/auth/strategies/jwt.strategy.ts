@@ -13,6 +13,7 @@ interface JwtPayload {
   sub: string;
   role: string;
   orgId?: string | null;
+  imp?: string; // impersonator (real admin) id when this is a "view as" session
   iat?: number; // issued-at (seconds since epoch), set automatically by jwt.sign
 }
 
@@ -47,6 +48,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       name: user.name,
       role: user.role,
       orgId: user.orgId,
+      impersonatorId: payload.imp,
     };
   }
 }

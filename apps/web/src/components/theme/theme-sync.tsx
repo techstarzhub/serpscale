@@ -20,11 +20,13 @@ import { useTheme } from "./theme-provider";
  */
 export function ThemeSync() {
   const { user } = useCurrentUser();
-  const { overrides, mode, applyMany, setMode } = useTheme();
+  const { overrides, mode, applyMany, setMode, resetAll } = useTheme();
   const hydratedFor = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Hydrate once per user session from the server-saved theme.
+  // Hydrate once per user from the server-saved theme. We RESET first so that
+  // switching accounts in the same browser starts from the default look — a user
+  // with no saved theme never inherits the previous user's customization.
   useEffect(() => {
     if (!user) {
       hydratedFor.current = null;
@@ -33,9 +35,10 @@ export function ThemeSync() {
     if (hydratedFor.current === user.id) return;
     hydratedFor.current = user.id;
     const saved = user.themeOverrides;
+    resetAll();
     if (saved?.overrides && Object.keys(saved.overrides).length) applyMany(saved.overrides);
-    if (saved?.mode) setMode(saved.mode);
-  }, [user, applyMany, setMode]);
+    setMode(saved?.mode ?? "light");
+  }, [user, applyMany, setMode, resetAll]);
 
   // Persist edits (debounced) once we've hydrated this user.
   useEffect(() => {

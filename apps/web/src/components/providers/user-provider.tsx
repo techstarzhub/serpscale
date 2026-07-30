@@ -12,6 +12,8 @@ export interface CurrentUser {
   avatarUrl: string | null;
   // Null until the user finishes the first-login onboarding wizard.
   onboardedAt?: string | null;
+  // True when an admin is "viewing as" this user (impersonation session).
+  impersonating?: boolean;
   // Server-persisted dashboard theme (dynamic CSS tokens + light/dark), so it
   // follows the user across devices. Hydrated into ThemeProvider on load.
   themeOverrides?: { overrides?: Record<string, string>; mode?: "light" | "dark" } | null;

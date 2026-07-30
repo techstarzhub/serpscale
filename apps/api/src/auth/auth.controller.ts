@@ -102,6 +102,26 @@ export class AuthController {
       this.perms.list(user),
       this.entitlements.forOrg(user.orgId),
     ]);
-    return { ...profile, role: user.role, permissions, entitlements };
+    return { ...profile, role: user.role, permissions, entitlements, impersonating: !!user.impersonatorId };
+  }
+
+  // Admin "view as" a team member (userId) or client (clientId).
+  @UseGuards(JwtAuthGuard)
+  @Post("impersonate")
+  async impersonate(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: { userId?: string; clientId?: string },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    setAuthCookies(res, await this.auth.impersonate(user, { userId: dto?.userId, clientId: dto?.clientId }));
+    return { ok: true };
+  }
+
+  // Return from a "view as" session to the real admin account.
+  @UseGuards(JwtAuthGuard)
+  @Post("stop-impersonate")
+  async stopImpersonate(@CurrentUser() user: AuthUser, @Res({ passthrough: true }) res: Response) {
+    setAuthCookies(res, await this.auth.stopImpersonate(user));
+    return { ok: true };
   }
 }

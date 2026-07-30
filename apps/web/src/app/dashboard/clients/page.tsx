@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Plus, Loader2, Contact, X, Trash2, Check, Upload, Building2, Search, Send, KeyRound, Copy } from "lucide-react";
+import { Plus, Loader2, Contact, X, Trash2, Check, Upload, Building2, Search, Send, KeyRound, Copy, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
-import { useCan, useFeature } from "@/components/providers/user-provider";
+import { useCan, useFeature, useCurrentUser } from "@/components/providers/user-provider";
 import { useProjects } from "@/components/providers/projects-provider";
 import { ClientMembers } from "@/components/clients/client-members";
 import { LockedFeature } from "@/components/ui/locked-feature";
@@ -308,6 +308,8 @@ function CreateModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
 function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
   const can = useCan();
   const confirm = useConfirm();
+  const { user } = useCurrentUser();
+  const canImpersonate = (user?.role === "ADMIN" || user?.role === "SUPER_ADMIN") && !user?.impersonating;
   const { projects } = useProjects();
   const [c, setC] = useState<ClientDetail | null>(null);
   const [tab, setTab] = useState<"details" | "campaigns" | "agency" | "members">("details");
@@ -419,6 +421,16 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
     }
   }
 
+  async function impersonateClient() {
+    if (!(await confirm({ title: "Login as this client?", description: "You'll browse the client portal exactly as they see it. A banner lets you return to your account anytime.", confirmText: "Login as" }))) return;
+    try {
+      await api.post("/auth/impersonate", { clientId: id });
+      window.location.href = "/dashboard";
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Could not view as this client");
+    }
+  }
+
   function pickLogo(file: File) {
     if (file.size > 500 * 1024) return flash("Logo must be under 500 KB");
     const r = new FileReader();
@@ -521,6 +533,11 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
                       <Button variant="outline" onClick={resetLoginPw} disabled={busy}>
                         <KeyRound className="h-4 w-4" /> Reset login password
                       </Button>
+                      {canImpersonate && (
+                        <Button variant="outline" onClick={impersonateClient} disabled={busy}>
+                          <Eye className="h-4 w-4" /> Login as client
+                        </Button>
+                      )}
                     </div>
                   )}
                   {resetPw && (

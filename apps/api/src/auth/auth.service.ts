@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
@@ -13,6 +15,7 @@ import { StorageService } from "../storage/storage.service";
 import { EmailService } from "../email/email.service";
 import { OtpService } from "./otp.service";
 import { normalizeEmail } from "../common/email.util";
+import type { AuthUser } from "./decorators/current-user.decorator";
 
 // Re-exported for callers that historically imported it from here.
 export { normalizeEmail };
@@ -179,7 +182,7 @@ export class AuthService {
   async refresh(refreshToken: string | undefined): Promise<Tokens> {
     if (!refreshToken) throw new UnauthorizedException("No session.");
 
-    let payload: { sub: string };
+    let payload: { sub: string; imp?: string };
     try {
       payload = await this.jwt.verifyAsync(refreshToken, { secret: process.env.JWT_REFRESH_SECRET });
     } catch {
@@ -202,7 +205,9 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || !user.isActive) throw new UnauthorizedException("Session expired.");
 
-    return this.issueTokens(user);
+    // Preserve an active "view as" session across refreshes so the Return button
+    // keeps working for the full session.
+    return this.issueTokens(user, payload.imp);
   }
 
   async me(userId: string) {
@@ -260,10 +265,51 @@ export class AuthService {
    *  user logged in right after they set a new password during onboarding (the
    *  old access token, minted before passwordChangedAt, would otherwise be
    *  rejected — so we hand back new cookies instead of forcing a re-login). */
-  async issueTokensFor(userId: string): Promise<Tokens> {
+  async issueTokensFor(userId: string, impersonatorId?: string): Promise<Tokens> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user || !user.isActive) throw new UnauthorizedException("Account unavailable.");
-    return this.issueTokens(user);
+    return this.issueTokens(user, impersonatorId);
+  }
+
+  /** Admin "view as": mint a session for a target user (a team member, or a
+   *  client via their owner login), tagged with the admin's id so they can return.
+   *  Org admins are confined to their own org and to MEMBER/CLIENT targets. */
+  async impersonate(admin: AuthUser, opts: { userId?: string; clientId?: string }): Promise<Tokens> {
+    if (admin.role !== "ADMIN" && admin.role !== "SUPER_ADMIN") {
+      throw new ForbiddenException("Only an admin can view as another user.");
+    }
+    if (admin.impersonatorId) throw new BadRequestException("Already viewing as another user.");
+
+    let target: { id: string; role: string; orgId: string | null; isActive: boolean } | null = null;
+    if (opts.clientId) {
+      target = await this.prisma.user.findFirst({
+        where: {
+          clientId: opts.clientId,
+          clientOwner: true,
+          ...(admin.role === "ADMIN" ? { orgId: admin.orgId } : {}),
+        },
+        select: { id: true, role: true, orgId: true, isActive: true },
+      });
+    } else if (opts.userId) {
+      target = await this.prisma.user.findUnique({
+        where: { id: opts.userId },
+        select: { id: true, role: true, orgId: true, isActive: true },
+      });
+    }
+    if (!target || !target.isActive) throw new NotFoundException("User not found.");
+    if (target.id === admin.id) throw new BadRequestException("You are already yourself.");
+    if (target.role === "SUPER_ADMIN") throw new ForbiddenException("Cannot view as a super admin.");
+    if (admin.role === "ADMIN") {
+      if (target.orgId !== admin.orgId) throw new ForbiddenException("That user is outside your organization.");
+      if (target.role === "ADMIN") throw new ForbiddenException("Cannot view as another admin.");
+    }
+    return this.issueTokensFor(target.id, admin.id);
+  }
+
+  /** End a "view as" session and return to the real admin's account. */
+  async stopImpersonate(current: AuthUser): Promise<Tokens> {
+    if (!current.impersonatorId) throw new BadRequestException("Not currently viewing as another user.");
+    return this.issueTokensFor(current.impersonatorId);
   }
 
   /** Create a 24h one-click login link for a user (used in the invite email so a
@@ -288,12 +334,16 @@ export class AuthService {
     return this.issueTokensFor(link.userId);
   }
 
-  private async issueTokens(user: {
-    id: string;
-    role: Role;
-    orgId: string | null;
-  }): Promise<Tokens> {
-    const payload = { sub: user.id, role: user.role, orgId: user.orgId };
+  private async issueTokens(
+    user: {
+      id: string;
+      role: Role;
+      orgId: string | null;
+    },
+    impersonatorId?: string,
+  ): Promise<Tokens> {
+    const payload: Record<string, unknown> = { sub: user.id, role: user.role, orgId: user.orgId };
+    if (impersonatorId) payload.imp = impersonatorId;
 
     const accessToken = await this.jwt.signAsync(payload, {
       secret: process.env.JWT_ACCESS_SECRET,

@@ -16,6 +16,8 @@ export const metadata: Metadata = {
 const noFlashScript = `
 (function(){
   try {
+    // Theme is dashboard-only — never pre-paint it on the sign-in form / marketing.
+    if (location.pathname.indexOf('/dashboard') !== 0) return;
     var mode = localStorage.getItem('${THEME_MODE_KEY}');
     if (mode === 'dark') document.documentElement.classList.add('dark');
     var raw = localStorage.getItem('${THEME_STORAGE_KEY}');
