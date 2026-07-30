@@ -1,6 +1,6 @@
 // schema.org JSON-LD builders for SerpScale marketing pages.
 
-const BASE = "https://serpscale.com";
+const BASE = "https://www.serpscale.com";
 const ORG = { "@id": `${BASE}/#organization` };
 
 export function breadcrumb(items: { name: string; path: string }[]) {

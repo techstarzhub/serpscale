@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 import { getSlugs } from "@/lib/blog";
 
-const BASE = "https://serpscale.com";
+const BASE = "https://www.serpscale.com";
 
 export const revalidate = 300;
 

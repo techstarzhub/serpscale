@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
+import { NestExpressApplication } from "@nestjs/platform-express";
 import cookieParser from "cookie-parser";
 import { AppModule } from "./app.module";
 import { PrismaExceptionFilter } from "./common/prisma-exception.filter";
@@ -17,8 +18,12 @@ process.on("unhandledRejection", (reason) => {
 
 async function bootstrap() {
   // rawBody: true preserves the untouched request buffer (req.rawBody) needed for
-  // Stripe webhook signature verification.
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  // Stripe webhook signature verification. bodyParser: false + useBodyParser below
+  // replaces Nest's default 100kb JSON limit (too small for base64 logo uploads
+  // like /team/branding's logoDataUrl) while still capturing rawBody.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true, bodyParser: false });
+  app.useBodyParser("json", { limit: "10mb" });
+  app.useBodyParser("urlencoded", { limit: "10mb", extended: true });
   app.use(cookieParser());
   // Allow the dashboard app + the marketing site (which reads /auth/me to show a
   // "Dashboard" link when the visitor is already signed in). Same-site cookies

@@ -23,9 +23,9 @@ export const metadata: Metadata = {
 const contactPoint = {
   "@context": "https://schema.org",
   "@type": "Organization",
-  "@id": "https://serpscale.com/#organization",
+  "@id": "https://www.serpscale.com/#organization",
   name: "SerpScale",
-  url: "https://serpscale.com",
+  url: "https://www.serpscale.com",
   email: "hello@serpscale.com",
   contactPoint: {
     "@type": "ContactPoint",

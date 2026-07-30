@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { tenantSubdomain } from "@/lib/tenant";
 
 export interface CurrentUser {
   id: string;
@@ -28,6 +29,9 @@ export interface CurrentUser {
   isAgencyClient?: boolean;
   // White-label branding for the org (agency name + logo) — shown in the sidebar.
   branding?: { agencyName: string | null; logoDataUrl: string | null; logoBg: string | null };
+  // Set only when the org has white-label branding configured — the org's own
+  // subdomain (‹slug›.serpscale.com). Drives the main-domain → subdomain redirect.
+  orgSlug?: string | null;
   // Plan entitlements — which feature modules + numeric limits the org's plan
   // grants. Drives feature gating across the dashboard. Derived server-side from
   // the plan the super admin assigned; nothing is hardcoded on the client.
@@ -63,6 +67,19 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const me = await api.get<CurrentUser>("/auth/me");
+      // Agency-tier org with white-label branding configured: keep the whole
+      // dashboard on its own branded subdomain instead of the shared main domain.
+      // Only fires on the real app domain (never localhost/dev), and only when
+      // we're not already on that org's own subdomain.
+      if (typeof window !== "undefined" && me.orgSlug) {
+        const domain = (process.env.NEXT_PUBLIC_APP_DOMAIN || "serpscale.com").toLowerCase();
+        const host = window.location.hostname.toLowerCase();
+        const onRealDomain = host === domain || host.endsWith("." + domain);
+        if (onRealDomain && tenantSubdomain() !== me.orgSlug) {
+          window.location.href = `https://${me.orgSlug}.${domain}${window.location.pathname}${window.location.search}`;
+          return;
+        }
+      }
       setUser(me);
     } catch {
       setUser(null);

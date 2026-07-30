@@ -255,7 +255,7 @@ export class AuthService {
         avatarKey: true,
         clientId: true,
         clientOwner: true,
-        organization: { select: { name: true, branding: true } },
+        organization: { select: { name: true, branding: true, slug: true } },
         client: { select: { name: true, type: true, branding: true, allowTeam: true } },
       },
     });
@@ -287,6 +287,11 @@ export class AuthService {
       ...rest,
       avatarUrl: avatarKey ? await this.storage.signedUrl(avatarKey) : null,
       branding,
+      // Only set when THIS org's white-label branding is actually configured —
+      // drives the main-domain → tenant-subdomain redirect on the client. Gated
+      // on the org's OWN branding (orgB), not the client-portal override above,
+      // since subdomains are per-organization, not per-client.
+      orgSlug: orgB.agencyName ? organization?.slug ?? null : null,
       clientCanManageTeam,
       isAgencyClient,
     };

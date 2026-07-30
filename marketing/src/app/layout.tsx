@@ -23,7 +23,7 @@ const CSS = [
 // ordered bundle (single script → guaranteed execution order across the stack).
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://serpscale.com"),
+  metadataBase: new URL("https://www.serpscale.com"),
   title: {
     default: "SerpScale — The All-in-One SEO Tool & SEMrush Alternative",
     template: "%s | SerpScale",
@@ -54,19 +54,19 @@ const orgJsonLd = {
   "@graph": [
     {
       "@type": "Organization",
-      "@id": "https://serpscale.com/#organization",
+      "@id": "https://www.serpscale.com/#organization",
       name: "SerpScale",
-      url: "https://serpscale.com",
+      url: "https://www.serpscale.com",
       description:
         "SerpScale is an all-in-one SEO platform: rank tracker, site audit, backlink checker and keyword research in one dashboard.",
       sameAs: ["https://twitter.com/serpscale", "https://www.linkedin.com/company/serpscale"],
     },
     {
       "@type": "WebSite",
-      "@id": "https://serpscale.com/#website",
-      url: "https://serpscale.com",
+      "@id": "https://www.serpscale.com/#website",
+      url: "https://www.serpscale.com",
       name: "SerpScale",
-      publisher: { "@id": "https://serpscale.com/#organization" },
+      publisher: { "@id": "https://www.serpscale.com/#organization" },
     },
   ],
 };
