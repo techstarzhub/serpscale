@@ -109,7 +109,10 @@ export class AdminController {
   @Get("settings/platform")
   @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
   getPlatform() {
-    return this.admin.getSetting("platform");
+    // getSettingSafe masks any secret/password-bearing keys before returning to
+    // the browser (getSmtp/getGateways already do this — platform must too, so a
+    // secret ever stored under this key is never echoed back in cleartext).
+    return this.admin.getSettingSafe("platform");
   }
 
   @Put("settings/platform")

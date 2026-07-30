@@ -121,7 +121,7 @@ function BillingInner() {
   }
 
   async function cancel() {
-    if (!confirm("Cancel your subscription? Access continues until the period ends, and no further payments will be taken.")) return;
+    if (!confirm("Cancel your subscription? Your plan access ends right away and no further payments will be taken. You can re-subscribe at any time.")) return;
     setBusy("cancel");
     try { await api.post("/billing/cancel"); await load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } finally { setBusy(null); }
   }

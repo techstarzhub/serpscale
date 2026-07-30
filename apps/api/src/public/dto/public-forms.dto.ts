@@ -20,8 +20,9 @@ export class ContactDto {
   @IsString() @IsNotEmpty() @MaxLength(10)
   captchaAnswer!: string;
 
-  // Honeypot — must stay empty (real users never see this field).
-  @IsOptional() @IsString()
+  // Honeypot — must stay empty (real users never see this field). Bounded so a
+  // bot can't send an oversized payload through the silent-drop path.
+  @IsOptional() @IsString() @MaxLength(200)
   website?: string;
 }
 

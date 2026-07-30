@@ -4,7 +4,7 @@
 // CSS/JS Google needs to render the page. Network-bound but bounded by timeouts;
 // pure helpers are exported for unit tests.
 import { fetch as uFetch } from "undici";
-import type { Issue } from "./crawler";
+import { isPublicUrl, type Issue } from "./crawler";
 
 const UA = "Mozilla/5.0 (compatible; SEOPlatformBot/1.0; +https://seo-platform.local) AppleWebKit/537.36";
 
@@ -36,6 +36,7 @@ export function robotsBlocksResources(robots: string): boolean {
 
 async function head(url: string, redirect: "manual" | "follow") {
   try {
+    if (!(await isPublicUrl(url))) return null; // SSRF guard
     const r = await uFetch(url, { method: "GET", redirect, signal: AbortSignal.timeout(12000), headers: { "User-Agent": UA } });
     return r;
   } catch {

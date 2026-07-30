@@ -10,13 +10,14 @@
 // Self-contained: fetches robots.txt + sitemap(s) itself; the crawl's page-status
 // map is optional and only enriches the broken-URL check.
 import { fetch as uFetch } from "undici";
-import type { Issue } from "./crawler";
+import { isPublicUrl, type Issue } from "./crawler";
 
 const UA =
   "Mozilla/5.0 (compatible; SEOPlatformBot/1.0; +https://seo-platform.local) AppleWebKit/537.36";
 
 async function getText(url: string): Promise<string | null> {
   try {
+    if (!(await isPublicUrl(url))) return null; // SSRF guard
     const r = await uFetch(url, { signal: AbortSignal.timeout(12000), headers: { "User-Agent": UA } });
     return r.ok ? await r.text() : null;
   } catch {

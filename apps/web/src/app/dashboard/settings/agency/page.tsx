@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import { useCurrentUser, useFeature } from "@/components/providers/user-provider";
+import { useCurrentUser, useFeature, useCan } from "@/components/providers/user-provider";
 import { LockedFeature } from "@/components/ui/locked-feature";
 
 interface Branding {
@@ -20,12 +20,13 @@ const label = "mb-1 block text-xs font-medium text-muted-foreground";
 
 export default function AgencySettingsPage() {
   const hasFeature = useFeature();
+  const can = useCan();
   return (
     <div className="space-y-5">
       {hasFeature("white_label") ? (
         <BrandingCard />
       ) : (
-        <LockedFeature title="White-label branding" description="Replace the platform brand with your own agency name and logo. Available on agency plans." />
+        <LockedFeature title="White-label branding" description="Replace the platform brand with your own agency name and logo. Available on agency plans." canUpgrade={can("billing.manage")} />
       )}
     </div>
   );

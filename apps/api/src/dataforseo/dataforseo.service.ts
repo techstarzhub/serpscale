@@ -43,20 +43,38 @@ export class DataForSeoService {
   // Hard daily spend cap so paid DataForSEO calls can never run away. We track
   // the REAL cost DataForSEO returns per response; once the day's total crosses
   // DATAFORSEO_DAILY_BUDGET (default $5) we stop making live calls and serve
-  // cached/empty data instead. Resets at UTC midnight.
-  private spentToday = 0;
-  private spendDate = "";
-  private budgetOk(): boolean {
+  // cached/empty data instead. Resets at UTC midnight. The counter lives in the
+  // DB (not process memory) so a restart or a second worker can't reset/duplicate
+  // the budget — the cap is enforced across the whole deployment.
+  private static readonly BUDGET_KEY = "__dataforseo_daily_budget__";
+  private budgetCap(): number { return Number(process.env.DATAFORSEO_DAILY_BUDGET || 5); }
+
+  private async spentToday(): Promise<number> {
     const today = new Date().toISOString().slice(0, 10);
-    if (today !== this.spendDate) { this.spendDate = today; this.spentToday = 0; }
-    return this.spentToday < Number(process.env.DATAFORSEO_DAILY_BUDGET || 5);
+    const row = await this.prisma.dataCache.findUnique({ where: { key: DataForSeoService.BUDGET_KEY } }).catch(() => null);
+    const p: any = row?.payload ?? null;
+    return p && p.date === today && typeof p.spent === "number" ? p.spent : 0;
+  }
+
+  private async addSpend(cost: number): Promise<void> {
+    const today = new Date().toISOString().slice(0, 10);
+    // Serialize concurrent increments with an advisory lock so no spend is lost.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${DataForSeoService.BUDGET_KEY}))`;
+      const row = await tx.dataCache.findUnique({ where: { key: DataForSeoService.BUDGET_KEY } });
+      const p: any = row?.payload ?? null;
+      const base = p && p.date === today && typeof p.spent === "number" ? p.spent : 0;
+      const payload = { date: today, spent: base + cost };
+      await tx.dataCache.upsert({ where: { key: DataForSeoService.BUDGET_KEY }, create: { key: DataForSeoService.BUDGET_KEY, payload }, update: { payload } });
+    }).catch(() => { /* budget bookkeeping must never break the actual call */ });
   }
 
   private async post(path: string, body: unknown): Promise<any> {
     const auth = this.auth();
     if (!auth) return null;
-    if (!this.budgetOk()) {
-      this.logger.warn(`dataforseo: daily budget ($${process.env.DATAFORSEO_DAILY_BUDGET || 5}) reached — skipping ${path} (spent ~$${this.spentToday.toFixed(3)})`);
+    const spent = await this.spentToday();
+    if (spent >= this.budgetCap()) {
+      this.logger.warn(`dataforseo: daily budget ($${this.budgetCap()}) reached — skipping ${path} (spent ~$${spent.toFixed(3)})`);
       return null;
     }
     try {
@@ -69,8 +87,8 @@ export class DataForSeoService {
       const data: any = await res.json();
       // DataForSEO returns the real $ cost of the call — accumulate it for the cap.
       if (typeof data?.cost === "number" && data.cost > 0) {
-        this.spentToday += data.cost;
-        this.logger.log(`dataforseo ${path}: cost $${data.cost.toFixed(4)} · today ~$${this.spentToday.toFixed(3)}`);
+        await this.addSpend(data.cost);
+        this.logger.log(`dataforseo ${path}: cost $${data.cost.toFixed(4)}`);
       }
       if (data?.status_code !== 20000) {
         this.logger.warn(`dataforseo ${path}: ${data?.status_code} ${data?.status_message}`);
@@ -589,8 +607,8 @@ export class DataForSeoService {
       });
       const data: any = await res.json();
       if (typeof data?.cost === "number" && data.cost > 0) {
-        this.spentToday += data.cost;
-        this.logger.log(`dataforseo ${path}: cost $${data.cost.toFixed(4)} · today ~$${this.spentToday.toFixed(3)}`);
+        await this.addSpend(data.cost);
+        this.logger.log(`dataforseo ${path}: cost $${data.cost.toFixed(4)}`);
       }
       if (data?.status_code !== 20000) {
         this.logger.warn(`dataforseo ${path}: ${data?.status_code} ${data?.status_message}`);
@@ -607,7 +625,7 @@ export class DataForSeoService {
    *  can be mapped back). Returns how many DataForSEO accepted. Cost charged here. */
   async serpTaskPostBatch(items: { keyword: string; country?: string; language?: string; device?: string; tag: string }[]): Promise<number> {
     if (!this.auth() || items.length === 0) return 0;
-    if (!this.budgetOk()) {
+    if ((await this.spentToday()) >= this.budgetCap()) {
       this.logger.warn(`dataforseo: daily budget reached — skipping serp task_post (${items.length} tasks)`);
       return 0;
     }

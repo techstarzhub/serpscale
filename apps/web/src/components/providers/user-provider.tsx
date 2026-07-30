@@ -116,10 +116,13 @@ export function trialDaysLeft(user: CurrentUser | null): number | null {
 /** True when an org owner/member has no active plan — either they never
  *  subscribed (paid signup before payment) or their plan lapsed (trial ended,
  *  payment failed, canceled). The dashboard is locked behind a subscribe/upgrade
- *  wall. Super admins + client-portal users are never locked here. */
+ *  wall. Only the platform owner (super admin) is exempt. */
 export function accessPaused(user: CurrentUser | null): boolean {
   if (!user || !user.entitlements) return false;
-  if (user.role === "SUPER_ADMIN" || user.role === "CLIENT") return false;
+  // When the org's subscription lapses (payment failed / declined / canceled /
+  // trial ended — any reason at all), EVERYONE under it is locked out instantly:
+  // the admin, every team member, and every client. Only the super admin is exempt.
+  if (user.role === "SUPER_ADMIN") return false;
   return user.entitlements.active === false;
 }
 

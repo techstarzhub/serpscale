@@ -265,6 +265,16 @@ export class AdminService {
   }
 
   async setSetting(key: string, value: unknown) {
+    // These setting endpoints take `@Body() dto: any`, so the global
+    // ValidationPipe can't guard them — validate here: the payload must be a
+    // plain JSON object (no primitives/arrays) and bounded in size, so it can't
+    // be abused to store a giant or malformed blob.
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      throw new BadRequestException("Settings payload must be an object.");
+    }
+    if (JSON.stringify(value).length > 100_000) {
+      throw new BadRequestException("Settings payload is too large.");
+    }
     return this.prisma.platformSetting.upsert({
       where: { key },
       create: { key, value: value as any },

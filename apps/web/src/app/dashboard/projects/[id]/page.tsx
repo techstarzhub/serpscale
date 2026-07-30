@@ -41,6 +41,7 @@ import { CampaignMembers } from "./campaign-members";
 import { ContentPanel } from "./content-panel";
 import { UserAvatar } from "@/components/ui/user-avatar";
 import { useCurrentUser, useCan, useFeature } from "@/components/providers/user-provider";
+import { LockedFeature, LockPip } from "@/components/ui/locked-feature";
 import { useProjects, type Project } from "@/components/providers/projects-provider";
 import {
   OverviewPanel,
@@ -203,14 +204,23 @@ export default function ProjectWorkspace() {
   // Dashboards active for THIS campaign (chosen in the wizard). Empty = all.
   // Overview & Settings always stay available regardless of the campaign's set.
   const enabledForCampaign = projectForTabs?.enabledTabs ?? [];
+  // Client-portal users (read-only) must never see the agency's plan internals —
+  // a feature the plan lacks is simply absent for them, not an upsell.
+  const isClient = user?.role === "CLIENT";
+  // Only a user who can change billing sees a real "Upgrade" button; others get
+  // an "ask your admin" note instead.
+  const canUpgrade = can("billing.manage");
+  // A gateable feature tab whose plan doesn't include it — shown LOCKED (with an
+  // upgrade-to-unlock panel) rather than hidden, so customers can see what more
+  // they'd get. overview + settings are always on.
+  const isTabLocked = (k: TabKey) => k !== "overview" && k !== "settings" && !hasFeature(k) && !isClient;
   const visibleTabs = tabs.filter((t) => {
     if (t.perm && !can(t.perm)) return false;
-    // Plan gating: a feature tab shows only if the org's plan includes it.
-    // overview + settings are always on (not gateable modules).
-    if (t.key !== "overview" && t.key !== "settings" && !hasFeature(t.key)) return false;
-    if (enabledForCampaign.length && t.key !== "overview" && t.key !== "settings") {
-      return enabledForCampaign.includes(t.key);
-    }
+    if (t.key === "overview" || t.key === "settings") return true;
+    const lockedByPlan = !hasFeature(t.key);
+    if (lockedByPlan) return !isClient; // agency: show locked+upgrade; client: hide
+    // Unlocked feature → respect the campaign's chosen dashboards (per-campaign).
+    if (enabledForCampaign.length) return enabledForCampaign.includes(t.key);
     return true;
   });
   const tabAllowed = visibleTabs.some((t) => t.key === tab);
@@ -278,11 +288,12 @@ export default function ProjectWorkspace() {
   function renderTab(t: TabDef) {
     const Icon = t.icon;
     const isActive = t.key === tab;
+    const locked = isTabLocked(t.key);
     return (
       <button
         key={t.key}
         onClick={() => setTab(t.key)}
-        title={t.label}
+        title={locked ? `${t.label} — upgrade to unlock` : t.label}
         className={cn(
           "group relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-[13px] transition-all duration-200 lg:px-3.5 lg:py-2.5 lg:text-[14px] xl:px-4 xl:py-3 xl:text-[15px]",
           isActive
@@ -299,7 +310,8 @@ export default function ProjectWorkspace() {
           )}
           style={!isActive && t.brand ? { color: t.brand } : undefined}
         />
-        <span className={cn(isActive && "font-semibold")}>{t.label}</span>
+        <span className={cn(isActive && "font-semibold", locked && "opacity-70")}>{t.label}</span>
+        {locked && <LockPip className={isActive ? "text-primary-foreground" : undefined} />}
       </button>
     );
   }
@@ -405,7 +417,12 @@ export default function ProjectWorkspace() {
         )}
       </div>
 
-      {/* Active panel */}
+      {/* Active panel — a plan-locked feature shows the upgrade wall instead. */}
+      {isTabLocked(tab) && (
+        <LockedFeature title={tabs.find((t) => t.key === tab)?.label ?? "This feature"} canUpgrade={canUpgrade} />
+      )}
+      {!isTabLocked(tab) && (
+      <>
       {tab === "overview" && <OverviewPanel project={project} refreshNonce={refreshNonce} />}
       {tab === "copilot" && <CopilotPanel project={project} onAction={handleCopilotAction} />}
       {tab === "keywords" && <SerpExplorer project={project} />}
@@ -461,6 +478,8 @@ export default function ProjectWorkspace() {
       {tab === "ai" && <AiVisibilityPanel project={project} />}
       {tab === "audit" && <SiteAudit project={project} />}
       {tab === "settings" && <SettingsPanel project={project} />}
+      </>
+      )}
     </div>
   );
 }

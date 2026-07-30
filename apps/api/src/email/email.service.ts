@@ -166,6 +166,18 @@ export class EmailService {
     return this.send(to, subject, html, orgId, attachments.length ? attachments : undefined);
   }
 
+  /** Platform-owner alerts: email every active SUPER_ADMIN (platform brand, not
+   *  white-labeled). Used for signups, trials, payments, cancellations — so the
+   *  owner gets the full A-to-Z of who did what, when. */
+  async notifySuperAdmins(subject: string, title: string, body: string, cta?: { label: string; url: string }): Promise<void> {
+    const admins = await this.prisma.user
+      .findMany({ where: { role: "SUPER_ADMIN", isActive: true }, select: { email: true } })
+      .catch(() => [] as { email: string }[]);
+    const to = admins.map((a) => a.email).filter(Boolean);
+    if (!to.length) return;
+    await Promise.all(to.map((addr) => this.sendBranded(addr, subject, title, body, cta, null).catch(() => undefined)));
+  }
+
   /** Back-compat: branded HTML string (no inline logo — prefer sendBranded). */
   async wrapBranded(orgId: string | null | undefined, title: string, body: string, cta?: { label: string; url: string }): Promise<string> {
     const brand = await this.brandFor(orgId);

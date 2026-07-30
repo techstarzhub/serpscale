@@ -146,7 +146,12 @@ export class GoogleService {
       s.replace(/^sc-domain:/, "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "").toLowerCase();
 
     const exact = sites.filter((s) => norm(s.siteUrl) === d);
-    const partial = sites.filter((s) => s.siteUrl.toLowerCase().includes(d));
+    // "Partial" = the site's host is `d` itself or a genuine subdomain of it
+    // (blog.d). A plain substring match wrongly caught `myd.com` / `d.com.evil.net`.
+    const partial = sites.filter((s) => {
+      const h = norm(s.siteUrl);
+      return h === d || h.endsWith(`.${d}`);
+    });
     // Prefer a domain property (sc-domain:) — it aggregates http/https/www and
     // every subdomain, so it always holds the fullest data set. This also makes
     // the match deterministic when both a domain and URL-prefix property exist.
@@ -273,10 +278,16 @@ export class GoogleService {
 
   private matchProperty(props: GaProperty[], domain: string): GaProperty | null {
     const d = domain.replace(/^www\./, "").toLowerCase();
+    const host = (u: string) => u.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").replace(/\/$/, "").toLowerCase();
+    // A stream host that IS `d` or a genuine subdomain of it — not any URL that
+    // merely contains the string `d` (which matched `myd.com` / `d.com.evil`).
+    const hostMatches = (u: string) => {
+      const h = host(u);
+      return h === d || h.endsWith(`.${d}`);
+    };
     return (
-      props.find((p) => p.streamUris.some((u) => u.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "").toLowerCase().startsWith(d))) ||
-      props.find((p) => p.streamUris.some((u) => u.toLowerCase().includes(d))) ||
-      props.find((p) => p.displayName.toLowerCase().includes(d)) ||
+      props.find((p) => p.streamUris.some(hostMatches)) ||
+      props.find((p) => p.displayName.toLowerCase().includes(d)) || // last-resort: freeform label
       null
     );
   }

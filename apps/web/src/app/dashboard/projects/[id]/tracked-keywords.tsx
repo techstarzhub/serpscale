@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Loader2, RefreshCw, Trash2, ArrowUp, ArrowDown, Minus, Target } from "lucide-react";
+import Link from "next/link";
+import { Plus, Loader2, RefreshCw, Trash2, ArrowUp, ArrowDown, Minus, Target, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { InlineStats, posBadgeClass } from "@/components/ui/metric";
 import { api } from "@/lib/api";
+import { useLimit } from "@/components/providers/user-provider";
 import type { Project } from "@/components/providers/projects-provider";
 
 interface Tracked {
@@ -68,6 +70,11 @@ export function TrackedKeywords({ project, base, readOnly = false }: { project: 
   const [loading, setLoading] = useState(true);
   const [kw, setKw] = useState("");
   const [adding, setAdding] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // The org's plan keyword cap (null = unlimited / not set). The count is org-wide
+  // across every campaign, so the server is the source of truth for "full" — here
+  // we show the cap and surface the server's limit message instead of guessing.
+  const keywordCap = useLimit()("keywords");
 
   const load = () =>
     api
@@ -85,14 +92,17 @@ export function TrackedKeywords({ project, base, readOnly = false }: { project: 
     const text = kw.trim();
     if (!text) return;
     setAdding(true);
+    setErr(null);
     try {
       await api.post(`/projects/${project.id}/rank-keywords`, { keyword: text });
       setKw("");
       // Give the first live check a moment, then reload.
       setTimeout(load, 1200);
       await load();
-    } catch {
-      /* ignore */
+    } catch (e) {
+      // Surface the server's reason (e.g. "Your plan allows 250 keywords…") so
+      // hitting the plan limit is visible, not a silent no-op.
+      setErr(e instanceof Error ? e.message : "Could not add that keyword.");
     } finally {
       setAdding(false);
     }
@@ -141,23 +151,51 @@ export function TrackedKeywords({ project, base, readOnly = false }: { project: 
       </CardHeader>
       <CardContent className="flex-1 space-y-4">
         {!readOnly && (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              add();
-            }}
-            className="flex gap-2"
-          >
-            <input
-              value={kw}
-              onChange={(e) => setKw(e.target.value)}
-              placeholder="Add a keyword to track (e.g. best running shoes)"
-              className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-            />
-            <Button type="submit" disabled={adding || !kw.trim()}>
-              {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Track
-            </Button>
-          </form>
+          <div className="space-y-2">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                add();
+              }}
+              className="flex gap-2"
+            >
+              <input
+                value={kw}
+                onChange={(e) => {
+                  setKw(e.target.value);
+                  if (err) setErr(null);
+                }}
+                placeholder="Add a keyword to track (e.g. best running shoes)"
+                className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+              />
+              <Button type="submit" disabled={adding || !kw.trim()}>
+                {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Track
+              </Button>
+            </form>
+            {/* Plan keyword allowance — org-wide across all campaigns. */}
+            {keywordCap != null && (
+              <p className="text-xs text-muted-foreground">
+                Your plan tracks up to <span className="font-medium text-foreground">{keywordCap.toLocaleString()}</span> keywords across all campaigns.
+              </p>
+            )}
+            {err && (
+              <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  {err}
+                  {/allows|limit|upgrade/i.test(err) && (
+                    <>
+                      {" "}
+                      <Link href="/dashboard/settings/billing" className="font-medium underline underline-offset-2">
+                        Upgrade your plan
+                      </Link>
+                      .
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
+          </div>
         )}
 
         {loading ? (

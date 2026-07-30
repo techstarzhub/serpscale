@@ -7,6 +7,7 @@ import {
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { normalizeEmail } from "../common/email.util";
 
 @Injectable()
 export class UsersService {
@@ -39,9 +40,9 @@ export class UsersService {
   }
 
   async updateProfile(userId: string, input: { name?: string; email?: string }) {
-    if (input.email) {
-      const email = input.email.toLowerCase();
-      const existing = await this.prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = input.email ? normalizeEmail(input.email) : undefined;
+    if (normalizedEmail) {
+      const existing = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
       if (existing && existing.id !== userId) {
         throw new ConflictException("That email is already in use.");
       }
@@ -50,7 +51,7 @@ export class UsersService {
       where: { id: userId },
       data: {
         name: input.name ?? undefined,
-        email: input.email ? input.email.toLowerCase() : undefined,
+        email: normalizedEmail,
       },
     });
     return this.toPublic(user);
@@ -63,7 +64,7 @@ export class UsersService {
     if (!ok) throw new BadRequestException("Your current password is incorrect.");
     await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash: await bcrypt.hash(newPassword, 12) },
+      data: { passwordHash: await bcrypt.hash(newPassword, 12), passwordChangedAt: new Date() },
     });
     // Invalidate all existing sessions after a password change.
     await this.prisma.refreshToken.deleteMany({ where: { userId } }).catch(() => {});

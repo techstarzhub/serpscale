@@ -9,6 +9,7 @@ import { PERMISSIONS } from "../auth/permissions";
 import type { AuthUser } from "../auth/decorators/current-user.decorator";
 import type { ReportBrand } from "../crawl/report";
 import { EntitlementsService } from "../entitlements/entitlements.service";
+import { normalizeEmail } from "../common/email.util";
 
 const clientInclude = {
   _count: { select: { projects: true, members: true } },
@@ -95,7 +96,7 @@ export class ClientsService {
     await this.entitlements.assertWithinLimit(orgId, "clients", clientCount);
     const name = (dto?.name ?? "").trim();
     if (!name) throw new BadRequestException("Client name is required.");
-    const email = (dto?.email ?? "").trim().toLowerCase();
+    const email = normalizeEmail(dto?.email ?? "");
     if (!email || !email.includes("@")) throw new BadRequestException("A valid email is required.");
     // Password is optional: if blank, the system generates one and emails it.
     let password = (dto?.password ?? "").trim();
@@ -382,7 +383,7 @@ export class ClientsService {
     await this.assertCanManageMembers(user, client);
     if (!client.allowTeam) throw new BadRequestException("This client is not allowed to add team members. Enable it in the client's settings.");
 
-    const email = (dto?.email ?? "").trim().toLowerCase();
+    const email = normalizeEmail(dto?.email ?? "");
     if (!email || !email.includes("@")) throw new BadRequestException("A valid email is required.");
     if (await this.prisma.user.findUnique({ where: { email } })) throw new BadRequestException("A user with this email already exists.");
 

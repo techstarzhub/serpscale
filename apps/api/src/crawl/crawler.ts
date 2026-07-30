@@ -1,4 +1,6 @@
 import * as cheerio from "cheerio";
+import { isIP } from "node:net";
+import { lookup as dnsLookup } from "node:dns/promises";
 // Use undici's OWN fetch (not Node's global fetch) so a ProxyAgent dispatcher from
 // this same undici build attaches cleanly — mixing versions throws "invalid
 // onRequestStart method". uFetch returns a WHATWG-compatible Response.
@@ -515,7 +517,64 @@ function parseHtml(
 // proxy for the remaining attempts — so bot walls no longer break the audit.
 // Never throws — returns null on give-up. redirect:"manual" so the caller can trace
 // the redirect chain (see fetchTraced); this single request is NOT auto-followed.
+// True if an IP literal falls in a private / loopback / link-local / reserved
+// range that must never be reachable from the crawler (SSRF protection — blocks
+// localhost, RFC1918, CGNAT, and the 169.254.169.254 cloud-metadata endpoint).
+function isPrivateIp(ip: string): boolean {
+  const v = isIP(ip);
+  if (v === 4) {
+    const p = ip.split(".").map(Number);
+    if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return true; // malformed → block
+    const [a, b] = p;
+    if (a === 10 || a === 127 || a === 0) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true; // link-local incl. cloud metadata
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    if (a >= 224) return true; // multicast / reserved
+    return false;
+  }
+  if (v === 6) {
+    const lc = ip.toLowerCase();
+    if (lc === "::1" || lc === "::") return true;
+    if (lc.startsWith("fc") || lc.startsWith("fd")) return true; // unique-local
+    if (lc.startsWith("fe80")) return true; // link-local
+    // IPv4-mapped (::ffff:a.b.c.d) — re-check the embedded v4.
+    const m = lc.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (m) return isPrivateIp(m[1]);
+    return false;
+  }
+  return true; // not a valid IP literal → block
+}
+
+// SSRF gate: only allow http(s) to a PUBLIC host. Hostnames are DNS-resolved and
+// every resolved address is checked, so a public name that points at an internal
+// IP (or a redirect to one) is still blocked. Fail closed on any resolution error.
+export async function isPublicUrl(url: string): Promise<boolean> {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  if (!host || host.toLowerCase() === "localhost" || host.toLowerCase().endsWith(".localhost")) return false;
+  if (isIP(host)) return !isPrivateIp(host);
+  try {
+    const addrs = await dnsLookup(host, { all: true });
+    if (!addrs.length) return false;
+    return addrs.every((a) => !isPrivateIp(a.address));
+  } catch {
+    return false;
+  }
+}
+
 async function fetchOnce(url: string, attempts = 3, timeoutMs = 20000): Promise<Response | null> {
+  // Block SSRF targets (internal/loopback/link-local/metadata) before any request.
+  // Every redirect hop re-enters fetchOnce, so redirects to internal hosts are
+  // blocked too.
+  if (!(await isPublicUrl(url))) return null;
   let useProxy = false;
   for (let i = 0; i < attempts; i++) {
     const controller = new AbortController();
@@ -885,13 +944,16 @@ export async function siteChecks(startUrl: string): Promise<Issue[]> {
   // Fetch the homepage once to read its response headers (security config).
   let headers: Headers | null = null;
   try {
-    const r = await fetch(origin + "/", { redirect: "follow", signal: AbortSignal.timeout(12000), headers: { "User-Agent": UA } });
-    headers = r.headers;
+    if (await isPublicUrl(origin + "/")) {
+      const r = await fetch(origin + "/", { redirect: "follow", signal: AbortSignal.timeout(12000), headers: { "User-Agent": UA } });
+      headers = r.headers;
+    }
   } catch {
     /* ignore — header checks just skip */
   }
   const getText = async (path: string): Promise<string | null> => {
     try {
+      if (!(await isPublicUrl(origin + path))) return null; // SSRF guard
       const r = await fetch(origin + path, { signal: AbortSignal.timeout(10000), headers: { "User-Agent": UA } });
       return r.ok ? await r.text() : null;
     } catch {
@@ -948,6 +1010,7 @@ export async function siteChecks(startUrl: string): Promise<Issue[]> {
 // home page HTML + response headers - a lightweight Wappalyzer-style fingerprint.
 export async function detectTechnologies(url: string): Promise<{ name: string; category: string }[]> {
   try {
+    if (!(await isPublicUrl(url))) return []; // SSRF guard
     const res = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": UA } });
     const html = await res.text();
     const h = res.headers;

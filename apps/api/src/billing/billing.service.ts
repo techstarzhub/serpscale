@@ -112,6 +112,7 @@ export class BillingService {
     await this.prisma.subscription.create({ data: { orgId, planId: plan.id, status: "TRIALING", currentPeriodEnd: ends, gateway: "trial" } });
     await this.notifyOrgAdmins(orgId, { title: "Free trial started", body: `Your ${days}-day ${plan.name} trial is now active.`, link: "/dashboard/settings/billing" });
     await this.emailOrgAdmins(orgId, "Your free trial has started", `Your ${days}-day <b>${plan.name}</b> trial is now active. Explore every feature — you won't be charged until you choose to upgrade. Your trial ends on ${ends.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}.`, { label: "Open dashboard", url: `${WEB()}/dashboard` });
+    await this.alertSuperAdmins(orgId, `New trial: ${plan.name}`, "Free trial started", { Plan: plan.name, Trial: `${days} days, ends ${ends.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}` });
     return { ok: true, trialEndsAt: ends.toISOString() };
   }
 
@@ -190,8 +191,16 @@ export class BillingService {
   async verifyPaypalWebhook(headers: Record<string, any>, body: any): Promise<boolean> {
     const { webhookId } = await this.gw.paypal();
     if (!webhookId) {
-      this.logger.warn("PayPal webhookId not configured — skipping signature verification");
-      return true;
+      // Fail CLOSED. Without a webhookId we cannot prove the event came from
+      // PayPal, and the handler grants real subscriptions off the body — so an
+      // unverified event must be rejected. Only an explicit dev opt-in bypasses
+      // this (never set it in production).
+      if (process.env.PAYPAL_ALLOW_UNVERIFIED_WEBHOOKS === "1" && process.env.NODE_ENV !== "production") {
+        this.logger.warn("PayPal webhookId not set — accepting UNVERIFIED webhook (dev opt-in only)");
+        return true;
+      }
+      this.logger.error("PayPal webhookId not configured — rejecting unverified webhook");
+      return false;
     }
     try {
       const { token, base } = await this.ppToken();
@@ -344,6 +353,24 @@ export class BillingService {
       link: "/dashboard/settings/billing",
     });
     await this.emailOrgAdmins(orgId, "Payment confirmed — subscription active", `Thank you for your purchase! Your <b>${plan?.name ?? "plan"}</b> subscription is now active. You can download your invoice anytime from the billing page.`, { label: "View billing", url: `${WEB()}/dashboard/settings/billing` });
+    // Platform-owner alert: full payment/subscription details.
+    const org = await this.prisma.organization.findUnique({ where: { id: orgId }, select: { name: true } });
+    const admin = await this.prisma.user.findFirst({ where: { orgId, role: "ADMIN" }, select: { email: true }, orderBy: { createdAt: "asc" } });
+    const txn = await this.prisma.transaction.findFirst({ where: { orgId, planId, gateway, status: "succeeded" }, orderBy: { createdAt: "desc" } });
+    const amt = txn ? `${txn.currency?.toLowerCase() === "usd" ? "$" : (txn.currency?.toUpperCase() ?? "") + " "}${(txn.amountCents / 100).toFixed(2)}` : "—";
+    this.email.notifySuperAdmins(
+      `New payment: ${plan?.name ?? "plan"} — ${org?.name ?? orgId}`,
+      "Payment received — subscription active",
+      `A customer just paid for a subscription.
+       <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:6px">
+         <tr><td style="padding:5px 0;color:#6b7280;width:120px">Customer</td><td style="padding:5px 0;font-weight:600">${org?.name ?? "—"}</td></tr>
+         <tr><td style="padding:5px 0;color:#6b7280">Account email</td><td style="padding:5px 0">${admin?.email ?? "—"}</td></tr>
+         <tr><td style="padding:5px 0;color:#6b7280">Plan</td><td style="padding:5px 0">${plan?.name ?? "—"}</td></tr>
+         <tr><td style="padding:5px 0;color:#6b7280">Amount</td><td style="padding:5px 0;font-weight:600">${amt}</td></tr>
+         <tr><td style="padding:5px 0;color:#6b7280">Gateway</td><td style="padding:5px 0">${gateway}${subscriptionId ? ` · ${subscriptionId}` : ""}</td></tr>
+         <tr><td style="padding:5px 0;color:#6b7280">When</td><td style="padding:5px 0">${new Date().toLocaleString("en-US")}</td></tr>
+       </table>`,
+    ).catch(() => {});
   }
 
   // Notify every active admin of an org about a billing event (honours their prefs).
@@ -357,6 +384,18 @@ export class BillingService {
   private async emailOrgAdmins(orgId: string, subject: string, body: string, cta?: { label: string; url: string }) {
     const admins = await this.prisma.user.findMany({ where: { orgId, role: "ADMIN", isActive: true }, select: { email: true } });
     await Promise.all(admins.map((a) => this.email.sendBranded(a.email, subject, subject, body, cta, orgId).catch(() => {})));
+  }
+
+  // Platform-owner alert with the customer's details — for trials, renewals,
+  // cancellations, etc. (activation has its own richer version above).
+  private async alertSuperAdmins(orgId: string, subject: string, title: string, lines: Record<string, string>) {
+    const [org, admin] = await Promise.all([
+      this.prisma.organization.findUnique({ where: { id: orgId }, select: { name: true } }),
+      this.prisma.user.findFirst({ where: { orgId, role: "ADMIN" }, select: { email: true }, orderBy: { createdAt: "asc" } }),
+    ]);
+    const rows: Record<string, string> = { Customer: org?.name ?? "—", "Account email": admin?.email ?? "—", ...lines, When: new Date().toLocaleString("en-US") };
+    const table = Object.entries(rows).map(([k, v]) => `<tr><td style="padding:5px 0;color:#6b7280;width:120px">${k}</td><td style="padding:5px 0">${v}</td></tr>`).join("");
+    await this.email.notifySuperAdmins(subject, title, `<table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:6px">${table}</table>`).catch(() => undefined);
   }
 
   async cancel(orgId: string) {
@@ -375,6 +414,7 @@ export class BillingService {
       body: "Your subscription was canceled. Access continues until the period ends.",
       link: "/dashboard/settings/billing",
     });
+    await this.alertSuperAdmins(orgId, "Subscription canceled by customer", "Subscription canceled", { Event: "Customer canceled from billing", Plan: sub.planId });
     return { ok: true };
   }
 
@@ -450,11 +490,25 @@ export class BillingService {
         await this.activate(orgId, txn?.planId ?? null, "paypal", null, subId ?? null, nextBilling);
       } else if (type === "PAYMENT.SALE.COMPLETED" && subId) {
         const local = await this.prisma.subscription.findFirst({ where: { gatewaySubscriptionId: subId } });
-        if (local) {
-          await this.prisma.subscription.update({ where: { orgId: local.orgId }, data: { status: "ACTIVE" } });
+        // Ignore late/out-of-order or replayed sale events for a subscription the
+        // user already canceled — a stray PAYMENT.SALE.COMPLETED must NOT
+        // resurrect a CANCELED subscription back to ACTIVE.
+        if (local && local.status !== "CANCELED") {
+          // Advance the billing period so "Renews on <date>" stays correct.
+          let nextBilling: Date | null = null;
+          try {
+            const { token, base } = await this.ppToken();
+            const sub = await this.pp(`/v1/billing/subscriptions/${subId}`, "GET", null, token, base);
+            if (sub?.billing_info?.next_billing_time) nextBilling = new Date(sub.billing_info.next_billing_time);
+          } catch { /* fall back to status-only update below */ }
+          await this.prisma.subscription.update({
+            where: { orgId: local.orgId },
+            data: { status: "ACTIVE", ...(nextBilling ? { currentPeriodEnd: nextBilling } : {}) },
+          });
           // A new billing period started — apply any scheduled plan change (downgrade).
           await this.applyPendingChange(local.orgId);
           await this.notifyOrgAdmins(local.orgId, { title: "Payment received", body: "Your subscription renewed successfully.", link: "/dashboard/settings/billing" });
+          await this.alertSuperAdmins(local.orgId, "Recurring payment received", "Subscription renewed", { Event: "Recurring renewal payment", Gateway: `paypal${subId ? ` · ${subId}` : ""}` });
         }
       } else if ((type === "BILLING.SUBSCRIPTION.CANCELLED" || type === "BILLING.SUBSCRIPTION.SUSPENDED") && subId) {
         const local = await this.prisma.subscription.findFirst({ where: { gatewaySubscriptionId: subId } });
@@ -464,6 +518,7 @@ export class BillingService {
           await this.notifyOrgAdmins(local.orgId, canceled
             ? { title: "Subscription ended", body: "Your subscription has been canceled.", link: "/dashboard/settings/billing" }
             : { title: "Subscription paused", body: "Your subscription was suspended (usually a payment issue). Please review your billing.", link: "/dashboard/settings/billing" });
+          await this.alertSuperAdmins(local.orgId, canceled ? "Subscription canceled" : "Subscription suspended (payment issue)", canceled ? "Subscription canceled" : "Subscription suspended", { Event: canceled ? "Canceled at PayPal" : "Suspended — payment failed", Gateway: `paypal${subId ? ` · ${subId}` : ""}` });
         }
       }
     } catch (e) {

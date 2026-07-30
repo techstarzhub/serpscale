@@ -43,6 +43,10 @@ export class PublicFormsService {
   async contact(dto: ContactDto, ip?: string, userAgent?: string): Promise<{ ok: true }> {
     if (this.guard(dto.website, dto.captchaToken, dto.captchaAnswer)) return { ok: true };
 
+    // Strip any CR/LF before the name goes into an email Subject header —
+    // defense-in-depth against header injection (nodemailer also sanitizes).
+    const safeName = dto.name.replace(/[\r\n]+/g, " ").trim().slice(0, 120);
+
     const msg = await this.prisma.contactMessage.create({
       data: {
         name: dto.name.trim(),
@@ -68,7 +72,7 @@ export class PublicFormsService {
     await Promise.all(
       admins.map((to) =>
         this.email
-          .sendBranded(to, `New contact message from ${dto.name}`, "New contact form submission", adminBody, { label: `Reply to ${dto.name}`, url: `mailto:${dto.email}` }, null)
+          .sendBranded(to, `New contact message from ${safeName}`, "New contact form submission", adminBody, { label: `Reply to ${safeName}`, url: `mailto:${dto.email}` }, null)
           .catch((e) => this.logger.warn(`contact admin email failed (${to}): ${e}`)),
       ),
     );

@@ -13,6 +13,7 @@ interface JwtPayload {
   sub: string;
   role: string;
   orgId?: string | null;
+  iat?: number; // issued-at (seconds since epoch), set automatically by jwt.sign
 }
 
 @Injectable()
@@ -34,6 +35,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload) {
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || !user.isActive) throw new UnauthorizedException();
+    // Reject access tokens minted before the user's last password change/reset —
+    // otherwise a stolen access token stays valid for its full TTL even after the
+    // victim resets their password. (1s skew tolerance for issue/write ordering.)
+    if (user.passwordChangedAt && payload.iat && payload.iat * 1000 < user.passwordChangedAt.getTime() - 1000) {
+      throw new UnauthorizedException("Session expired.");
+    }
     return {
       id: user.id,
       email: user.email,

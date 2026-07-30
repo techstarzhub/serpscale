@@ -6,6 +6,7 @@
 // (embarrassing on a client site). Kept in its own file so it plugs into the
 // crawl pipeline with a single call and no coupling to the crawler internals.
 import { fetch as uFetch } from "undici";
+import { isPublicUrl } from "./crawler";
 
 const UA =
   "Mozilla/5.0 (compatible; SEOPlatformBot/1.0; +https://seo-platform.local) AppleWebKit/537.36";
@@ -45,6 +46,8 @@ const DEAD_NET = new Set([
 // Probe a single URL. HEAD first (cheap); many edges reject HEAD, so retry with
 // GET before trusting an ambiguous code or a thrown error.
 async function probe(url: string, timeoutMs: number): Promise<{ status: number | null; dead: boolean }> {
+  // SSRF guard: a crawled page could link to an internal/metadata URL; never probe it.
+  if (!(await isPublicUrl(url))) return { status: null, dead: false };
   const doFetch = (method: "HEAD" | "GET") =>
     uFetch(url, {
       method,

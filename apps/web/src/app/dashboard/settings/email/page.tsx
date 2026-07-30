@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import { useFeature } from "@/components/providers/user-provider";
+import { useFeature, useCan } from "@/components/providers/user-provider";
 import { LockedFeature } from "@/components/ui/locked-feature";
 
 interface Smtp {
@@ -26,10 +26,11 @@ const label = "mb-1 block text-xs font-medium text-muted-foreground";
 // Agency's own SMTP — invites and password resets for this org send from here.
 export default function EmailSettingsPage() {
   const hasFeature = useFeature();
+  const can = useCan();
   // Per-tenant email is a white-label capability. Stays visible with an upgrade
   // prompt on plans that don't include it.
   if (!hasFeature("white_label")) {
-    return <LockedFeature title="Custom email (SMTP)" description="Send invites and reports from your own email domain. Upgrade to a white-label plan to unlock." />;
+    return <LockedFeature title="Custom email (SMTP)" description="Send invites and reports from your own email domain. Upgrade to a white-label plan to unlock." canUpgrade={can("billing.manage")} />;
   }
   return <EmailInner />;
 }

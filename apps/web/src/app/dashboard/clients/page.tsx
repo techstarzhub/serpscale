@@ -34,10 +34,11 @@ const lbl = "mb-1 block text-xs font-medium text-muted-foreground";
 
 export default function ClientsPage() {
   const hasFeature = useFeature();
+  const can = useCan();
   // Client dashboards are an agency capability. The page stays reachable but
   // shows an upgrade prompt on plans that don't include it.
   if (!hasFeature("client_dashboards")) {
-    return <LockedFeature title="Client dashboards" description="Give each client their own branded portal and reports. Upgrade to an agency plan to unlock." />;
+    return <LockedFeature title="Client dashboards" description="Give each client their own branded portal and reports. Upgrade to an agency plan to unlock." canUpgrade={can("billing.manage")} />;
   }
   return <ClientsInner />;
 }

@@ -7,6 +7,8 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { ALL_PERMS, type Permission } from "../auth/permissions";
 import type { AuthUser } from "../auth/decorators/current-user.decorator";
 import { EntitlementsService } from "../entitlements/entitlements.service";
+import { PermissionsService } from "../auth/permissions.service";
+import { normalizeEmail } from "../common/email.util";
 
 const VALID = new Set<string>(ALL_PERMS);
 
@@ -18,6 +20,7 @@ export class TeamService {
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
     private readonly entitlements: EntitlementsService,
+    private readonly permissions: PermissionsService,
   ) {}
 
   private orgOf(user: AuthUser): string {
@@ -28,6 +31,24 @@ export class TeamService {
   private cleanPerms(perms: unknown): Permission[] {
     if (!Array.isArray(perms)) return [];
     return [...new Set(perms.filter((p): p is Permission => typeof p === "string" && VALID.has(p)))];
+  }
+
+  // Cap the permissions a role may carry to the ones the CALLER actually holds —
+  // a delegated role-manager must never be able to mint (and then assign
+  // themselves) a role more powerful than their own set (privilege escalation).
+  // A full org ADMIN holds every org permission, so nothing is stripped for them.
+  private async cappedPerms(user: AuthUser, perms: unknown): Promise<Permission[]> {
+    const requested = this.cleanPerms(perms);
+    if (user.role === "ADMIN") return requested;
+    const own = await this.permissions.resolve(user);
+    const granted = requested.filter((p) => own.has(p));
+    const denied = requested.filter((p) => !own.has(p));
+    if (denied.length) {
+      throw new ForbiddenException(
+        `You can only grant permissions you hold yourself. Not allowed: ${denied.join(", ")}`,
+      );
+    }
+    return granted;
   }
 
   // ---- Custom roles ----
@@ -44,7 +65,7 @@ export class TeamService {
     const orgId = this.orgOf(user);
     if (!dto.name?.trim()) throw new BadRequestException("Role name is required");
     return this.prisma.customRole.create({
-      data: { orgId, name: dto.name.trim(), description: dto.description ?? null, permissions: this.cleanPerms(dto.permissions) },
+      data: { orgId, name: dto.name.trim(), description: dto.description ?? null, permissions: await this.cappedPerms(user, dto.permissions) },
     });
   }
 
@@ -57,7 +78,7 @@ export class TeamService {
       data: {
         name: dto.name?.trim() ?? undefined,
         description: dto.description ?? undefined,
-        permissions: dto.permissions ? this.cleanPerms(dto.permissions) : undefined,
+        permissions: dto.permissions ? await this.cappedPerms(user, dto.permissions) : undefined,
       },
     });
   }
@@ -84,7 +105,10 @@ export class TeamService {
 
   async inviteMember(user: AuthUser, dto: { email: string; name?: string; customRoleId?: string; role?: string; password?: string }) {
     const orgId = this.orgOf(user);
-    const email = dto.email?.trim().toLowerCase();
+    // Normalize (strip +tag / Gmail dots) so the stored address matches exactly
+    // what login resolves to — otherwise an invited user with an aliased/dotted
+    // email could never sign in.
+    const email = normalizeEmail(dto.email || "");
     if (!email || !email.includes("@")) throw new BadRequestException("Valid email required");
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new BadRequestException("A user with this email already exists");
@@ -174,9 +198,31 @@ export class TeamService {
       if (member.id === user.id) throw new BadRequestException("You cannot change your own role level.");
     }
 
-    if (!changingRole && dto.customRoleId) {
+    // Validate ANY custom-role assignment (regardless of whether the built-in
+    // role level is also changing — previously this only ran when the level was
+    // unchanged, letting {role:"MEMBER", customRoleId:<other-org-role>} through
+    // and leaking another org's role in). The role must belong to THIS org, and
+    // a non-admin manager may neither change their own role nor assign a role
+    // carrying permissions beyond their own set (privilege escalation).
+    if (dto.customRoleId) {
       const role = await this.prisma.customRole.findFirst({ where: { id: dto.customRoleId, orgId } });
-      if (!role) throw new BadRequestException("Invalid role");
+      if (!role) throw new BadRequestException("Invalid role for this organization");
+      if (user.role !== "ADMIN") {
+        if (member.id === user.id) throw new ForbiddenException("You cannot change your own role.");
+        const own = await this.permissions.resolve(user);
+        const over = ((role.permissions as Permission[]) ?? []).filter((p) => !own.has(p));
+        if (over.length) throw new ForbiddenException("You cannot assign a role with permissions beyond your own.");
+      }
+    }
+
+    // Never leave the org with zero active admins (demoting or deactivating the
+    // last admin would permanently lock everyone out of team/billing management).
+    const removingThisAdmin = member.role === "ADMIN" && (dto.role === "MEMBER" || dto.isActive === false);
+    if (removingThisAdmin) {
+      const otherAdmins = await this.prisma.user.count({
+        where: { orgId, role: "ADMIN", isActive: true, id: { not: member.id } },
+      });
+      if (otherAdmins === 0) throw new BadRequestException("This is the organization's only admin. Promote another admin first.");
     }
 
     const data: any = { isActive: dto.isActive ?? undefined };

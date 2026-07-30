@@ -17,11 +17,12 @@ interface Member { id: string; email: string; name: string | null; role: string;
 
 export default function TeamPage() {
   const limit = useLimit();
+  const can = useCan();
   const seats = limit("seats");
   // A team needs more than the single owner seat. Solo plans stay visible but
   // show an upgrade prompt instead of the members/roles UI.
   if (!(seats == null || seats > 1)) {
-    return <LockedFeature title="Team management" description="Invite teammates and assign roles. Upgrade to a plan with more than one seat to unlock." />;
+    return <LockedFeature title="Team management" description="Invite teammates and assign roles. Upgrade to a plan with more than one seat to unlock." canUpgrade={can("billing.manage")} />;
   }
   return <TeamInner />;
 }

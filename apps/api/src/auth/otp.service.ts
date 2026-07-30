@@ -5,7 +5,7 @@ import { EmailService } from "../email/email.service";
 
 export type OtpPurpose = "SIGNUP" | "LOGIN";
 const TTL_MS = 10 * 60 * 1000; // codes valid 10 minutes
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS = 8; // cumulative wrong guesses allowed per email+purpose per window
 
 /** Issues + verifies 6-digit email one-time codes for signup verification and
  *  login 2FA. Codes are stored hashed; pending signup data rides in `payload`. */
@@ -28,11 +28,21 @@ export class OtpService {
   /** Create a code, email it, and (for signup) stash the pending account data. */
   async issue(rawEmail: string, purpose: OtpPurpose, payload?: any): Promise<{ otpRequired: true; email: string }> {
     const email = rawEmail.toLowerCase();
+    // Carry forward wrong-guess attempts from still-valid codes so that RESENDING
+    // a code cannot reset the attempt counter — otherwise a 6-digit code could be
+    // brute-forced indefinitely by re-issuing after every 5 misses. The counter is
+    // cumulative per email+purpose within the TTL window (a genuine attacker who
+    // has already burned MAX_ATTEMPTS stays locked until the window elapses).
+    const prior = await this.prisma.emailOtp.findMany({
+      where: { email, purpose, expiresAt: { gt: new Date() } },
+      select: { attempts: true },
+    });
+    const carry = Math.min(prior.reduce((s, r) => s + r.attempts, 0), MAX_ATTEMPTS);
     // Clear any earlier codes for this email+purpose so only the newest is valid.
     await this.prisma.emailOtp.deleteMany({ where: { email, purpose } });
     const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
     await this.prisma.emailOtp.create({
-      data: { email, purpose, codeHash: this.hash(code), payload: payload ?? undefined, expiresAt: new Date(Date.now() + TTL_MS) },
+      data: { email, purpose, codeHash: this.hash(code), payload: payload ?? undefined, attempts: carry, expiresAt: new Date(Date.now() + TTL_MS) },
     });
     const isSignup = purpose === "SIGNUP";
     const subject = isSignup ? "Verify your email" : "Your login code";

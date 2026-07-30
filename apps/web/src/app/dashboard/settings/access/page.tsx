@@ -28,11 +28,12 @@ function StatusBadge({ s }: { s: string }) {
 
 export default function AccessRequestPage() {
   const limit = useLimit();
+  const can = useCan();
   const seats = limit("seats");
   // Access requests are a team feature. Solo plans stay visible with an upgrade
   // prompt instead of the request/review UI.
   if (!(seats == null || seats > 1)) {
-    return <LockedFeature title="Access requests" description="Let teammates request campaign or permission access for review. Upgrade to a multi-seat plan to unlock." />;
+    return <LockedFeature title="Access requests" description="Let teammates request campaign or permission access for review. Upgrade to a multi-seat plan to unlock." canUpgrade={can("billing.manage")} />;
   }
   return <AccessRequestInner />;
 }

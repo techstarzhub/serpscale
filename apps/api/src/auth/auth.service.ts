@@ -12,29 +12,14 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { EmailService } from "../email/email.service";
 import { OtpService } from "./otp.service";
+import { normalizeEmail } from "../common/email.util";
+
+// Re-exported for callers that historically imported it from here.
+export { normalizeEmail };
 
 interface Tokens {
   accessToken: string;
   refreshToken: string;
-}
-
-// Canonicalize an email so alias tricks can't spin up duplicate accounts / free
-// trials. Plus-addressing (user+tag@) is an alias of the base address, so it's
-// stripped for every provider; Gmail additionally ignores dots in the local
-// part (and googlemail == gmail), so those are collapsed too. This makes
-// techstarzhub+1@gmail.com, techstarzhub+99@gmail.com and tech.starzhub@gmail.com
-// all resolve to the same account.
-export function normalizeEmail(raw: string): string {
-  const e = (raw || "").trim().toLowerCase();
-  const at = e.lastIndexOf("@");
-  if (at < 1 || at === e.length - 1) return e;
-  let local = e.slice(0, at);
-  let domain = e.slice(at + 1);
-  const plus = local.indexOf("+");
-  if (plus >= 0) local = local.slice(0, plus); // strip +tag alias (all providers)
-  if (domain === "googlemail.com") domain = "gmail.com";
-  if (domain === "gmail.com") local = local.replace(/\./g, ""); // Gmail ignores dots
-  return `${local}@${domain}`;
 }
 
 @Injectable()
@@ -114,26 +99,39 @@ export class AuthService {
     // A trial signup, or an organic signup with no chosen plan, starts on the
     // default trial plan. A paid plan choice defers to checkout (no subscription).
     const wantsTrial = p.trial === true || !p.plan;
+    let trialDetail = "Paid plan chosen — checkout pending (no subscription yet)";
     if (wantsTrial) {
       const signup = (await this.prisma.platformSetting.findUnique({ where: { key: "signup" } }))?.value as any;
       const slug = signup?.defaultPlanSlug || "starter";
       const plan = await this.prisma.plan.findFirst({ where: { slug, isActive: true } });
       if (plan) {
         const days = Number(plan.trialDays) || 0;
+        const ends = days > 0 ? new Date(Date.now() + days * 24 * 3600 * 1000) : null;
         await this.prisma.subscription.create({
-          data: {
-            orgId: org.id,
-            planId: plan.id,
-            status: SubscriptionStatus.TRIALING,
-            currentPeriodEnd: days > 0 ? new Date(Date.now() + days * 24 * 3600 * 1000) : null,
-            gateway: "trial",
-          },
+          data: { orgId: org.id, planId: plan.id, status: SubscriptionStatus.TRIALING, currentPeriodEnd: ends, gateway: "trial" },
         });
+        trialDetail = `${plan.name} — ${days}-day free trial${ends ? `, ends ${ends.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}` : ""}`;
+      } else {
+        trialDetail = "No trial plan configured";
       }
     }
-    return this.prisma.user.create({
+    const user = await this.prisma.user.create({
       data: { email: p.email, name: p.name, passwordHash: p.passwordHash, role: Role.ADMIN, orgId: org.id },
     });
+    // Platform-owner alert: full details of every new signup / trial.
+    this.email.notifySuperAdmins(
+      `New signup: ${p.name || p.email}`,
+      "New account created",
+      `A new customer just signed up on the platform.
+       <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:6px">
+         <tr><td style="padding:5px 0;color:#6b7280;width:110px">Name</td><td style="padding:5px 0;font-weight:600">${p.name || "—"}</td></tr>
+         <tr><td style="padding:5px 0;color:#6b7280">Email</td><td style="padding:5px 0">${p.email}</td></tr>
+         <tr><td style="padding:5px 0;color:#6b7280">Workspace</td><td style="padding:5px 0">${org.name}</td></tr>
+         <tr><td style="padding:5px 0;color:#6b7280">Plan / trial</td><td style="padding:5px 0">${trialDetail}</td></tr>
+         <tr><td style="padding:5px 0;color:#6b7280">When</td><td style="padding:5px 0">${new Date().toLocaleString("en-US")}</td></tr>
+       </table>`,
+    ).catch(() => {});
+    return user;
   }
 
   async forgotPassword(email: string) {
@@ -169,7 +167,7 @@ export class AuthService {
     if (!reset || reset.usedAt || reset.expiresAt < new Date()) {
       throw new BadRequestException("This reset link is invalid or has expired. Please request a new one.");
     }
-    await this.prisma.user.update({ where: { id: reset.userId }, data: { passwordHash: await bcrypt.hash(password, 12) } });
+    await this.prisma.user.update({ where: { id: reset.userId }, data: { passwordHash: await bcrypt.hash(password, 12), passwordChangedAt: new Date() } });
     await this.prisma.passwordReset.update({ where: { id: reset.id }, data: { usedAt: new Date() } });
     // Invalidate existing sessions after a reset.
     await this.prisma.refreshToken.deleteMany({ where: { userId: reset.userId } });
@@ -188,18 +186,20 @@ export class AuthService {
     }
 
     const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
-    const stored = await this.prisma.refreshToken.findFirst({
-      where: { tokenHash, userId: payload.sub },
-    });
-    if (!stored || stored.expiresAt < new Date()) {
+    // Atomically consume the token in a single statement so two concurrent
+    // refreshes can't both succeed (the old find-then-delete was racy). The JWT
+    // signature+exp were already verified above, so a validly-signed token whose
+    // hash is NO LONGER in the store means it was already rotated — i.e. a
+    // replay of a stolen/old refresh token. In that case revoke the entire token
+    // family for the user so the thief and victim are both logged out.
+    const consumed = await this.prisma.refreshToken.deleteMany({ where: { tokenHash, userId: payload.sub } });
+    if (consumed.count === 0) {
+      await this.prisma.refreshToken.deleteMany({ where: { userId: payload.sub } });
       throw new UnauthorizedException("Session expired.");
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || !user.isActive) throw new UnauthorizedException("Session expired.");
-
-    // Rotate: invalidate the used refresh token so it cannot be replayed.
-    await this.prisma.refreshToken.delete({ where: { id: stored.id } }).catch(() => {});
 
     return this.issueTokens(user);
   }

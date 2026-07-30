@@ -4,6 +4,7 @@ import type { Project } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../auth/permissions.service";
 import { StorageService } from "../storage/storage.service";
+import { EntitlementsService } from "../entitlements/entitlements.service";
 import { PERMISSIONS } from "../auth/permissions";
 import type { AuthUser } from "../auth/decorators/current-user.decorator";
 
@@ -23,12 +24,34 @@ function cleanDomain(input: string): string {
     .toLowerCase();
 }
 
+// Lightweight guard rejecting obviously-internal targets at project create/update
+// time (localhost, private/loopback/link-local IP literals, *.local/.internal).
+// Full DNS-based SSRF protection happens at fetch time in the crawler; this stops
+// the internal target from ever being stored as a crawlable domain.
+function isInternalDomain(domain: string): boolean {
+  const host = domain.replace(/:\d+$/, ""); // strip any port
+  if (!host) return true;
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return true;
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    if (a === 10 || a === 127 || a === 0 || a >= 224) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true; // link-local / cloud metadata
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  }
+  if (host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80")) return true;
+  return false;
+}
+
 @Injectable()
 export class ProjectsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly perms: PermissionsService,
     private readonly storage: StorageService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   async list(user: AuthUser) {
@@ -229,23 +252,39 @@ export class ProjectsService {
   async create(user: AuthUser, input: { name: string; domain: string; enabledTabs?: string[] }) {
     const domain = cleanDomain(input.domain);
     if (!domain || domain.length < 3) throw new BadRequestException("A valid domain is required");
+    if (isInternalDomain(domain)) throw new BadRequestException("That domain is not allowed.");
     // Keep only real dashboard keys; drop anything unknown the client may send.
     const VALID_TABS = ["overview", "copilot", "keywords", "content", "ranks", "competitors", "traffic", "backlinks", "domain", "ai", "audit"];
     const enabledTabs = Array.isArray(input.enabledTabs)
       ? [...new Set(input.enabledTabs.filter((t) => VALID_TABS.includes(t)))]
       : [];
-    // Enforce the org's plan limit on number of projects.
-    if (user.orgId) {
-      const sub = await this.prisma.subscription.findUnique({ where: { orgId: user.orgId }, include: { plan: true } });
-      const limits: any = { ...((sub?.plan?.limits as any) ?? {}), ...((sub?.limitOverrides as any) ?? {}) };
-      const cap = Number(limits?.projects);
-      if (cap && cap > 0) {
-        const count = await this.prisma.project.count({ where: { orgId: user.orgId } });
-        if (count >= cap) throw new ForbiddenException(`Your plan allows ${cap} project${cap === 1 ? "" : "s"}. Upgrade to add more.`);
+    const orgId = user.orgId ?? null;
+    if (orgId) {
+      const ent = await this.entitlements.forOrg(orgId);
+      // A lapsed org (a subscription exists but isn't in good standing — canceled /
+      // past-due / trial-expired) is locked out of creating new projects, matching
+      // the org-wide access pause. A fresh org with no subscription yet is left
+      // alone (status null) so onboarding isn't broken.
+      if (ent.status && !ent.active) throw new ForbiddenException("Your subscription is inactive. Please renew to add projects.");
+      // Enforce the plan's project cap. A cap of 0 means "no projects on this
+      // plan" and must block; an absent/non-numeric cap means unlimited.
+      const rawCap = (ent.limits as any)?.projects;
+      const cap = Number(rawCap);
+      if (rawCap != null && Number.isFinite(cap) && cap >= 0) {
+        // Count + create in ONE transaction under a per-org advisory lock so two
+        // concurrent creates can't both pass the cap check (TOCTOU race).
+        return this.prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}))`;
+          const count = await tx.project.count({ where: { orgId } });
+          if (count >= cap) throw new ForbiddenException(`Your plan allows ${cap} project${cap === 1 ? "" : "s"}. Upgrade to add more.`);
+          return tx.project.create({
+            data: { name: input.name.trim(), domain, enabledTabs, orgId, createdById: user.id },
+          });
+        });
       }
     }
     return this.prisma.project.create({
-      data: { name: input.name.trim(), domain, enabledTabs, orgId: user.orgId ?? null, createdById: user.id },
+      data: { name: input.name.trim(), domain, enabledTabs, orgId, createdById: user.id },
     });
   }
 
@@ -256,11 +295,16 @@ export class ProjectsService {
     const enabledTabs = Array.isArray(input.enabledTabs)
       ? [...new Set(input.enabledTabs.filter((t) => VALID_TABS.includes(t)))]
       : undefined;
+    let domain: string | undefined = undefined;
+    if (input.domain) {
+      domain = cleanDomain(input.domain);
+      if (!domain || domain.length < 3 || isInternalDomain(domain)) throw new BadRequestException("A valid, public domain is required");
+    }
     return this.prisma.project.update({
       where: { id },
       data: {
         name: input.name?.trim() ?? undefined,
-        domain: input.domain ? cleanDomain(input.domain) : undefined,
+        domain,
         enabledTabs,
       },
     });
@@ -314,6 +358,10 @@ export class ProjectsService {
     if (!key) throw new NotFoundException("This share link is invalid or has been disabled.");
     const project = await this.prisma.project.findUnique({ where: { shareKey: key } });
     if (!project || !project.shareKey) throw new NotFoundException("This share link is invalid or has been disabled.");
+    // A shared client dashboard is only live while the agency's subscription is
+    // active — if their payment lapses (any reason), the public link stops too.
+    const ent = await this.entitlements.forOrg(project.orgId);
+    if (!ent.active) throw new ForbiddenException("This dashboard is temporarily unavailable. Please contact the site owner.");
     return project;
   }
 

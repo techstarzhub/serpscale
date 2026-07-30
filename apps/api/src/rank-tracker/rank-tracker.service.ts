@@ -18,6 +18,46 @@ export class RankTrackerService {
     private readonly entitlements: EntitlementsService,
   ) {}
 
+  // Decide which keywords may actually be rank-checked (each check costs money):
+  //   1. The org's subscription must be ACTIVE — an unpaid / lapsed / canceled org
+  //      must NOT keep incurring paid SERP checks (user endpoints are gated by
+  //      @RequireFeature, but the scheduler bypasses guards, so re-check here).
+  //   2. Only the paid number of keywords is tracked: an org may keep more rows
+  //      than its plan allows (e.g. left over after a downgrade), but we check
+  //      only the OLDEST `limit` of them — "jitne keywords ki payment hui, utne
+  //      hi track honge". Beyond the cap, keywords simply stop being refreshed.
+  // Fails closed: any org we can't verify is skipped.
+  private async eligibleForCheck<T extends { id: string; project: { orgId: string | null } }>(kws: T[]): Promise<T[]> {
+    const orgIds = [...new Set(kws.map((k) => k.project.orgId).filter((o): o is string => !!o))];
+    const info = new Map<string, { active: boolean; allowed: Set<string> | null }>();
+    await Promise.all(
+      orgIds.map(async (orgId) => {
+        try {
+          const ent = await this.entitlements.forOrg(orgId);
+          if (!ent.active) return info.set(orgId, { active: false, allowed: new Set() });
+          const cap = ent.limits.keywords;
+          if (cap == null) return info.set(orgId, { active: true, allowed: null }); // unlimited
+          const oldest = await this.prisma.rankKeyword.findMany({
+            where: { project: { orgId } },
+            orderBy: { createdAt: "asc" },
+            take: cap,
+            select: { id: true },
+          });
+          info.set(orgId, { active: true, allowed: new Set(oldest.map((o) => o.id)) });
+        } catch {
+          info.set(orgId, { active: false, allowed: new Set() }); // fail closed
+        }
+      }),
+    );
+    return kws.filter((k) => {
+      const orgId = k.project.orgId;
+      if (!orgId) return true; // no org → no plan limit applies
+      const i = info.get(orgId);
+      if (!i || !i.active) return false;
+      return i.allowed === null || i.allowed.has(k.id);
+    });
+  }
+
   // A rank move worth notifying about = crossing the top-10 boundary, or
   // entering / dropping out of the top 100 entirely.
   private significant(before: number | null, after: number | null): "up" | "down" | null {
@@ -64,21 +104,25 @@ export class RankTrackerService {
     // Enforce the plan's keyword cap — but only for genuinely new keywords, so
     // re-adding an existing one is never blocked. Counts across the whole org.
     const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { orgId: true } });
-    if (project?.orgId) {
-      const exists = await this.prisma.rankKeyword.findUnique({
+    const orgId = project?.orgId ?? null;
+    // Count-check + create in one transaction under a per-org advisory lock so
+    // concurrent adds can't both slip past the keyword cap (TOCTOU race).
+    const row = await this.prisma.$transaction(async (tx) => {
+      if (orgId) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}))`;
+      const exists = await tx.rankKeyword.findUnique({
         where: { projectId_keyword_country_device: { projectId, keyword: text, country: c, device: dev } },
         select: { id: true },
       });
-      if (!exists) {
-        const kwCount = await this.prisma.rankKeyword.count({ where: { project: { orgId: project.orgId } } });
-        await this.entitlements.assertWithinLimit(project.orgId, "keywords", kwCount);
+      if (orgId && !exists) {
+        const kwCount = await tx.rankKeyword.count({ where: { project: { orgId } } });
+        await this.entitlements.assertWithinLimit(orgId, "keywords", kwCount);
       }
-    }
-    const row = await this.prisma.rankKeyword.upsert({
-      where: { projectId_keyword_country_device: { projectId, keyword: text, country: c, device: dev } },
-      create: { projectId, keyword: text, country: c, device: dev },
-      update: {},
-      include: { project: { select: { id: true, orgId: true, domain: true } } },
+      return tx.rankKeyword.upsert({
+        where: { projectId_keyword_country_device: { projectId, keyword: text, country: c, device: dev } },
+        create: { projectId, keyword: text, country: c, device: dev },
+        update: {},
+        include: { project: { select: { id: true, orgId: true, domain: true } } },
+      });
     });
     // First reading right away so the user sees a position immediately.
     this.check(row as KeywordRow).catch(() => {});
@@ -135,7 +179,11 @@ export class RankTrackerService {
     });
     // Skip anything checked within the cooldown — those are already up to date,
     // so re-checking them would just burn money for the same result.
-    const due = kws.filter((k) => !k.lastCheckedAt || new Date(k.lastCheckedAt).getTime() < cutoffMs);
+    const fresh = kws.filter((k) => !k.lastCheckedAt || new Date(k.lastCheckedAt).getTime() < cutoffMs);
+    // Enforce the same active-subscription + paid-keyword-cap rule as the
+    // scheduler, so a manual "Refresh now" can't check an inactive org or spend
+    // on keywords beyond the plan's paid limit.
+    const due = await this.eligibleForCheck(fresh);
     let checked = 0;
     for (const kw of due) {
       try {
@@ -158,12 +206,13 @@ export class RankTrackerService {
   async checkDue(limit = 500) {
     if (this.standardMode()) return this.postDue(limit);
     const cutoff = new Date(Date.now() - 20 * 3600_000);
-    const kws = await this.prisma.rankKeyword.findMany({
+    const due = await this.prisma.rankKeyword.findMany({
       where: { OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: cutoff } }] },
       include: { project: { select: { id: true, orgId: true, domain: true } } },
       orderBy: { lastCheckedAt: { sort: "asc", nulls: "first" } },
       take: limit,
     });
+    const kws = await this.eligibleForCheck(due);
     let checked = 0;
     for (const kw of kws) {
       try {
@@ -183,12 +232,13 @@ export class RankTrackerService {
   // tracking the same term only pay for one SERP; the result maps to all of them.
   async postDue(limit = 500) {
     const cutoff = new Date(Date.now() - 20 * 3600_000);
-    const kws = await this.prisma.rankKeyword.findMany({
+    const due = await this.prisma.rankKeyword.findMany({
       where: { OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: cutoff } }] },
       include: { project: { select: { id: true, orgId: true, domain: true } } },
       orderBy: { lastCheckedAt: { sort: "asc", nulls: "first" } },
       take: limit,
     });
+    const kws = await this.eligibleForCheck(due);
     if (!kws.length) return { posted: 0, scanned: 0 };
 
     // Dedupe: one task per unique (keyword|country|device); tag carries the id of

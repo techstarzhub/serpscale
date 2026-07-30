@@ -67,6 +67,15 @@ function payMethod(gateway: string): { icon: string; label: string } {
   return { icon: "", label: "Manual" };
 }
 
+// Brand wordmark for the header — two-tone "SerpScale" for the default platform
+// brand, otherwise the configured product name (white-label / rename safe).
+function wordmark(product: string): string {
+  const name = (product || "SerpScale").trim();
+  return name.toLowerCase() === "serpscale"
+    ? `<span class="s">Serp</span><span class="c">Scale</span>`
+    : `<span class="c">${name}</span>`;
+}
+
 function invoiceHtml(d: InvoiceData): string {
   const sub = money(d.amountCents, d.currency);
   const pm = payMethod(d.gateway);
@@ -113,7 +122,7 @@ function invoiceHtml(d: InvoiceData): string {
     <div class="top">
       <div class="brand">
         ${logoSvg()}
-        <div><div class="wm"><span class="s">Serp</span><span class="c">Scale</span></div>
+        <div><div class="wm">${wordmark(d.product)}</div>
         <div class="sub">The all-in-one SEO platform</div></div>
       </div>
       <div class="inv"><h1>INVOICE</h1>
