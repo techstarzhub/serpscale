@@ -10,5 +10,8 @@ import { JwtStrategy } from "./strategies/jwt.strategy";
   imports: [PassportModule, JwtModule.register({})],
   controllers: [AuthController],
   providers: [AuthService, OtpService, JwtStrategy],
+  // Exported so other modules (users onboarding, team invite) can mint sessions
+  // and one-click login links.
+  exports: [AuthService],
 })
 export class AuthModule {}

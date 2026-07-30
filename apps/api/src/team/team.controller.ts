@@ -5,6 +5,7 @@ import { RequirePermissions } from "../auth/decorators/require-permissions.decor
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
 import { PERMISSIONS, PERMISSION_GROUPS } from "../auth/permissions";
 import { AuditService } from "../auth/audit.service";
+import { AuthService } from "../auth/auth.service";
 import { EmailService } from "../email/email.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { TeamService } from "./team.service";
@@ -16,6 +17,7 @@ export class TeamController {
   constructor(
     private readonly team: TeamService,
     private readonly audit: AuditService,
+    private readonly auth: AuthService,
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,
   ) {}
@@ -72,17 +74,19 @@ export class TeamController {
   async invite(@CurrentUser() user: AuthUser, @Body() dto: InviteMemberDto) {
     const created = await this.team.inviteMember(user, dto);
     await this.audit.log(user, "user.invite", { target: created.email });
-    // Send ONE welcome email that also carries the login credentials, so the new
-    // member gets everything they need in a single message (otherwise the UI shows
-    // the temp password). We deliberately keep the in-app notification below
-    // email-less so we don't send a second, contentless "Welcome" email.
-    const web = process.env.WEB_ORIGIN || "http://localhost:3000";
+    // Send ONE welcome email with a one-click sign-in link (valid 24h) so the new
+    // member goes straight into onboarding without typing anything. The temp
+    // password is included as a fallback for after the link expires. We keep the
+    // in-app notification below email-less so there's no second "Welcome" email.
+    const loginLink = await this.auth.createLoginLink(created.id);
     const emailed = await this.email.sendBranded(
       created.email,
       "Welcome to the team",
       "Welcome to the team",
-      `An account was created for you. Sign in with:<br><br><b>Email:</b> ${created.email}<br><b>Temporary password:</b> ${created.tempPassword}<br><br>Please change your password after signing in.`,
-      { label: "Sign in", url: `${web}/login` },
+      `An account was created for you. Just click the button below to sign in — no password needed. The link works for 24 hours.<br><br>` +
+        `If it expires, sign in with:<br><b>Email:</b> ${created.email}<br><b>Temporary password:</b> ${created.tempPassword}<br><br>` +
+        `You'll set your own password when you sign in.`,
+      { label: "Sign in", url: loginLink },
       user.orgId, // agency's own SMTP + branding if configured
     );
     void this.notifications.notify(

@@ -6,6 +6,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { CopilotWidget } from "@/components/copilot/copilot-widget";
 import { ThemeSync } from "@/components/theme/theme-sync";
 import { OnboardingGate } from "@/components/onboarding/onboarding-gate";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   // Read the sidebar preference on the SERVER so the first paint already has the
@@ -15,12 +16,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <UserProvider>
       <ThemeSync />
       <AuthGuard>
-        <OnboardingGate>
-          <ProjectsProvider>
-            <AppShell initialCollapsed={collapsed}>{children}</AppShell>
-            <CopilotWidget />
-          </ProjectsProvider>
-        </OnboardingGate>
+        <ConfirmProvider>
+          <OnboardingGate>
+            <ProjectsProvider>
+              <AppShell initialCollapsed={collapsed}>{children}</AppShell>
+              <CopilotWidget />
+            </ProjectsProvider>
+          </OnboardingGate>
+        </ConfirmProvider>
       </AuthGuard>
     </UserProvider>
   );

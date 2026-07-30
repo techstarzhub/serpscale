@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, Loader2, Lock, Palette, Sparkles, Upload, UserRound } from "lucide-react";
+import { Check, ChevronRight, Loader2, Lock, Palette, Plus, Sparkles, Upload, UserRound } from "lucide-react";
 import { api } from "@/lib/api";
 import { useCurrentUser } from "@/components/providers/user-provider";
 import { useTheme } from "@/components/theme/theme-provider";
 import { FONT_OPTIONS } from "@/components/theme/theme-config";
-import { hexToHslChannels } from "@/lib/colors";
+import { hexToHslChannels, hslChannelsToHex } from "@/lib/colors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -115,12 +115,16 @@ export function OnboardingWizard() {
             // eslint-disable-next-line @next/next/no-img-element
             <img src={brandLogo} alt={brandName} className="h-8 w-auto max-w-[140px] object-contain" />
           ) : (
-            <span className="text-lg font-extrabold tracking-tight">
-              {brandName === "SerpScale" ? (
-                <><span className="text-primary">Serp</span>Scale</>
-              ) : (
-                brandName
-              )}
+            <span className="flex items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/serpscale-logo.svg" alt="SerpScale" className="h-8 w-8" />
+              <span className="text-lg font-extrabold tracking-tight">
+                {brandName === "SerpScale" ? (
+                  <><span className="text-primary">Serp</span>Scale</>
+                ) : (
+                  brandName
+                )}
+              </span>
             </span>
           )}
           <div className="ml-auto flex items-center gap-1.5">
@@ -226,7 +230,7 @@ export function OnboardingWizard() {
 
               <div className="space-y-2">
                 <Label>Accent color</Label>
-                <div className="flex flex-wrap gap-2.5">
+                <div className="flex flex-wrap items-center gap-2.5">
                   {ACCENTS.map((a) => {
                     const selected = activeAccent === hexToHslChannels(a.hex);
                     return (
@@ -245,6 +249,21 @@ export function OnboardingWizard() {
                       </button>
                     );
                   })}
+                  {/* Full custom picker — any color, not just the presets. */}
+                  <label
+                    title="Pick a custom color"
+                    className="relative grid h-9 w-9 cursor-pointer place-items-center rounded-full ring-1 ring-border transition-transform hover:scale-110"
+                    style={{ background: "conic-gradient(from 0deg, #ef4444, #eab308, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444)" }}
+                  >
+                    <Plus className="h-4 w-4 text-white drop-shadow" />
+                    <input
+                      type="color"
+                      value={activeAccent ? hslChannelsToHex(activeAccent) : "#2563EB"}
+                      onChange={(e) => pickAccent(e.target.value)}
+                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                      aria-label="Custom accent color"
+                    />
+                  </label>
                 </div>
               </div>
 

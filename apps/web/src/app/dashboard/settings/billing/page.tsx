@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 interface Tier { keywords: number; priceCents: number }
 interface Plan { id: string; name: string; priceCents: number; currency: string; interval: string; limits: any; features: string[] | null; featureLabels?: string[]; pricingTiers?: Tier[] | null; trialDays?: number | null }
@@ -42,6 +43,7 @@ export default function BillingPage() {
 }
 
 function BillingInner() {
+  const confirm = useConfirm();
   const params = useSearchParams();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [sub, setSub] = useState<Subscription | null>(null);
@@ -121,7 +123,7 @@ function BillingInner() {
   }
 
   async function cancel() {
-    if (!confirm("Cancel your subscription? Your plan access ends right away and no further payments will be taken. You can re-subscribe at any time.")) return;
+    if (!(await confirm({ title: "Cancel subscription?", description: "Your plan access ends right away and no further payments will be taken. You can re-subscribe at any time.", confirmText: "Cancel subscription", destructive: true }))) return;
     setBusy("cancel");
     try { await api.post("/billing/cancel"); await load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } finally { setBusy(null); }
   }
@@ -129,7 +131,7 @@ function BillingInner() {
   // Downgrade → scheduled at the next renewal (current plan keeps running; no extra charge).
   async function scheduleDowngrade(planId: string, planName: string, keywords?: number | null) {
     const when = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString() : "your next renewal";
-    if (!confirm(`Downgrade to ${planName}?\n\nYour current plan stays active until ${when}. After that you'll move to ${planName}. You won't be charged anything extra.`)) return;
+    if (!(await confirm({ title: `Downgrade to ${planName}?`, description: `Your current plan stays active until ${when}. After that you'll move to ${planName}. You won't be charged anything extra.`, confirmText: "Schedule downgrade" }))) return;
     setBusy("sched" + planId);
     try { await api.post("/billing/schedule-change", { planId, keywords: keywords ?? undefined }); await load(); }
     catch (e) { alert(e instanceof Error ? e.message : "Could not schedule the change"); }

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { UserAvatar } from "@/components/ui/user-avatar";
 import { api } from "@/lib/api";
 import { useCurrentUser } from "@/components/providers/user-provider";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 interface Campaign {
   id: string;
@@ -31,6 +32,7 @@ const field = "w-full rounded-lg border border-border bg-background px-3 py-2 te
 // and by a client owner (in their portal "My team" page).
 export function ClientMembers({ clientId }: { clientId: string }) {
   const { user } = useCurrentUser();
+  const confirm = useConfirm();
   const [members, setMembers] = useState<Member[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,7 +88,7 @@ export function ClientMembers({ clientId }: { clientId: string }) {
   }
 
   async function remove(id: string) {
-    if (!confirm("Remove this member's access?")) return;
+    if (!(await confirm({ title: "Remove access?", description: "This member will lose access to this client's portal.", confirmText: "Remove", destructive: true }))) return;
     try {
       await api.del(`/clients/${clientId}/members/${id}`);
       load();
@@ -96,7 +98,7 @@ export function ClientMembers({ clientId }: { clientId: string }) {
   }
 
   async function resetPw(m: Member) {
-    if (!confirm(`Reset password for ${m.name || m.email}? A new password will be generated and emailed.`)) return;
+    if (!(await confirm({ title: "Reset password?", description: `A new password will be generated for ${m.name || m.email} and emailed to them.`, confirmText: "Reset password" }))) return;
     setErr(null);
     try {
       const r = await api.post<{ email: string; tempPassword: string }>(`/clients/${clientId}/members/${m.id}/reset-password`, {});

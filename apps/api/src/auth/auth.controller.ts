@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Post, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { Request, Response } from "express";
 import { AuthService } from "./auth.service";
+import { setAuthCookies, clearAuthCookies } from "./cookies.util";
 import { LoginDto } from "./dto/login.dto";
 import { SignupDto } from "./dto/signup.dto";
 import { ForgotPasswordDto } from "./dto/forgot-password.dto";
@@ -26,7 +27,7 @@ export class AuthController {
   @Post("signup")
   async signup(@Body() dto: SignupDto, @Res({ passthrough: true }) res: Response) {
     const r = await this.auth.signup(dto);
-    if ("tokens" in r) { this.setCookies(res, r.tokens); return { ok: true }; }
+    if ("tokens" in r) { setAuthCookies(res, r.tokens); return { ok: true }; }
     return r; // { otpRequired, email }
   }
 
@@ -34,15 +35,30 @@ export class AuthController {
   @Post("login")
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
     const r = await this.auth.login(dto);
-    if ("tokens" in r) { this.setCookies(res, r.tokens); return { ok: true }; }
+    if ("tokens" in r) { setAuthCookies(res, r.tokens); return { ok: true }; }
     return r; // { otpRequired, email }
   }
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post("verify-otp")
   async verifyOtp(@Body() dto: VerifyOtpDto, @Res({ passthrough: true }) res: Response) {
-    this.setCookies(res, await this.auth.verifyOtp(dto.purpose, dto.email, dto.code));
+    setAuthCookies(res, await this.auth.verifyOtp(dto.purpose, dto.email, dto.code));
     return { ok: true };
+  }
+
+  // One-click login link from the invite email: validate the token, set the
+  // session cookies, then redirect into the app (the onboarding wizard kicks in
+  // for a first-time member). GET so it works straight from an email link.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Get("magic")
+  async magic(@Query("token") token: string, @Res() res: Response) {
+    const web = process.env.WEB_ORIGIN || "http://localhost:3000";
+    try {
+      setAuthCookies(res, await this.auth.consumeLoginLink(token));
+      return res.redirect(`${web}/dashboard`);
+    } catch {
+      return res.redirect(`${web}/login?link=expired`);
+    }
   }
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -66,7 +82,7 @@ export class AuthController {
   @Post("refresh")
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const token = (req.cookies?.refresh_token as string | undefined) ?? undefined;
-    this.setCookies(res, await this.auth.refresh(token));
+    setAuthCookies(res, await this.auth.refresh(token));
     return { ok: true };
   }
 
@@ -74,8 +90,7 @@ export class AuthController {
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     // Revoke the stored refresh token server-side, not just the cookie.
     await this.auth.revokeRefreshToken(req.cookies?.refresh_token as string | undefined);
-    res.clearCookie("access_token");
-    res.clearCookie("refresh_token");
+    clearAuthCookies(res);
     return { ok: true };
   }
 
@@ -88,26 +103,5 @@ export class AuthController {
       this.entitlements.forOrg(user.orgId),
     ]);
     return { ...profile, role: user.role, permissions, entitlements };
-  }
-
-  private setCookies(
-    res: Response,
-    tokens: { accessToken: string; refreshToken: string },
-  ) {
-    const secure = process.env.NODE_ENV === "production";
-    res.cookie("access_token", tokens.accessToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure,
-      path: "/",
-      maxAge: 1000 * 60 * 60,
-    });
-    res.cookie("refresh_token", tokens.refreshToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure,
-      path: "/",
-      maxAge: 1000 * 60 * 60 * 24 * 30, // 30-day session
-    });
   }
 }

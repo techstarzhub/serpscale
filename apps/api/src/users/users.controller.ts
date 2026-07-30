@@ -5,16 +5,20 @@ import {
   Get,
   Patch,
   Post,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
+import { Response } from "express";
 import { Role } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
+import { AuthService } from "../auth/auth.service";
+import { setAuthCookies } from "../auth/cookies.util";
 import { UsersService } from "./users.service";
 import {
   ChangePasswordDto,
@@ -26,7 +30,10 @@ import {
 @UseGuards(JwtAuthGuard)
 @Controller("users")
 export class UsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly auth: AuthService,
+  ) {}
 
   @Get("me")
   me(@CurrentUser() user: AuthUser) {
@@ -50,9 +57,18 @@ export class UsersController {
   }
 
   // First-login onboarding wizard: set own password, name, initial theme.
+  // Setting a new password bumps passwordChangedAt (invalidating the temp-password
+  // session), so we immediately re-mint cookies here — the user stays signed in
+  // and only needs the new password after they actually log out.
   @Post("me/onboarding")
-  completeOnboarding(@CurrentUser() user: AuthUser, @Body() dto: CompleteOnboardingDto) {
-    return this.users.completeOnboarding(user.id, dto);
+  async completeOnboarding(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CompleteOnboardingDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.users.completeOnboarding(user.id, dto);
+    if (dto.newPassword) setAuthCookies(res, await this.auth.issueTokensFor(user.id));
+    return result;
   }
 
   @Post("me/avatar")

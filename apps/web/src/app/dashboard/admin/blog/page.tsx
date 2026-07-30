@@ -6,6 +6,7 @@ import { Plus, Loader2, Pencil, Trash2, FolderPlus, Newspaper } from "lucide-rea
 import { Button } from "@/components/ui/button";
 import { useCurrentUser } from "@/components/providers/user-provider";
 import { api } from "@/lib/api";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 interface Category { id: string; name: string; slug: string; count?: number }
 interface Post {
@@ -21,6 +22,7 @@ interface Post {
 
 export default function BlogAdmin() {
   const { user } = useCurrentUser();
+  const confirm = useConfirm();
   const [posts, setPosts] = useState<Post[]>([]);
   const [cats, setCats] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,7 +38,7 @@ export default function BlogAdmin() {
   useEffect(() => { load(); }, [load]);
 
   async function remove(p: Post) {
-    if (!confirm(`Delete "${p.title}"? This can't be undone.`)) return;
+    if (!(await confirm({ title: "Delete post?", description: `"${p.title}" will be permanently deleted. This can't be undone.`, confirmText: "Delete", destructive: true }))) return;
     try {
       await api.del(`/blog/${p.id}`);
       setPosts((prev) => prev.filter((x) => x.id !== p.id));
@@ -62,7 +64,7 @@ export default function BlogAdmin() {
   }
 
   async function delCat(c: Category) {
-    if (!confirm(`Delete category "${c.name}"?`)) return;
+    if (!(await confirm({ title: "Delete category?", description: `Category "${c.name}" will be deleted.`, confirmText: "Delete", destructive: true }))) return;
     try {
       await api.del(`/blog/categories/${c.id}`);
       setCats((prev) => prev.filter((x) => x.id !== c.id));

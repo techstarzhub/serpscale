@@ -256,6 +256,38 @@ export class AuthService {
     };
   }
 
+  /** Public wrapper: mint a fresh session for a known user id. Used to keep a
+   *  user logged in right after they set a new password during onboarding (the
+   *  old access token, minted before passwordChangedAt, would otherwise be
+   *  rejected — so we hand back new cookies instead of forcing a re-login). */
+  async issueTokensFor(userId: string): Promise<Tokens> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.isActive) throw new UnauthorizedException("Account unavailable.");
+    return this.issueTokens(user);
+  }
+
+  /** Create a 24h one-click login link for a user (used in the invite email so a
+   *  new member signs in without typing the temp password). Returns the full URL. */
+  async createLoginLink(userId: string): Promise<string> {
+    const raw = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(raw).digest("hex");
+    await this.prisma.magicLink.create({
+      data: { userId, tokenHash, expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24) },
+    });
+    const api = process.env.API_ORIGIN || `http://localhost:${process.env.API_PORT || 4000}`;
+    return `${api}/auth/magic?token=${raw}`;
+  }
+
+  /** Validate a magic-link token and mint a session. Reusable within the 24h
+   *  window (not consumed on use) so an accidental double-click still works. */
+  async consumeLoginLink(token: string): Promise<Tokens> {
+    if (!token) throw new UnauthorizedException("Invalid or expired sign-in link.");
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const link = await this.prisma.magicLink.findUnique({ where: { tokenHash } });
+    if (!link || link.expiresAt < new Date()) throw new UnauthorizedException("This sign-in link is invalid or has expired.");
+    return this.issueTokensFor(link.userId);
+  }
+
   private async issueTokens(user: {
     id: string;
     role: Role;

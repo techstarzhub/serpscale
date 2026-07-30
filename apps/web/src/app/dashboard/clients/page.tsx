@@ -11,6 +11,7 @@ import { useCan, useFeature } from "@/components/providers/user-provider";
 import { useProjects } from "@/components/providers/projects-provider";
 import { ClientMembers } from "@/components/clients/client-members";
 import { LockedFeature } from "@/components/ui/locked-feature";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 interface Client {
   id: string;
@@ -306,6 +307,7 @@ function CreateModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
 
 function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
   const can = useCan();
+  const confirm = useConfirm();
   const { projects } = useProjects();
   const [c, setC] = useState<ClientDetail | null>(null);
   const [tab, setTab] = useState<"details" | "campaigns" | "agency" | "members">("details");
@@ -391,7 +393,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
     }
   }
   async function resetLoginPw() {
-    if (!confirm("Reset this client's login password? A new one will be generated and emailed to them.")) return;
+    if (!(await confirm({ title: "Reset login password?", description: "A new password will be generated for this client and emailed to them.", confirmText: "Reset password" }))) return;
     setBusy(true);
     setResetPw(null);
     try {
@@ -405,7 +407,7 @@ function DetailModal({ id, onClose, onChanged }: { id: string; onClose: () => vo
     }
   }
   async function del() {
-    if (!confirm("Remove this client? Their campaigns stay, only the link is removed.")) return;
+    if (!(await confirm({ title: "Remove this client?", description: "Their campaigns stay — only the client link is removed.", confirmText: "Remove", destructive: true }))) return;
     setBusy(true);
     try {
       await api.del(`/clients/${id}`);

@@ -68,6 +68,7 @@ model User {
   updatedAt      DateTime  @updatedAt
 
   passwordResets PasswordReset[]
+  magicLinks     MagicLink[]
   refreshTokens  RefreshToken[]
 
   // Campaigns this member has been granted access to (for non-admin members).
@@ -293,6 +294,20 @@ model PasswordReset {
   tokenHash String    @unique
   expiresAt DateTime
   usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// One-click "magic link" login token emailed on invite, so a new member can sign
+// in straight to onboarding without typing the temp password. Valid 24h, reusable
+// within that window. Cascades on user delete.
+model MagicLink {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
   createdAt DateTime  @default(now())
 
   @@index([userId])

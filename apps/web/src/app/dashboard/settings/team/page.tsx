@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useCan, useCurrentUser, useLimit } from "@/components/providers/user-provider";
 import { LockedFeature } from "@/components/ui/locked-feature";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 interface PermItem { key: string; label: string }
 interface PermGroup { group: string; items: PermItem[] }
@@ -174,6 +175,7 @@ function RoleEditor({ groups, role, onDone, onCancel }: { groups: PermGroup[]; r
 // ---------------------------------------------------------------------------
 function MembersSection({ members, roles, onChange, canManage }: { members: Member[]; roles: Role[]; onChange: () => void; canManage: boolean }) {
   const { user } = useCurrentUser();
+  const confirm = useConfirm();
   const isAdmin = user?.role === "ADMIN"; // only a full admin can create/promote admins
   const [inviting, setInviting] = useState(false);
   const [email, setEmail] = useState("");
@@ -336,7 +338,7 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
                   {canManage && (
                     <td className="px-4 py-2 text-right">
                       <span className="inline-flex gap-1.5">
-                        <Button size="sm" variant="outline" onClick={async () => { if (!confirm(`Reset password for ${m.name || m.email}? A new password will be generated and emailed.`)) return; try { const r = await api.post<{ email: string; tempPassword: string }>(`/team/members/${m.id}/reset-password`, {}); setTempPw({ email: r.email, pw: r.tempPassword }); } catch (e) { alert(e instanceof Error ? e.message : "Could not reset password"); } }}><KeyRound className="h-3.5 w-3.5" /> Reset</Button>
+                        <Button size="sm" variant="outline" onClick={async () => { if (!(await confirm({ title: "Reset password?", description: `A new password will be generated for ${m.name || m.email} and emailed to them.`, confirmText: "Reset password" }))) return; try { const r = await api.post<{ email: string; tempPassword: string }>(`/team/members/${m.id}/reset-password`, {}); setTempPw({ email: r.email, pw: r.tempPassword }); } catch (e) { alert(e instanceof Error ? e.message : "Could not reset password"); } }}><KeyRound className="h-3.5 w-3.5" /> Reset</Button>
                         {m.role !== "ADMIN" && (
                           <>
                             <Button size="sm" variant="outline" onClick={() => openCampaigns(m)}>Campaigns</Button>
@@ -344,7 +346,7 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
                           </>
                         )}
                         {m.id !== user?.id && (m.role !== "ADMIN" || isAdmin) && (
-                          <Button size="sm" variant="outline" className="text-destructive hover:border-destructive/40" onClick={async () => { if (!confirm(`Permanently delete ${m.name || m.email}? This removes their account and access. This cannot be undone.`)) return; try { await api.del(`/team/members/${m.id}`); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not delete member"); } }}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
+                          <Button size="sm" variant="outline" className="text-destructive hover:border-destructive/40" onClick={async () => { if (!(await confirm({ title: "Delete member?", description: `Permanently delete ${m.name || m.email}. This removes their account and access and cannot be undone.`, confirmText: "Delete", destructive: true }))) return; try { await api.del(`/team/members/${m.id}`); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not delete member"); } }}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
                         )}
                       </span>
                     </td>
