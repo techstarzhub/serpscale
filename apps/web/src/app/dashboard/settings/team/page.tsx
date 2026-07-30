@@ -298,63 +298,62 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
             </div>
           </div>
         )}
-        <div className="overflow-hidden rounded-xl border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-secondary/40 text-left text-xs uppercase text-muted-foreground">
-              <tr><th className="px-4 py-2 font-medium">Member</th><th className="px-4 py-2 font-medium">Role</th><th className="px-4 py-2 text-center font-medium">Status</th>{canManage && <th className="px-4 py-2" />}</tr>
-            </thead>
-            <tbody>
-              {members.map((m) => (
-                <tr key={m.id} className="border-t border-border">
-                  <td className="px-4 py-2"><div className="font-medium">{m.name || (m.email ?? "").split("@")[0] || "Member"}</div><div className="text-xs text-muted-foreground">{m.email}</div></td>
-                  <td className="px-4 py-2">
-                    {canManage && m.id !== user?.id && (m.role !== "ADMIN" || isAdmin) ? (
-                      <select
-                        value={m.role === "ADMIN" ? "ADMIN" : m.customRole?.id ?? ""}
-                        onChange={async (e) => {
-                          const v = e.target.value;
-                          try {
-                            // Only send a role-level change (needs admin) when actually promoting/demoting.
-                            if (v === "ADMIN") await api.patch(`/team/members/${m.id}`, { role: "ADMIN" });
-                            else if (m.role === "ADMIN") await api.patch(`/team/members/${m.id}`, { role: "MEMBER", customRoleId: v || null });
-                            else await api.patch(`/team/members/${m.id}`, { customRoleId: v || null });
-                            onChange();
-                          } catch (err) {
-                            alert(err instanceof Error ? err.message : "Could not update role");
-                            onChange();
-                          }
-                        }}
-                        className="h-8 rounded-md border border-border bg-card px-2 text-xs"
-                      >
-                        <option value="">Member (default)</option>
-                        {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                        {isAdmin && <option value="ADMIN">Admin (full access)</option>}
-                      </select>
-                    ) : (
-                      <span className="text-xs">{m.role === "ADMIN" ? "Admin" : m.customRole?.name ?? "Member"}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-center"><span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", m.isActive ? "bg-chart-2/12 text-chart-2" : "bg-muted text-muted-foreground")}>{m.isActive ? "Active" : "Inactive"}</span></td>
-                  {canManage && (
-                    <td className="px-4 py-2 text-right">
-                      <span className="inline-flex gap-1.5">
-                        <Button size="sm" variant="outline" onClick={async () => { if (!(await confirm({ title: "Reset password?", description: `A new password will be generated for ${m.name || m.email} and emailed to them.`, confirmText: "Reset password" }))) return; try { const r = await api.post<{ email: string; tempPassword: string }>(`/team/members/${m.id}/reset-password`, {}); setTempPw({ email: r.email, pw: r.tempPassword }); } catch (e) { alert(e instanceof Error ? e.message : "Could not reset password"); } }}><KeyRound className="h-3.5 w-3.5" /> Reset</Button>
-                        {m.role !== "ADMIN" && (
-                          <>
-                            <Button size="sm" variant="outline" onClick={() => openCampaigns(m)}>Campaigns</Button>
-                            <Button size="sm" variant="outline" onClick={async () => { try { await api.patch(`/team/members/${m.id}`, { isActive: !m.isActive }); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not update member"); } }}>{m.isActive ? "Deactivate" : "Activate"}</Button>
-                          </>
-                        )}
-                        {m.id !== user?.id && (m.role !== "ADMIN" || isAdmin) && (
-                          <Button size="sm" variant="outline" className="text-destructive hover:border-destructive/40" onClick={async () => { if (!(await confirm({ title: "Delete member?", description: `Permanently delete ${m.name || m.email}. This removes their account and access and cannot be undone.`, confirmText: "Delete", destructive: true }))) return; try { await api.del(`/team/members/${m.id}`); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not delete member"); } }}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
-                        )}
-                      </span>
-                    </td>
+        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+          {members.map((m) => (
+            <div key={m.id} className="flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:gap-4">
+              {/* Member identity */}
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">{m.name || (m.email ?? "").split("@")[0] || "Member"}</div>
+                <div className="truncate text-xs text-muted-foreground">{m.email}</div>
+              </div>
+
+              {/* Role + status */}
+              <div className="flex flex-wrap items-center gap-2">
+                {canManage && m.id !== user?.id && (m.role !== "ADMIN" || isAdmin) ? (
+                  <select
+                    value={m.role === "ADMIN" ? "ADMIN" : m.customRole?.id ?? ""}
+                    onChange={async (e) => {
+                      const v = e.target.value;
+                      try {
+                        // Only send a role-level change (needs admin) when actually promoting/demoting.
+                        if (v === "ADMIN") await api.patch(`/team/members/${m.id}`, { role: "ADMIN" });
+                        else if (m.role === "ADMIN") await api.patch(`/team/members/${m.id}`, { role: "MEMBER", customRoleId: v || null });
+                        else await api.patch(`/team/members/${m.id}`, { customRoleId: v || null });
+                        onChange();
+                      } catch (err) {
+                        alert(err instanceof Error ? err.message : "Could not update role");
+                        onChange();
+                      }
+                    }}
+                    className="h-8 rounded-md border border-border bg-card px-2 text-xs"
+                  >
+                    <option value="">Member (default)</option>
+                    {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    {isAdmin && <option value="ADMIN">Admin (full access)</option>}
+                  </select>
+                ) : (
+                  <span className="text-xs text-muted-foreground">{m.role === "ADMIN" ? "Admin" : m.customRole?.name ?? "Member"}</span>
+                )}
+                <span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", m.isActive ? "bg-chart-2/12 text-chart-2" : "bg-muted text-muted-foreground")}>{m.isActive ? "Active" : "Inactive"}</span>
+              </div>
+
+              {/* Actions — wrap on small screens so nothing overflows */}
+              {canManage && (
+                <div className="flex flex-wrap gap-1.5 lg:justify-end">
+                  <Button size="sm" variant="outline" onClick={async () => { if (!(await confirm({ title: "Reset password?", description: `A new password will be generated for ${m.name || m.email} and emailed to them.`, confirmText: "Reset password" }))) return; try { const r = await api.post<{ email: string; tempPassword: string }>(`/team/members/${m.id}/reset-password`, {}); setTempPw({ email: r.email, pw: r.tempPassword }); } catch (e) { alert(e instanceof Error ? e.message : "Could not reset password"); } }}><KeyRound className="h-3.5 w-3.5" /> Reset</Button>
+                  {m.role !== "ADMIN" && (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => openCampaigns(m)}>Campaigns</Button>
+                      <Button size="sm" variant="outline" onClick={async () => { try { await api.patch(`/team/members/${m.id}`, { isActive: !m.isActive }); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not update member"); } }}>{m.isActive ? "Deactivate" : "Activate"}</Button>
+                    </>
                   )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  {m.id !== user?.id && (m.role !== "ADMIN" || isAdmin) && (
+                    <Button size="sm" variant="outline" className="text-destructive hover:border-destructive/40" onClick={async () => { if (!(await confirm({ title: "Delete member?", description: `Permanently delete ${m.name || m.email}. This removes their account and access and cannot be undone.`, confirmText: "Delete", destructive: true }))) return; try { await api.del(`/team/members/${m.id}`); onChange(); } catch (e) { alert(e instanceof Error ? e.message : "Could not delete member"); } }}><Trash2 className="h-3.5 w-3.5" /> Delete</Button>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       </CardContent>
     </Card>
