@@ -91,12 +91,25 @@ export class PublicFormsService {
     return { ok: true };
   }
 
+  // Only these keys are ever exposed publicly — a strict allow-list so nothing
+  // else that might land in the "seo" blob can leak from this unauthenticated route.
+  private static readonly SEO_PUBLIC_KEYS = [
+    "metaTitle", "metaDescription", "metaKeywords", "ogImage", "robotsIndex",
+    "googleVerification", "bingVerification", "yandexVerification", "pinterestVerification", "facebookDomainVerification",
+    "ga4Id", "gtmId", "customHeadScript", "customBodyScript",
+  ] as const;
+
   /** Public SEO/head config the marketing site injects (verification metas,
-   *  analytics IDs, default meta, custom head/body scripts). Everything here is
-   *  meant to be public HTML anyway, so it's served as-is (no secrets). */
+   *  analytics IDs, default meta, custom head/body scripts). Only the known SEO
+   *  keys are returned — never the whole stored blob. */
   async seo(): Promise<Record<string, unknown>> {
     const s = await this.prisma.platformSetting.findUnique({ where: { key: "seo" } }).catch(() => null);
-    return (s?.value as Record<string, unknown>) ?? {};
+    const raw = (s?.value as Record<string, unknown>) ?? {};
+    const out: Record<string, unknown> = {};
+    for (const k of PublicFormsService.SEO_PUBLIC_KEYS) {
+      if (raw[k] !== undefined && raw[k] !== null && raw[k] !== "") out[k] = raw[k];
+    }
+    return out;
   }
 
   async subscribe(dto: SubscribeDto, ip?: string): Promise<{ ok: true }> {

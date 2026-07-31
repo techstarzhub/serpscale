@@ -121,8 +121,10 @@ export class AdminController {
 
   @Delete("contact-messages/:id")
   @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
-  deleteContactMessage(@Param("id") id: string) {
-    return this.admin.deleteContactMessage(id);
+  async deleteContactMessage(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const res = await this.admin.deleteContactMessage(id);
+    await this.audit.log(user, "contact.delete", { target: id });
+    return res;
   }
 
   // ---- Marketing site: newsletter subscribers ----
@@ -134,8 +136,10 @@ export class AdminController {
 
   @Delete("subscribers/:id")
   @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
-  deleteSubscriber(@Param("id") id: string) {
-    return this.admin.deleteSubscriber(id);
+  async deleteSubscriber(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const res = await this.admin.deleteSubscriber(id);
+    await this.audit.log(user, "subscriber.delete", { target: id });
+    return res;
   }
 
   // ---- SEO / head tags for the marketing site (dynamic) ----

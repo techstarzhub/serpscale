@@ -122,6 +122,21 @@ function BillingInner() {
     setBusy(null);
   }
 
+  // Upgrade is immediate: the customer is charged now and gets access straight
+  // away, and the old plan is auto-canceled. Spell that out before sending them
+  // to the gateway so there's no surprise charge.
+  async function upgradeOrSubscribe(p: Plan, gateway: string, isUpgrade: boolean) {
+    if (isUpgrade) {
+      const price = money(planPrice(p), p.currency);
+      if (!(await confirm({
+        title: `Upgrade to ${p.name}?`,
+        description: `This upgrade is instant: you'll be charged ${price} now via ${gateway === "paypal" ? "PayPal" : "card"} and get ${p.name} access immediately. Your current plan is canceled right away — no proration or separate refund.`,
+        confirmText: `Pay ${price} & upgrade now`,
+      }))) return;
+    }
+    subscribe(p.id, gateway, selTier(p)?.keywords);
+  }
+
   async function cancel() {
     if (!(await confirm({ title: "Cancel subscription?", description: "Your plan access ends right away and no further payments will be taken. You can re-subscribe at any time.", confirmText: "Cancel subscription", destructive: true }))) return;
     setBusy("cancel");
@@ -274,13 +289,13 @@ function BillingInner() {
                     ) : p.priceCents === 0 ? (
                       <Button className="w-full" onClick={() => subscribe(p.id, "manual")} disabled={!!busy}>{busy === p.id + "manual" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Switch to Free"}</Button>
                     ) : gateway === "stripe" ? (
-                      <Button className="w-full gap-2" onClick={() => subscribe(p.id, "stripe", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "stripe" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CreditCard className="h-4 w-4" /> {isUpgrade ? "Upgrade — card" : "Pay with card"}</>}</Button>
+                      <Button className="w-full gap-2" onClick={() => upgradeOrSubscribe(p, "stripe", isUpgrade)} disabled={!!busy}>{busy === p.id + "stripe" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CreditCard className="h-4 w-4" /> {isUpgrade ? "Upgrade — card" : "Pay with card"}</>}</Button>
                     ) : gateway === "paypal" ? (
-                      <Button className="w-full gap-2 bg-[#003087] text-white hover:bg-[#00256b]" onClick={() => subscribe(p.id, "paypal", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "paypal" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FaPaypal className="h-4 w-4 text-[#009cde]" /> <span>{isUpgrade ? "Upgrade · " : ""}Pay<span className="text-[#009cde]">Pal</span></span></>}</Button>
+                      <Button className="w-full gap-2 bg-[#003087] text-white hover:bg-[#00256b]" onClick={() => upgradeOrSubscribe(p, "paypal", isUpgrade)} disabled={!!busy}>{busy === p.id + "paypal" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FaPaypal className="h-4 w-4 text-[#009cde]" /> <span>{isUpgrade ? "Upgrade · " : ""}Pay<span className="text-[#009cde]">Pal</span></span></>}</Button>
                     ) : (
                       <Button className="w-full" variant="outline" disabled>Payments not available</Button>
                     )}
-                    {isUpgrade && <p className="text-center text-[11px] text-muted-foreground">Takes effect immediately · old plan auto-canceled</p>}
+                    {isUpgrade && <p className="rounded-md bg-primary/5 px-2.5 py-1.5 text-center text-[11px] leading-snug text-muted-foreground">⚡ Instant upgrade — charged now, access immediately. Your current plan is auto-canceled.</p>}
                   </div>
                 </CardContent>
               </Card>
