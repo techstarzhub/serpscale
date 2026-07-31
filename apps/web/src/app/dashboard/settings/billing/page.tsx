@@ -128,6 +128,21 @@ function BillingInner() {
     try { await api.post("/billing/cancel"); await load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } finally { setBusy(null); }
   }
 
+  // Upgrade → queued like a mobile recharge: current plan runs to the end of its
+  // paid period, then the higher plan starts. Nothing changes today.
+  async function scheduleUpgrade(planId: string, planName: string, keywords?: number | null) {
+    const when = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString() : "your next renewal";
+    if (!(await confirm({
+      title: `Upgrade to ${planName}?`,
+      description: `Your current plan keeps running until ${when}. From ${when} you'll automatically move to ${planName}. Nothing changes today — billing for ${planName} begins when it starts.`,
+      confirmText: "Schedule upgrade",
+    }))) return;
+    setBusy("sched" + planId);
+    try { await api.post("/billing/schedule-change", { planId, keywords: keywords ?? undefined }); await load(); }
+    catch (e) { alert(e instanceof Error ? e.message : "Could not schedule the upgrade"); }
+    finally { setBusy(null); }
+  }
+
   async function cancelScheduled() {
     setBusy("cancelsched");
     try { await api.post("/billing/cancel-scheduled-change"); await load(); }
@@ -267,20 +282,26 @@ function BillingInner() {
                     {!sub && (p.trialDays ?? 0) > 0 && (
                       <Button className="w-full gap-2" onClick={() => startTrial(p.id)} disabled={!!busy}>{busy === "trial" + p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : `Start ${p.trialDays}-day free trial`}</Button>
                     )}
+                    {isUpgrade && (
+                      <p className="rounded-md bg-chart-3/10 px-2.5 py-1.5 text-center text-[11px] leading-snug text-chart-3">
+                        Starts after your current plan ends{sub?.currentPeriodEnd ? ` on ${new Date(sub.currentPeriodEnd).toLocaleDateString()}` : ""}. Nothing changes today.
+                      </p>
+                    )}
                     {current ? (
                       <Button className="w-full" variant="outline" disabled>Current plan</Button>
                     ) : isDowngrade ? (
                       <Button className="w-full" variant="outline" disabled title="Downgrades aren't available. To move to a lower plan, contact support.">Downgrade unavailable</Button>
+                    ) : isUpgrade ? (
+                      <Button className="w-full" onClick={() => scheduleUpgrade(p.id, p.name, selTier(p)?.keywords)} disabled={!!busy}>{busy === "sched" + p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : `Schedule upgrade to ${p.name}`}</Button>
                     ) : p.priceCents === 0 ? (
                       <Button className="w-full" onClick={() => subscribe(p.id, "manual")} disabled={!!busy}>{busy === p.id + "manual" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Switch to Free"}</Button>
                     ) : gateway === "stripe" ? (
-                      <Button className="w-full gap-2" onClick={() => subscribe(p.id, "stripe", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "stripe" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CreditCard className="h-4 w-4" /> {isUpgrade ? "Upgrade — card" : "Pay with card"}</>}</Button>
+                      <Button className="w-full gap-2" onClick={() => subscribe(p.id, "stripe", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "stripe" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CreditCard className="h-4 w-4" /> Pay with card</>}</Button>
                     ) : gateway === "paypal" ? (
-                      <Button className="w-full gap-2 bg-[#003087] text-white hover:bg-[#00256b]" onClick={() => subscribe(p.id, "paypal", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "paypal" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FaPaypal className="h-4 w-4 text-[#009cde]" /> <span>{isUpgrade ? "Upgrade · " : ""}Pay<span className="text-[#009cde]">Pal</span></span></>}</Button>
+                      <Button className="w-full gap-2 bg-[#003087] text-white hover:bg-[#00256b]" onClick={() => subscribe(p.id, "paypal", selTier(p)?.keywords)} disabled={!!busy}>{busy === p.id + "paypal" ? <Loader2 className="h-4 w-4 animate-spin" /> : <><FaPaypal className="h-4 w-4 text-[#009cde]" /> <span>Pay<span className="text-[#009cde]">Pal</span></span></>}</Button>
                     ) : (
                       <Button className="w-full" variant="outline" disabled>Payments not available</Button>
                     )}
-                    {isUpgrade && <p className="text-center text-[11px] text-muted-foreground">Takes effect immediately · old plan auto-canceled</p>}
                   </div>
                 </CardContent>
               </Card>

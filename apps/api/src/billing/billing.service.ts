@@ -37,9 +37,10 @@ export class BillingService {
     };
   }
 
-  /** Schedule a plan change (typically a downgrade) for the next renewal. The
-   *  current plan keeps running until currentPeriodEnd, then the pending plan is
-   *  applied. Upgrades go through checkout instead (immediate). */
+  /** Schedule a plan change for the next renewal (like a mobile-recharge queue).
+   *  The current plan keeps running until currentPeriodEnd, then the pending plan
+   *  is applied. Upgrades queue here too — the higher plan starts when the current
+   *  one ends. Downgrades are disabled (only same/higher-priced moves allowed). */
   async scheduleChange(orgId: string, planId: string, keywords?: number | null) {
     const sub = await this.prisma.subscription.findUnique({ where: { orgId } });
     if (!sub || !["ACTIVE", "TRIALING"].includes(sub.status)) throw new BadRequestException("You need an active subscription to schedule a plan change.");
@@ -50,7 +51,10 @@ export class BillingService {
     const current = await this.prisma.plan.findUnique({ where: { id: sub.planId } });
     if (current && plan.priceCents < current.priceCents) throw new BadRequestException("Downgrades aren't available. Contact support to move to a lower plan.");
     await this.prisma.subscription.update({ where: { orgId }, data: { pendingPlanId: planId, pendingKeywords: keywords ?? null } });
-    await this.notifyOrgAdmins(orgId, { title: "Plan change scheduled", body: `You'll switch to the ${plan.name} plan at your next renewal.`, link: "/dashboard/settings/billing" });
+    const isUpgrade = !!current && plan.priceCents > current.priceCents;
+    const when = sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "your next renewal";
+    await this.notifyOrgAdmins(orgId, { title: isUpgrade ? "Upgrade scheduled" : "Plan change scheduled", body: `Your plan switches to ${plan.name} on ${when}. Your current plan keeps running until then.`, link: "/dashboard/settings/billing" });
+    await this.alertSuperAdmins(orgId, `Upgrade scheduled: ${plan.name}`, isUpgrade ? "Upgrade scheduled" : "Plan change scheduled", { Plan: plan.name, "Effective": when });
     return { scheduled: true, planName: plan.name, effectiveAt: sub.currentPeriodEnd };
   }
 
