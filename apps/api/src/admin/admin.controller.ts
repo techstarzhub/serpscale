@@ -75,6 +75,14 @@ export class AdminController {
     return res;
   }
 
+  @Delete("orgs/:id")
+  @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
+  async deleteOrg(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const res = await this.admin.deleteOrg(id);
+    await this.audit.log(user, "org.delete", { target: id, metadata: { name: res.name } });
+    return res;
+  }
+
   // ---- Users (all tenants) ----
   @Get("users")
   @RequirePermissions(PERMISSIONS.PLATFORM_ORGS_VIEW)

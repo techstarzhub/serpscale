@@ -189,6 +189,50 @@ export class AdminService {
     return { ok: true };
   }
 
+  /** Permanently delete an org and everything scoped to it. Most relations don't
+   *  cascade at the DB level, so we clear dependents in FK-safe order (children
+   *  first) inside one transaction. Deleting Projects cascades their nested SEO
+   *  data (keywords, crawls, ranks, copilot, github…); the SERP tables keyed only
+   *  by a plain `orgId` string (no FK) are swept by orgId for hygiene. */
+  async deleteOrg(id: string) {
+    const org = await this.prisma.organization.findUnique({ where: { id }, select: { id: true, name: true } });
+    if (!org) throw new NotFoundException("Organization not found");
+    // Refuse if a platform owner (super admin) somehow sits in this org — they
+    // operate above tenants and must never be swept away with a customer.
+    const superAdmins = await this.prisma.user.count({ where: { orgId: id, role: "SUPER_ADMIN" } });
+    if (superAdmins > 0) throw new BadRequestException("This organization contains a platform owner and cannot be deleted.");
+
+    await this.prisma.$transaction(async (tx) => {
+      const userWhere = { user: { orgId: id } };
+      // Token rows on User that DON'T cascade on user-delete — clear them first.
+      await tx.refreshToken.deleteMany({ where: userWhere });
+      await tx.passwordReset.deleteMany({ where: userWhere });
+      // Projects cascade all their nested data (keywords, crawls, ranks, blog,
+      // copilot, github, serp-keywords + their snapshots/jobs/history).
+      await tx.project.deleteMany({ where: { orgId: id } });
+      // SERP data keyed by a bare orgId string (no FK, so it wouldn't block, but
+      // leave no orphans). Snapshots cascade their result/feature/PAA rows.
+      await tx.serpSnapshot.deleteMany({ where: { orgId: id } });
+      await tx.serpJob.deleteMany({ where: { orgId: id } });
+      await tx.serpUsageLog.deleteMany({ where: { orgId: id } });
+      await tx.serpCredit.deleteMany({ where: { orgId: id } });
+      await tx.searchHistory.deleteMany({ where: { orgId: id } });
+      await tx.accessRequest.deleteMany({ where: { orgId: id } });
+      await tx.auditLog.deleteMany({ where: { orgId: id } });
+      await tx.integration.deleteMany({ where: { ownerKey: id } });
+      // Org-scoped billing rows (real FKs to Organization).
+      await tx.transaction.deleteMany({ where: { orgId: id } });
+      await tx.subscription.deleteMany({ where: { orgId: id } });
+      await tx.client.deleteMany({ where: { orgId: id } });
+      // Users reference customRole, so delete users before the roles.
+      await tx.user.deleteMany({ where: { orgId: id } });
+      await tx.customRole.deleteMany({ where: { orgId: id } });
+      await tx.organization.delete({ where: { id } });
+    }, { timeout: 30_000 });
+
+    return { ok: true, name: org.name };
+  }
+
   // ---- Users (across all tenants) ----
   async listUsers(limit = 500) {
     const users = await this.prisma.user.findMany({

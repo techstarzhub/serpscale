@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useCurrentUser } from "@/components/providers/user-provider";
 
 const money = (cents: number, cur = "usd") => cents == null || isNaN(cents) ? "—" : `${cur === "usd" ? "$" : cur.toUpperCase() + " "}${(cents / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -251,6 +252,7 @@ function Orgs() {
   const [orgs, setOrgs] = useState<any[]>([]);
   const [plans, setPlans] = useState<any[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const confirm = useConfirm();
   const load = useCallback(() => api.get<any[]>("/admin/orgs").then(setOrgs).catch(() => setOrgs([])), []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { api.get<any[]>("/admin/plans").then(setPlans).catch(() => setPlans([])); }, []);
@@ -271,6 +273,21 @@ function Orgs() {
     setBusy(orgId);
     try { await api.patch(`/admin/orgs/${orgId}`, { status }); await load(); }
     catch (e) { alert(e instanceof Error ? e.message : "Could not change status"); }
+    finally { setBusy(null); }
+  }
+
+  // Permanently wipe a workspace and all its data (users, projects, billing…).
+  // Irreversible, so require a typed-confirm and warn about the scope.
+  async function removeOrg(o: any) {
+    if (!(await confirm({
+      title: `Delete “${o.name}”?`,
+      description: `This permanently deletes the organization along with its ${o.users} user${o.users === 1 ? "" : "s"}, ${o.projects} campaign${o.projects === 1 ? "" : "s"}, and all billing history. This can't be undone.`,
+      confirmText: "Delete organization",
+      destructive: true,
+    }))) return;
+    setBusy(o.id);
+    try { await api.del(`/admin/orgs/${o.id}`); await load(); }
+    catch (e) { alert(e instanceof Error ? e.message : "Could not delete organization"); }
     finally { setBusy(null); }
   }
 
@@ -321,7 +338,7 @@ function Orgs() {
                 <td className="px-4 py-2 text-right tabular-nums">{o.users}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{o.projects}</td>
                 <td className="px-4 py-2 text-center"><span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", o.isActive ? "bg-chart-2/12 text-chart-2" : "bg-muted text-muted-foreground")}>{o.isActive ? "Active" : "Suspended"}</span></td>
-                <td className="px-4 py-2 text-right"><Button size="sm" variant="outline" onClick={async () => { try { await api.patch(`/admin/orgs/${o.id}`, { isActive: !o.isActive }); load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } }}>{o.isActive ? "Suspend" : "Activate"}</Button></td>
+                <td className="px-4 py-2 text-right"><div className="flex justify-end gap-1.5"><Button size="sm" variant="outline" disabled={busy === o.id} onClick={async () => { try { await api.patch(`/admin/orgs/${o.id}`, { isActive: !o.isActive }); load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } }}>{o.isActive ? "Suspend" : "Activate"}</Button><Button size="sm" variant="outline" className="text-destructive" disabled={busy === o.id} title="Delete organization" onClick={() => removeOrg(o)}><Trash2 className="h-4 w-4" /></Button></div></td>
               </tr>
             ))}
             {orgs.length === 0 && <tr><td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">No organizations yet.</td></tr>}
