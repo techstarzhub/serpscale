@@ -255,6 +255,23 @@ export class AdminService {
     return this.prisma.user.update({ where: { id }, data: { isActive }, select: { id: true, isActive: true } });
   }
 
+  /** Permanently delete a single user (any tenant). Refuses to remove a platform
+   *  owner or the caller themselves. Most user-owned rows cascade on delete;
+   *  refresh tokens + password resets don't, so clear those first. */
+  async deleteUser(id: string, actingUserId?: string) {
+    if (id === actingUserId) throw new BadRequestException("You can't delete your own account.");
+    const target = await this.prisma.user.findUnique({ where: { id }, select: { id: true, role: true, email: true } });
+    if (!target) throw new NotFoundException("User not found");
+    if (target.role === "SUPER_ADMIN") throw new BadRequestException("A platform owner cannot be deleted.");
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.refreshToken.deleteMany({ where: { userId: id } });
+      await tx.passwordReset.deleteMany({ where: { userId: id } });
+      await tx.user.delete({ where: { id } });
+    });
+    return { ok: true, email: target.email };
+  }
+
   // ---- Transactions ----
   listTransactions(limit = 100) {
     return this.prisma.transaction.findMany({

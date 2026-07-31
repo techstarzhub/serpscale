@@ -124,8 +124,8 @@ function Plans() {
       </CardHeader>
       <CardContent className="space-y-3">
         {editing != null && <PlanEditor plan={editing === "new" ? null : editing} onDone={() => { setEditing(null); load(); }} onCancel={() => setEditing(null)} />}
-        <div className="overflow-hidden rounded-xl border border-border">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-xl border border-border">
+          <table className="w-full min-w-[520px] text-sm">
             <thead className="bg-secondary/40 text-left text-xs uppercase text-muted-foreground"><tr><th className="px-4 py-2 font-medium">Plan</th><th className="px-4 py-2 text-right font-medium">Price</th><th className="px-4 py-2 text-center font-medium">Public</th><th className="px-4 py-2 text-right font-medium">Subs</th><th className="px-4 py-2" /></tr></thead>
             <tbody>
               {plans.map((p) => (
@@ -294,56 +294,65 @@ function Orgs() {
   return (
     <Card>
       <CardHeader className="pb-3"><CardTitle className="text-base">Organizations</CardTitle><CardDescription>Assign any plan to any workspace — its features unlock for that org&apos;s users instantly.</CardDescription></CardHeader>
-      <CardContent className="p-0">
-        <table className="w-full text-sm">
-          <thead className="bg-secondary/40 text-left text-xs uppercase text-muted-foreground"><tr><th className="px-4 py-2 font-medium">Organization</th><th className="px-4 py-2 font-medium">Admin</th><th className="px-4 py-2 font-medium">Plan</th><th className="px-4 py-2 text-right font-medium">Users</th><th className="px-4 py-2 text-right font-medium">Projects</th><th className="px-4 py-2 text-center font-medium">Status</th><th className="px-4 py-2" /></tr></thead>
-          <tbody>
-            {orgs.map((o) => (
-              <tr key={o.id} className="border-t border-border">
-                <td className="px-4 py-2 font-medium">{o.name}</td>
-                <td className="px-4 py-2 text-xs text-muted-foreground">{o.admin?.email ?? "—"}</td>
-                <td className="px-4 py-2">
-                  <div className="flex items-center gap-1.5">
-                    <select
-                      value={o.planId ?? ""}
-                      disabled={busy === o.id}
-                      onChange={(e) => assignPlan(o.id, e.target.value)}
-                      className="h-8 rounded-md border border-border bg-card px-2 text-sm disabled:opacity-50"
-                    >
-                      <option value="">— No plan —</option>
-                      {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                    {o.planId && (
-                      <select
-                        value={o.status ?? "ACTIVE"}
-                        disabled={busy === o.id}
-                        onChange={(e) => setStatus(o.id, e.target.value)}
-                        title="Subscription status — anything other than Active pauses access"
-                        className={cn(
-                          "h-8 rounded-md border px-2 text-xs disabled:opacity-50",
-                          o.status === "ACTIVE" || o.status === "TRIALING"
-                            ? "border-border bg-card text-muted-foreground"
-                            : "border-destructive/40 bg-destructive/10 font-semibold text-destructive",
-                        )}
-                      >
-                        <option value="ACTIVE">Active</option>
-                        <option value="TRIALING">Trialing</option>
-                        <option value="PAST_DUE">Past due (paused)</option>
-                        <option value="CANCELED">Canceled (paused)</option>
-                      </select>
+      <CardContent>
+        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+          {orgs.map((o) => (
+            <div key={o.id} className="flex flex-col gap-3 p-3 xl:flex-row xl:items-center xl:gap-4">
+              {/* Identity + counts */}
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate font-medium">{o.name}</span>
+                  <span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", o.isActive ? "bg-chart-2/12 text-chart-2" : "bg-muted text-muted-foreground")}>{o.isActive ? "Active" : "Suspended"}</span>
+                </div>
+                <div className="truncate text-xs text-muted-foreground">{o.admin?.email ?? "—"}</div>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                  <span>{o.users} user{o.users === 1 ? "" : "s"}</span>
+                  <span>{o.projects} campaign{o.projects === 1 ? "" : "s"}</span>
+                </div>
+              </div>
+
+              {/* Plan + subscription status */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <select
+                  value={o.planId ?? ""}
+                  disabled={busy === o.id}
+                  onChange={(e) => assignPlan(o.id, e.target.value)}
+                  className="h-8 rounded-md border border-border bg-card px-2 text-sm disabled:opacity-50"
+                >
+                  <option value="">— No plan —</option>
+                  {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                {o.planId && (
+                  <select
+                    value={o.status ?? "ACTIVE"}
+                    disabled={busy === o.id}
+                    onChange={(e) => setStatus(o.id, e.target.value)}
+                    title="Subscription status — anything other than Active pauses access"
+                    className={cn(
+                      "h-8 rounded-md border px-2 text-xs disabled:opacity-50",
+                      o.status === "ACTIVE" || o.status === "TRIALING"
+                        ? "border-border bg-card text-muted-foreground"
+                        : "border-destructive/40 bg-destructive/10 font-semibold text-destructive",
                     )}
-                    {busy === o.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-                  </div>
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums">{o.users}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{o.projects}</td>
-                <td className="px-4 py-2 text-center"><span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", o.isActive ? "bg-chart-2/12 text-chart-2" : "bg-muted text-muted-foreground")}>{o.isActive ? "Active" : "Suspended"}</span></td>
-                <td className="px-4 py-2 text-right"><div className="flex justify-end gap-1.5"><Button size="sm" variant="outline" disabled={busy === o.id} onClick={async () => { try { await api.patch(`/admin/orgs/${o.id}`, { isActive: !o.isActive }); load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } }}>{o.isActive ? "Suspend" : "Activate"}</Button><Button size="sm" variant="outline" className="text-destructive" disabled={busy === o.id} title="Delete organization" onClick={() => removeOrg(o)}><Trash2 className="h-4 w-4" /></Button></div></td>
-              </tr>
-            ))}
-            {orgs.length === 0 && <tr><td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">No organizations yet.</td></tr>}
-          </tbody>
-        </table>
+                  >
+                    <option value="ACTIVE">Active</option>
+                    <option value="TRIALING">Trialing</option>
+                    <option value="PAST_DUE">Past due (paused)</option>
+                    <option value="CANCELED">Canceled (paused)</option>
+                  </select>
+                )}
+                {busy === o.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-wrap gap-1.5 xl:justify-end">
+                <Button size="sm" variant="outline" disabled={busy === o.id} onClick={async () => { try { await api.patch(`/admin/orgs/${o.id}`, { isActive: !o.isActive }); load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } }}>{o.isActive ? "Suspend" : "Activate"}</Button>
+                <Button size="sm" variant="outline" className="text-destructive" disabled={busy === o.id} title="Delete organization" onClick={() => removeOrg(o)}><Trash2 className="h-4 w-4" /></Button>
+              </div>
+            </div>
+          ))}
+          {orgs.length === 0 && <div className="px-4 py-6 text-center text-muted-foreground">No organizations yet.</div>}
+        </div>
       </CardContent>
     </Card>
   );
@@ -356,7 +365,8 @@ function Transactions() {
     <Card>
       <CardHeader className="pb-3"><CardTitle className="text-base">Transactions</CardTitle><CardDescription>All payments across the platform.</CardDescription></CardHeader>
       <CardContent className="p-0">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px] text-sm">
           <thead className="bg-secondary/40 text-left text-xs uppercase text-muted-foreground"><tr><th className="px-4 py-2 font-medium">Organization</th><th className="px-4 py-2 text-right font-medium">Amount</th><th className="px-4 py-2 text-center font-medium">Status</th><th className="px-4 py-2 font-medium">Gateway</th><th className="px-4 py-2 font-medium">Date</th></tr></thead>
           <tbody>
             {txns.map((t) => (
@@ -371,6 +381,7 @@ function Transactions() {
             {txns.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">No transactions yet.</td></tr>}
           </tbody>
         </table>
+        </div>
       </CardContent>
     </Card>
   );
@@ -384,7 +395,7 @@ function AuditLog() {
       <CardHeader className="pb-3"><CardTitle className="text-base">Audit log</CardTitle><CardDescription>Who did what, across all tenants.</CardDescription></CardHeader>
       <CardContent className="p-0">
         <div className="max-h-[560px] overflow-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[560px] text-sm">
             <thead className="sticky top-0 bg-card text-left text-xs uppercase text-muted-foreground"><tr className="border-b border-border"><th className="px-4 py-2 font-medium">Action</th><th className="px-4 py-2 font-medium">User</th><th className="px-4 py-2 font-medium">Target</th><th className="px-4 py-2 font-medium">When</th></tr></thead>
             <tbody>
               {logs.map((l) => (
@@ -481,9 +492,34 @@ function Gateways() {
 function UsersSection() {
   const [users, setUsers] = useState<any[]>([]);
   const [q, setQ] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const confirm = useConfirm();
+  const { user: me } = useCurrentUser();
   const load = useCallback(() => api.get<any[]>("/admin/users").then(setUsers).catch(() => setUsers([])), []);
   useEffect(() => { load(); }, [load]);
   const filtered = q.trim() ? users.filter((u) => (u.email + (u.name ?? "") + (u.org ?? "")).toLowerCase().includes(q.toLowerCase())) : users;
+
+  async function toggleActive(u: any) {
+    setBusy(u.id);
+    try { await api.patch(`/admin/users/${u.id}`, { isActive: !u.isActive }); await load(); }
+    catch (e) { alert(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(null); }
+  }
+
+  // Permanently delete a user account (any tenant). Irreversible → confirm first.
+  async function removeUser(u: any) {
+    if (!(await confirm({
+      title: "Delete user?",
+      description: `Permanently delete ${u.name || u.email} and their account across the platform. This can't be undone.`,
+      confirmText: "Delete user",
+      destructive: true,
+    }))) return;
+    setBusy(u.id);
+    try { await api.del(`/admin/users/${u.id}`); await load(); }
+    catch (e) { alert(e instanceof Error ? e.message : "Could not delete user"); }
+    finally { setBusy(null); }
+  }
+
   return (
     <Card>
       <CardHeader className="pb-3"><CardTitle className="text-base">Users</CardTitle><CardDescription>Everyone across every organization ({users.length}).</CardDescription></CardHeader>
@@ -491,23 +527,38 @@ function UsersSection() {
         <div className="flex items-center gap-2 border-b border-border px-4 py-2">
           <Input placeholder="Search users…" value={q} onChange={(e) => setQ(e.target.value)} className="h-8 max-w-xs" />
         </div>
-        <div className="max-h-[560px] overflow-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-card text-left text-xs uppercase text-muted-foreground"><tr className="border-b border-border"><th className="px-4 py-2 font-medium">User</th><th className="px-4 py-2 font-medium">Organization</th><th className="px-4 py-2 font-medium">Role</th><th className="px-4 py-2 font-medium">Last login</th><th className="px-4 py-2 text-center font-medium">Status</th><th className="px-4 py-2" /></tr></thead>
-            <tbody>
-              {filtered.map((u) => (
-                <tr key={u.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-2"><div className="font-medium">{u.name || u.email.split("@")[0]}</div><div className="text-xs text-muted-foreground">{u.email}</div></td>
-                  <td className="px-4 py-2">{u.org ?? "—"}</td>
-                  <td className="px-4 py-2"><span className="capitalize">{u.role === "SUPER_ADMIN" ? "Super admin" : u.roleName || u.role.toLowerCase()}</span></td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : "never"}</td>
-                  <td className="px-4 py-2 text-center"><span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", u.isActive ? "bg-chart-2/12 text-chart-2" : "bg-muted text-muted-foreground")}>{u.isActive ? "Active" : "Disabled"}</span></td>
-                  <td className="px-4 py-2 text-right">{u.role !== "SUPER_ADMIN" && <Button size="sm" variant="outline" onClick={async () => { try { await api.patch(`/admin/users/${u.id}`, { isActive: !u.isActive }); load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } }}>{u.isActive ? "Disable" : "Enable"}</Button>}</td>
-                </tr>
-              ))}
-              {filtered.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">No users found.</td></tr>}
-            </tbody>
-          </table>
+        <div className="max-h-[560px] divide-y divide-border overflow-auto">
+          {filtered.map((u) => {
+            const isSelf = me?.id === u.id;
+            const canManage = u.role !== "SUPER_ADMIN" && !isSelf;
+            return (
+              <div key={u.id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:gap-4">
+                {/* Identity */}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate font-medium">{u.name || u.email.split("@")[0]}</span>
+                    <span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", u.isActive ? "bg-chart-2/12 text-chart-2" : "bg-muted text-muted-foreground")}>{u.isActive ? "Active" : "Disabled"}</span>
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">{u.email}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                    <span className="truncate">{u.org ?? "—"}</span>
+                    <span className="capitalize">{u.role === "SUPER_ADMIN" ? "Super admin" : u.roleName || u.role.toLowerCase()}</span>
+                    <span>Last login: {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleDateString() : "never"}</span>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                {canManage && (
+                  <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                    {busy === u.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                    <Button size="sm" variant="outline" disabled={busy === u.id} onClick={() => toggleActive(u)}>{u.isActive ? "Disable" : "Enable"}</Button>
+                    <Button size="sm" variant="outline" className="text-destructive" disabled={busy === u.id} title="Delete user" onClick={() => removeUser(u)}><Trash2 className="h-4 w-4" /></Button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {filtered.length === 0 && <div className="px-4 py-6 text-center text-muted-foreground">No users found.</div>}
         </div>
       </CardContent>
     </Card>

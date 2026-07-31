@@ -98,6 +98,14 @@ export class AdminController {
     return res;
   }
 
+  @Delete("users/:id")
+  @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
+  async deleteUser(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const res = await this.admin.deleteUser(id, user.id);
+    await this.audit.log(user, "user.delete", { target: id, metadata: { email: res.email } });
+    return res;
+  }
+
   // ---- Email / SMTP settings ----
   @Get("settings/smtp")
   @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
