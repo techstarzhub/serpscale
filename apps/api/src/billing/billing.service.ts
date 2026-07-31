@@ -46,6 +46,9 @@ export class BillingService {
     if (planId === sub.planId) throw new BadRequestException("You're already on this plan.");
     const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
     if (!plan) throw new BadRequestException("Plan not found.");
+    // Downgrades are disabled — you can only move to a same/higher-priced plan.
+    const current = await this.prisma.plan.findUnique({ where: { id: sub.planId } });
+    if (current && plan.priceCents < current.priceCents) throw new BadRequestException("Downgrades aren't available. Contact support to move to a lower plan.");
     await this.prisma.subscription.update({ where: { orgId }, data: { pendingPlanId: planId, pendingKeywords: keywords ?? null } });
     await this.notifyOrgAdmins(orgId, { title: "Plan change scheduled", body: `You'll switch to the ${plan.name} plan at your next renewal.`, link: "/dashboard/settings/billing" });
     return { scheduled: true, planName: plan.name, effectiveAt: sub.currentPeriodEnd };

@@ -128,16 +128,6 @@ function BillingInner() {
     try { await api.post("/billing/cancel"); await load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } finally { setBusy(null); }
   }
 
-  // Downgrade → scheduled at the next renewal (current plan keeps running; no extra charge).
-  async function scheduleDowngrade(planId: string, planName: string, keywords?: number | null) {
-    const when = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString() : "your next renewal";
-    if (!(await confirm({ title: `Downgrade to ${planName}?`, description: `Your current plan stays active until ${when}. After that you'll move to ${planName}. You won't be charged anything extra.`, confirmText: "Schedule downgrade" }))) return;
-    setBusy("sched" + planId);
-    try { await api.post("/billing/schedule-change", { planId, keywords: keywords ?? undefined }); await load(); }
-    catch (e) { alert(e instanceof Error ? e.message : "Could not schedule the change"); }
-    finally { setBusy(null); }
-  }
-
   async function cancelScheduled() {
     setBusy("cancelsched");
     try { await api.post("/billing/cancel-scheduled-change"); await load(); }
@@ -280,7 +270,7 @@ function BillingInner() {
                     {current ? (
                       <Button className="w-full" variant="outline" disabled>Current plan</Button>
                     ) : isDowngrade ? (
-                      <Button className="w-full" variant="outline" onClick={() => scheduleDowngrade(p.id, p.name, selTier(p)?.keywords)} disabled={!!busy}>{busy === "sched" + p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : `Downgrade to ${p.name}`}</Button>
+                      <Button className="w-full" variant="outline" disabled title="Downgrades aren't available. To move to a lower plan, contact support.">Downgrade unavailable</Button>
                     ) : p.priceCents === 0 ? (
                       <Button className="w-full" onClick={() => subscribe(p.id, "manual")} disabled={!!busy}>{busy === p.id + "manual" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Switch to Free"}</Button>
                     ) : gateway === "stripe" ? (
