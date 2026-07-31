@@ -91,6 +91,14 @@ export class PublicFormsService {
     return { ok: true };
   }
 
+  /** Public SEO/head config the marketing site injects (verification metas,
+   *  analytics IDs, default meta, custom head/body scripts). Everything here is
+   *  meant to be public HTML anyway, so it's served as-is (no secrets). */
+  async seo(): Promise<Record<string, unknown>> {
+    const s = await this.prisma.platformSetting.findUnique({ where: { key: "seo" } }).catch(() => null);
+    return (s?.value as Record<string, unknown>) ?? {};
+  }
+
   async subscribe(dto: SubscribeDto, ip?: string): Promise<{ ok: true }> {
     if (this.guard(dto.website, dto.captchaToken, dto.captchaAnswer)) return { ok: true };
 

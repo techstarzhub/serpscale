@@ -106,6 +106,53 @@ export class AdminController {
     return res;
   }
 
+  // ---- Marketing site: contact form submissions ----
+  @Get("contact-messages")
+  @RequirePermissions(PERMISSIONS.PLATFORM_ORGS_VIEW)
+  contactMessages(@Query("limit") limit?: string) {
+    return this.admin.listContactMessages(Number(limit) || 200);
+  }
+
+  @Patch("contact-messages/:id")
+  @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
+  setContactHandled(@Param("id") id: string, @Body() dto: { handled?: boolean }) {
+    return this.admin.setContactHandled(id, !!dto.handled);
+  }
+
+  @Delete("contact-messages/:id")
+  @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
+  deleteContactMessage(@Param("id") id: string) {
+    return this.admin.deleteContactMessage(id);
+  }
+
+  // ---- Marketing site: newsletter subscribers ----
+  @Get("subscribers")
+  @RequirePermissions(PERMISSIONS.PLATFORM_ORGS_VIEW)
+  subscribers(@Query("limit") limit?: string) {
+    return this.admin.listSubscribers(Number(limit) || 500);
+  }
+
+  @Delete("subscribers/:id")
+  @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
+  deleteSubscriber(@Param("id") id: string) {
+    return this.admin.deleteSubscriber(id);
+  }
+
+  // ---- SEO / head tags for the marketing site (dynamic) ----
+  @Get("settings/seo")
+  @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
+  getSeo() {
+    return this.admin.getSettingSafe("seo");
+  }
+
+  @Put("settings/seo")
+  @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
+  async setSeo(@CurrentUser() user: AuthUser, @Body() dto: any) {
+    const res = await this.admin.setSetting("seo", dto);
+    await this.audit.log(user, "settings.seo.update", {});
+    return res;
+  }
+
   // ---- Email / SMTP settings ----
   @Get("settings/smtp")
   @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)

@@ -33,4 +33,12 @@ export class PublicFormsController {
   subscribe(@Body() dto: SubscribeDto, @Ip() ip: string) {
     return this.forms.subscribe(dto, ip);
   }
+
+  /** SEO/head config for the marketing site (verification metas, analytics IDs,
+   *  default meta, custom scripts). Public, cached by the marketing site. */
+  @Get("seo")
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  seo() {
+    return this.forms.seo();
+  }
 }

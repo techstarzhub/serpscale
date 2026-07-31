@@ -272,6 +272,30 @@ export class AdminService {
     return { ok: true, email: target.email };
   }
 
+  // ---- Marketing site: contact submissions ----
+  listContactMessages(limit = 200) {
+    return this.prisma.contactMessage.findMany({ orderBy: { createdAt: "desc" }, take: Math.min(1000, limit) });
+  }
+
+  setContactHandled(id: string, handled: boolean) {
+    return this.prisma.contactMessage.update({ where: { id }, data: { handled }, select: { id: true, handled: true } });
+  }
+
+  async deleteContactMessage(id: string) {
+    await this.prisma.contactMessage.delete({ where: { id } });
+    return { ok: true };
+  }
+
+  // ---- Marketing site: newsletter subscribers ----
+  listSubscribers(limit = 500) {
+    return this.prisma.subscriber.findMany({ orderBy: { createdAt: "desc" }, take: Math.min(5000, limit) });
+  }
+
+  async deleteSubscriber(id: string) {
+    await this.prisma.subscriber.delete({ where: { id } });
+    return { ok: true };
+  }
+
   // ---- Transactions ----
   listTransactions(limit = 100) {
     return this.prisma.transaction.findMany({

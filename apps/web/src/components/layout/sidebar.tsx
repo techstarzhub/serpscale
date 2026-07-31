@@ -24,6 +24,9 @@ import {
   SlidersHorizontal,
   Archive,
   ArchiveRestore,
+  MessageSquare,
+  AtSign,
+  Globe,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -71,6 +74,9 @@ export function Sidebar({
     { key: "plans", label: "Plans", icon: CreditCard },
     { key: "transactions", label: "Payments", icon: Receipt },
     { key: "gateways", label: "Payment keys", icon: KeyRound },
+    { key: "contacts", label: "Contact messages", icon: MessageSquare },
+    { key: "subscribers", label: "Subscribers", icon: AtSign },
+    { key: "seo", label: "SEO / head tags", icon: Globe },
     { key: "blog", label: "Blog", icon: Newspaper, href: "/dashboard/admin/blog" },
     { key: "email", label: "Email / SMTP", icon: Mail },
     { key: "audit", label: "Audit log", icon: ScrollText },

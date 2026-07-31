@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { LayoutGrid, CreditCard, Building2, Receipt, ScrollText, KeyRound, Users as UsersIcon, Mail, SlidersHorizontal, Plus, Trash2, Loader2, type LucideIcon } from "lucide-react";
+import { LayoutGrid, CreditCard, Building2, Receipt, ScrollText, KeyRound, Users as UsersIcon, Mail, SlidersHorizontal, Plus, Trash2, Loader2, MessageSquare, AtSign, Globe, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,7 @@ function useCatalog(): Catalog | null {
   return c;
 }
 
-type Section = "overview" | "users" | "orgs" | "plans" | "transactions" | "gateways" | "email" | "audit" | "settings";
+type Section = "overview" | "users" | "orgs" | "plans" | "transactions" | "gateways" | "contacts" | "subscribers" | "seo" | "email" | "audit" | "settings";
 const ADMIN_SECTIONS: { key: Section; label: string; icon: LucideIcon }[] = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
   { key: "users", label: "Users", icon: UsersIcon },
@@ -38,6 +38,9 @@ const ADMIN_SECTIONS: { key: Section; label: string; icon: LucideIcon }[] = [
   { key: "plans", label: "Plans", icon: CreditCard },
   { key: "transactions", label: "Payments", icon: Receipt },
   { key: "gateways", label: "Payment keys", icon: KeyRound },
+  { key: "contacts", label: "Contact messages", icon: MessageSquare },
+  { key: "subscribers", label: "Subscribers", icon: AtSign },
+  { key: "seo", label: "SEO / head tags", icon: Globe },
   { key: "email", label: "Email / SMTP", icon: Mail },
   { key: "audit", label: "Audit log", icon: ScrollText },
   { key: "settings", label: "Settings", icon: SlidersHorizontal },
@@ -74,6 +77,9 @@ function AdminInner() {
       {section === "plans" && <Plans />}
       {section === "transactions" && <Transactions />}
       {section === "gateways" && <Gateways />}
+      {section === "contacts" && <ContactMessages />}
+      {section === "subscribers" && <Subscribers />}
+      {section === "seo" && <SeoSettings />}
       {section === "email" && <SmtpSettings />}
       {section === "audit" && <AuditLog />}
       {section === "settings" && <PlatformSettings />}
@@ -562,6 +568,160 @@ function UsersSection() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function ContactMessages() {
+  const [msgs, setMsgs] = useState<any[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const confirm = useConfirm();
+  const load = useCallback(() => api.get<any[]>("/admin/contact-messages").then(setMsgs).catch(() => setMsgs([])), []);
+  useEffect(() => { load(); }, [load]);
+
+  async function toggleHandled(m: any) {
+    setBusy(m.id);
+    try { await api.patch(`/admin/contact-messages/${m.id}`, { handled: !m.handled }); await load(); }
+    catch (e) { alert(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(null); }
+  }
+  async function remove(m: any) {
+    if (!(await confirm({ title: "Delete message?", description: `Message from ${m.name} (${m.email}) will be permanently deleted.`, confirmText: "Delete", destructive: true }))) return;
+    setBusy(m.id);
+    try { await api.del(`/admin/contact-messages/${m.id}`); await load(); }
+    catch (e) { alert(e instanceof Error ? e.message : "Could not delete"); }
+    finally { setBusy(null); }
+  }
+
+  const unhandled = msgs.filter((m) => !m.handled).length;
+  return (
+    <Card>
+      <CardHeader className="pb-3"><CardTitle className="text-base">Contact messages</CardTitle><CardDescription>Submissions from the marketing site contact form ({msgs.length}{unhandled ? ` · ${unhandled} new` : ""}).</CardDescription></CardHeader>
+      <CardContent className="p-0">
+        <div className="max-h-[600px] divide-y divide-border overflow-auto">
+          {msgs.map((m) => (
+            <div key={m.id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+              <button type="button" className="min-w-0 flex-1 text-left" onClick={() => setOpen(open === m.id ? null : m.id)}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{m.name}</span>
+                  {!m.handled && <span className="rounded-md bg-chart-3/15 px-2 py-0.5 text-[10px] font-medium text-chart-3">New</span>}
+                </div>
+                <div className="truncate text-xs text-muted-foreground">{m.email}{m.company ? ` · ${m.company}` : ""} · {new Date(m.createdAt).toLocaleString()}</div>
+                <div className={cn("mt-1 text-sm text-muted-foreground", open === m.id ? "whitespace-pre-wrap" : "line-clamp-1")}>{m.message}</div>
+              </button>
+              <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                {busy === m.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                <a href={`mailto:${m.email}`} className="inline-flex h-8 items-center rounded-md border border-border bg-card px-3 text-xs font-medium hover:bg-secondary/60">Reply</a>
+                <Button size="sm" variant="outline" onClick={() => toggleHandled(m)} disabled={busy === m.id}>{m.handled ? "Mark new" : "Mark done"}</Button>
+                <Button size="sm" variant="outline" className="text-destructive" onClick={() => remove(m)} disabled={busy === m.id}><Trash2 className="h-4 w-4" /></Button>
+              </div>
+            </div>
+          ))}
+          {msgs.length === 0 && <div className="px-4 py-6 text-center text-muted-foreground">No contact messages yet.</div>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Subscribers() {
+  const [subs, setSubs] = useState<any[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const confirm = useConfirm();
+  const load = useCallback(() => api.get<any[]>("/admin/subscribers").then(setSubs).catch(() => setSubs([])), []);
+  useEffect(() => { load(); }, [load]);
+
+  async function remove(s: any) {
+    if (!(await confirm({ title: "Remove subscriber?", description: `${s.email} will be removed from the newsletter list.`, confirmText: "Remove", destructive: true }))) return;
+    setBusy(s.id);
+    try { await api.del(`/admin/subscribers/${s.id}`); await load(); }
+    catch (e) { alert(e instanceof Error ? e.message : "Could not remove"); }
+    finally { setBusy(null); }
+  }
+  function copyAll() {
+    navigator.clipboard?.writeText(subs.map((s) => s.email).join(", "));
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+        <div><CardTitle className="text-base">Subscribers</CardTitle><CardDescription>Newsletter signups from the marketing site ({subs.length}).</CardDescription></div>
+        {subs.length > 0 && <Button size="sm" variant="outline" onClick={copyAll}>{copied ? "Copied!" : "Copy all emails"}</Button>}
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="max-h-[600px] divide-y divide-border overflow-auto">
+          {subs.map((s) => (
+            <div key={s.id} className="flex items-center justify-between gap-3 p-3">
+              <div className="min-w-0">
+                <div className="truncate font-medium">{s.email}</div>
+                <div className="text-xs text-muted-foreground">{s.source ?? "—"} · {new Date(s.createdAt).toLocaleDateString()}</div>
+              </div>
+              <Button size="sm" variant="outline" className="text-destructive" onClick={() => remove(s)} disabled={busy === s.id}>{busy === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</Button>
+            </div>
+          ))}
+          {subs.length === 0 && <div className="px-4 py-6 text-center text-muted-foreground">No subscribers yet.</div>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SeoSettings() {
+  const [cfg, setCfg] = useState<any>({});
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { api.get<any>("/admin/settings/seo").then((v) => v && setCfg(v)).catch(() => {}); }, []);
+  const upd = (k: string, v: any) => setCfg((c: any) => ({ ...c, [k]: v }));
+  async function save() { setSaving(true); try { await api.put("/admin/settings/seo", cfg); setSaved(true); setTimeout(() => setSaved(false), 2000); } finally { setSaving(false); } }
+  const taCls = "w-full rounded-md border border-border bg-card px-3 py-2 text-sm font-mono";
+  const field = (label: string, key: string, ph?: string) => (
+    <div><label className="text-xs text-muted-foreground">{label}</label><Input placeholder={ph} value={cfg[key] ?? ""} onChange={(e) => upd(key, e.target.value)} /></div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base">Default meta</CardTitle><CardDescription>Homepage title, description &amp; keywords for the marketing site. Leave blank to use the built-in defaults. Changes go live within a minute (no redeploy).</CardDescription></CardHeader>
+        <CardContent className="space-y-3">
+          {field("Meta title", "metaTitle", "SerpScale — The All-in-One SEO Tool")}
+          <div><label className="text-xs text-muted-foreground">Meta description</label><textarea rows={2} className={taCls.replace(" font-mono", "")} value={cfg.metaDescription ?? ""} onChange={(e) => upd("metaDescription", e.target.value)} /></div>
+          {field("Meta keywords", "metaKeywords", "seo tools, rank tracker, backlink checker")}
+          {field("Default OG/share image URL", "ogImage", "https://…/og.png")}
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="h-4 w-4 accent-primary" checked={cfg.robotsIndex === false} onChange={(e) => upd("robotsIndex", e.target.checked ? false : true)} /> Discourage search engines (noindex, nofollow)</label>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base">Site verification</CardTitle><CardDescription>Paste only the token/content value from each provider&apos;s verification meta tag (not the whole tag).</CardDescription></CardHeader>
+        <CardContent className="grid gap-2.5 sm:grid-cols-2">
+          {field("Google (google-site-verification)", "googleVerification")}
+          {field("Bing (msvalidate.01)", "bingVerification")}
+          {field("Yandex (yandex-verification)", "yandexVerification")}
+          {field("Pinterest (p:domain_verify)", "pinterestVerification")}
+          {field("Facebook (facebook-domain-verification)", "facebookDomainVerification")}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base">Analytics</CardTitle><CardDescription>Just the IDs — the correct script tags are injected for you.</CardDescription></CardHeader>
+        <CardContent className="grid gap-2.5 sm:grid-cols-2">
+          {field("Google Analytics 4 (Measurement ID)", "ga4Id", "G-XXXXXXXXXX")}
+          {field("Google Tag Manager ID", "gtmId", "GTM-XXXXXXX")}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3"><CardTitle className="text-base">Custom scripts</CardTitle><CardDescription>Inline JavaScript injected into the marketing site. Paste JavaScript only (no <code>&lt;script&gt;</code> wrapper) — e.g. pixels or chat widgets.</CardDescription></CardHeader>
+        <CardContent className="space-y-3">
+          <div><label className="text-xs text-muted-foreground">Head script (runs in &lt;head&gt;)</label><textarea rows={3} className={taCls} placeholder="// e.g. fbq('init', '...');" value={cfg.customHeadScript ?? ""} onChange={(e) => upd("customHeadScript", e.target.value)} /></div>
+          <div><label className="text-xs text-muted-foreground">Body script (runs at end of &lt;body&gt;)</label><textarea rows={3} className={taCls} value={cfg.customBodyScript ?? ""} onChange={(e) => upd("customBodyScript", e.target.value)} /></div>
+        </CardContent>
+      </Card>
+
+      <div className="flex justify-end"><Button size="sm" onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? "Saved" : "Save SEO settings"}</Button></div>
+    </div>
   );
 }
 
