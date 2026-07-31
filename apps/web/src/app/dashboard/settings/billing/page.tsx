@@ -129,18 +129,26 @@ function BillingInner() {
   }
 
   // Upgrade → queued like a mobile recharge: current plan runs to the end of its
-  // paid period, then the higher plan starts. Nothing changes today.
+  // paid period, then the higher plan starts and PayPal bills the new price from
+  // that cycle. Because the amount goes up, PayPal sends the user to approve it.
   async function scheduleUpgrade(planId: string, planName: string, keywords?: number | null) {
     const when = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString() : "your next renewal";
     if (!(await confirm({
       title: `Upgrade to ${planName}?`,
-      description: `Your current plan keeps running until ${when}. From ${when} you'll automatically move to ${planName}. Nothing changes today — billing for ${planName} begins when it starts.`,
-      confirmText: "Schedule upgrade",
+      description: `Your current plan keeps running until ${when}. You won't be charged today — PayPal will ask you to approve the new amount, then bills it automatically from ${when} when ${planName} starts.`,
+      confirmText: "Continue to PayPal",
     }))) return;
     setBusy("sched" + planId);
-    try { await api.post("/billing/schedule-change", { planId, keywords: keywords ?? undefined }); await load(); }
-    catch (e) { alert(e instanceof Error ? e.message : "Could not schedule the upgrade"); }
-    finally { setBusy(null); }
+    try {
+      const res = await api.post<{ url?: string }>("/billing/schedule-change", { planId, keywords: keywords ?? undefined });
+      // PayPal returns an approval link for the higher charge — send them there.
+      if (res?.url) { window.location.href = res.url; return; }
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not schedule the upgrade");
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function cancelScheduled() {
@@ -154,12 +162,14 @@ function BillingInner() {
 
   const canceled = params.get("canceled");
   const activated = params.get("activated");
+  const upgradeScheduled = params.get("upgrade_scheduled");
   const statusTone = (s?: string) => s === "ACTIVE" ? "bg-chart-2/12 text-chart-2" : s === "PAST_DUE" ? "bg-destructive/10 text-destructive" : s === "TRIALING" ? "bg-chart-3/15 text-chart-3" : "bg-muted text-muted-foreground";
 
   return (
     <div className="space-y-5">
       {canceled && <div className="rounded-lg border border-chart-3/30 bg-chart-3/10 px-4 py-3 text-sm">Checkout was canceled. No charge was made.</div>}
       {activated && <div className="rounded-lg border border-chart-2/30 bg-chart-2/10 px-4 py-3 text-sm">Plan activated. Enjoy!</div>}
+      {upgradeScheduled && <div className="rounded-lg border border-chart-2/30 bg-chart-2/10 px-4 py-3 text-sm">Upgrade confirmed. Your current plan keeps running until it ends, then your new plan starts automatically — no charge today.</div>}
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">Current plan</CardTitle><CardDescription>Your subscription and renewal.</CardDescription></CardHeader>
