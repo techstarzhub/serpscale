@@ -271,8 +271,8 @@ export class BillingService {
   }
 
   // ------------------------------------------------------------------ PayPal REST
-  private async ppToken(): Promise<{ token: string; base: string }> {
-    const { clientId, clientSecret, base } = await this.gw.paypal();
+  private async ppToken(): Promise<{ token: string; base: string; live: boolean }> {
+    const { clientId, clientSecret, base, live } = await this.gw.paypal();
     if (!clientId || !clientSecret) throw new BadRequestException("PayPal is not configured");
     const res = await fetch(`${base}/v1/oauth2/token`, {
       method: "POST",
@@ -281,33 +281,46 @@ export class BillingService {
     });
     const data: any = await res.json();
     if (!data.access_token) throw new BadRequestException("PayPal auth failed");
-    return { token: data.access_token, base };
+    return { token: data.access_token, base, live: !!live };
   }
   private async pp(path: string, method: string, body: any, token: string, base: string): Promise<any> {
     const res = await fetch(`${base}${path}`, { method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
     return res.json().catch(() => ({}));
   }
 
+  // A plan with keyword tiers needs one PayPal plan per distinct price shown in
+  // the dropdown (PayPal has no inline/dynamic pricing like Stripe), cached in
+  // paypalPlanIds/paypalPlanIdsLive keyed by priceCents. Creates + caches on
+  // first use for a given price; reuses it afterwards.
+  private async ensurePaypalPlan(plan: any, priceCents: number, token: string, base: string, live: boolean): Promise<string> {
+    const field = live ? "paypalPlanIdsLive" : "paypalPlanIds";
+    const map = (plan[field] as Record<string, string> | null) ?? {};
+    const key = String(priceCents);
+    if (map[key]) return map[key];
+
+    const product = await this.pp("/v1/catalogs/products", "POST", { name: plan.name, type: "SERVICE" }, token, base);
+    if (!product?.id) throw new BadRequestException("PayPal product creation failed. Check your PayPal credentials.");
+    const planRes = await this.pp("/v1/billing/plans", "POST", {
+      product_id: product.id,
+      name: plan.name,
+      billing_cycles: [{
+        frequency: { interval_unit: plan.interval === "year" ? "YEAR" : "MONTH", interval_count: 1 },
+        tenure_type: "REGULAR", sequence: 1, total_cycles: 0,
+        pricing_scheme: { fixed_price: { value: (priceCents / 100).toFixed(2), currency_code: String(plan.currency).toUpperCase() } },
+      }],
+      payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 1 },
+    }, token, base);
+    const ppPlanId = planRes.id;
+    if (!ppPlanId) throw new BadRequestException("PayPal plan creation failed. Check your PayPal credentials.");
+    const nextMap = { ...map, [key]: ppPlanId };
+    await this.prisma.plan.update({ where: { id: plan.id }, data: { [field]: nextMap } });
+    plan[field] = nextMap;
+    return ppPlanId;
+  }
+
   private async createPaypalSubscription(orgId: string, plan: any): Promise<{ url: string }> {
-    const { token, base } = await this.ppToken();
-    let ppPlanId: string | null = plan.paypalPlanId;
-    if (!ppPlanId) {
-      const product = await this.pp("/v1/catalogs/products", "POST", { name: plan.name, type: "SERVICE" }, token, base);
-      if (!product?.id) throw new BadRequestException("PayPal product creation failed. Check your PayPal credentials.");
-      const planRes = await this.pp("/v1/billing/plans", "POST", {
-        product_id: product.id,
-        name: plan.name,
-        billing_cycles: [{
-          frequency: { interval_unit: plan.interval === "year" ? "YEAR" : "MONTH", interval_count: 1 },
-          tenure_type: "REGULAR", sequence: 1, total_cycles: 0,
-          pricing_scheme: { fixed_price: { value: (plan.priceCents / 100).toFixed(2), currency_code: String(plan.currency).toUpperCase() } },
-        }],
-        payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 1 },
-      }, token, base);
-      ppPlanId = planRes.id;
-      if (!ppPlanId) throw new BadRequestException("PayPal plan creation failed. Check your PayPal credentials.");
-      await this.prisma.plan.update({ where: { id: plan.id }, data: { paypalPlanId: ppPlanId } });
-    }
+    const { token, base, live } = await this.ppToken();
+    const ppPlanId = await this.ensurePaypalPlan(plan, plan.priceCents, token, base, live);
     const sub = await this.pp("/v1/billing/subscriptions", "POST", {
       plan_id: ppPlanId,
       custom_id: orgId,

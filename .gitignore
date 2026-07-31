@@ -12,6 +12,7 @@ out/
 .env
 .env.local
 .env.*.local
+.env.production
 
 # python
 __pycache__/
@@ -27,3 +28,5 @@ coverage/
 
 # Local DB dumps — contain live secrets (OAuth tokens, SMTP key), never commit
 backups/
+*.sanitized.sql
+seo_platform.sanitized.sql

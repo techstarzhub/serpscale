@@ -247,8 +247,13 @@ model Plan {
   sortOrder   Int      @default(0)
 
   // Cached gateway identifiers (created lazily on first checkout).
-  stripePriceId String?
-  paypalPlanId  String?
+  stripePriceId     String?
+  // PayPal plan ids, keyed by priceCents (a plan with keyword tiers needs one
+  // PayPal plan per distinct price shown in the dropdown). Sandbox/live are
+  // cached separately since a sandbox plan id doesn't exist in live PayPal.
+  // Shape: { "3500": "P-xxx", "5500": "P-yyy" }
+  paypalPlanIds     Json? // sandbox
+  paypalPlanIdsLive Json?
 
   subscriptions Subscription[]
 
