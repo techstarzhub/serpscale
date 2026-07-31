@@ -85,7 +85,14 @@ export class BillingService {
       },
     }, token, base);
     const approve = (res?.links || []).find((l: any) => String(l.rel).toLowerCase() === "approve");
-    return approve?.href ?? null;
+    // A price INCREASE must return an approval link. If PayPal rejected the revise
+    // (e.g. the plans live under different products) there is no link — fail loudly
+    // so the caller does NOT record a scheduled switch PayPal won't bill for.
+    if (!approve?.href) {
+      const reason = res?.details?.[0]?.description || res?.message || "PayPal could not schedule this upgrade.";
+      throw new BadRequestException(reason);
+    }
+    return approve.href;
   }
 
   /** Cancel a scheduled (pending) plan change — stay on the current plan. */
