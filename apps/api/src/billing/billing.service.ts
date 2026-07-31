@@ -37,10 +37,11 @@ export class BillingService {
     };
   }
 
-  /** Schedule a plan change for the next renewal (like a mobile-recharge queue).
-   *  The current plan keeps running until currentPeriodEnd, then the pending plan
-   *  is applied. Upgrades queue here too — the higher plan starts when the current
-   *  one ends. Downgrades are disabled (only same/higher-priced moves allowed). */
+  /** Schedule a plan change for the next renewal. The current plan keeps running
+   *  until currentPeriodEnd, then the pending plan is applied. Downgrades are
+   *  disabled; upgrades take effect immediately via checkout (PayPal can't revise
+   *  a subscription across products/plans), so in practice nothing routes here
+   *  today — the pending-change machinery is kept for future use. */
   async scheduleChange(orgId: string, planId: string, keywords?: number | null) {
     const sub = await this.prisma.subscription.findUnique({ where: { orgId } });
     if (!sub || !["ACTIVE", "TRIALING"].includes(sub.status)) throw new BadRequestException("You need an active subscription to schedule a plan change.");
@@ -50,49 +51,9 @@ export class BillingService {
     // Downgrades are disabled — you can only move to a same/higher-priced plan.
     const current = await this.prisma.plan.findUnique({ where: { id: sub.planId } });
     if (current && plan.priceCents < current.priceCents) throw new BadRequestException("Downgrades aren't available. Contact support to move to a lower plan.");
-    const isUpgrade = !!current && plan.priceCents > current.priceCents;
-    // For a PayPal upgrade, revise the live subscription so PayPal itself bills the
-    // higher amount from the NEXT cycle (the current cycle finishes at the old
-    // price). Because the charge goes up, PayPal returns an approval link the buyer
-    // must confirm. Do this BEFORE writing pendingPlanId so a gateway failure never
-    // leaves a scheduled switch PayPal hasn't agreed to bill.
-    let approvalUrl: string | null = null;
-    if (isUpgrade && sub.gateway === "paypal" && sub.gatewaySubscriptionId) {
-      approvalUrl = await this.revisePaypalPlan(sub.gatewaySubscriptionId, plan, keywords);
-    }
     await this.prisma.subscription.update({ where: { orgId }, data: { pendingPlanId: planId, pendingKeywords: keywords ?? null } });
-    const when = sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "your next renewal";
-    await this.notifyOrgAdmins(orgId, { title: isUpgrade ? "Upgrade scheduled" : "Plan change scheduled", body: `Your plan switches to ${plan.name} on ${when}. Your current plan keeps running until then.`, link: "/dashboard/settings/billing" });
-    await this.alertSuperAdmins(orgId, `${isUpgrade ? "Upgrade" : "Plan change"} scheduled: ${plan.name}`, isUpgrade ? "Upgrade scheduled" : "Plan change scheduled", { Plan: plan.name, Effective: when });
-    return { scheduled: true, planName: plan.name, effectiveAt: sub.currentPeriodEnd, url: approvalUrl ?? undefined };
-  }
-
-  /** Point an existing PayPal subscription at a higher-priced plan. PayPal applies
-   *  the new price from the NEXT billing cycle (the current cycle finishes at the
-   *  old price) and — because the amount increases — returns an approval link the
-   *  buyer must confirm. Returns that link, or null if PayPal applied it silently. */
-  private async revisePaypalPlan(subscriptionId: string, targetPlan: any, keywords?: number | null): Promise<string | null> {
-    const { token, base, live } = await this.ppToken();
-    const tiers = Array.isArray(targetPlan.pricingTiers) ? (targetPlan.pricingTiers as any[]) : [];
-    const tier = keywords != null ? tiers.find((t) => Number(t.keywords) === Number(keywords)) : null;
-    const priceCents = tier ? tier.priceCents : targetPlan.priceCents;
-    const ppPlanId = await this.ensurePaypalPlan(targetPlan, priceCents, token, base, live);
-    const res = await this.pp(`/v1/billing/subscriptions/${subscriptionId}/revise`, "POST", {
-      plan_id: ppPlanId,
-      application_context: {
-        return_url: `${WEB()}/dashboard/settings/billing?upgrade_scheduled=1`,
-        cancel_url: `${WEB()}/dashboard/settings/billing?canceled=1`,
-      },
-    }, token, base);
-    const approve = (res?.links || []).find((l: any) => String(l.rel).toLowerCase() === "approve");
-    // A price INCREASE must return an approval link. If PayPal rejected the revise
-    // (e.g. the plans live under different products) there is no link — fail loudly
-    // so the caller does NOT record a scheduled switch PayPal won't bill for.
-    if (!approve?.href) {
-      const reason = res?.details?.[0]?.description || res?.message || "PayPal could not schedule this upgrade.";
-      throw new BadRequestException(reason);
-    }
-    return approve.href;
+    await this.notifyOrgAdmins(orgId, { title: "Plan change scheduled", body: `You'll switch to the ${plan.name} plan at your next renewal.`, link: "/dashboard/settings/billing" });
+    return { scheduled: true, planName: plan.name, effectiveAt: sub.currentPeriodEnd };
   }
 
   /** Cancel a scheduled (pending) plan change — stay on the current plan. */
