@@ -221,19 +221,37 @@ export class AuthService {
 
     const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
     // Atomically consume the token in a single statement so two concurrent
-    // refreshes can't both succeed (the old find-then-delete was racy). The JWT
-    // signature+exp were already verified above, so a validly-signed token whose
-    // hash is NO LONGER in the store means it was already rotated — i.e. a
-    // replay of a stolen/old refresh token. In that case revoke the entire token
-    // family for the user so the thief and victim are both logged out.
-    const consumed = await this.prisma.refreshToken.deleteMany({ where: { tokenHash, userId: payload.sub } });
+    // refreshes can't both win it (the old find-then-delete was racy). Soft-revoke
+    // (not delete) so a loser can tell WHEN it lost — a browser with several tabs
+    // open shares one cookie, so the same access-token expiry wakes every tab's
+    // poller at once and they all race to refresh with the still-shared old
+    // refresh token. That's a benign double-fire, not theft: within a short grace
+    // window of the winner's rotation, let the loser through on the new tokens
+    // too instead of nuking every session. A token reappearing well after that
+    // window is a genuine stolen/replayed refresh token — revoke the whole family.
+    const REPLAY_GRACE_MS = 15_000;
+    const consumed = await this.prisma.refreshToken.updateMany({
+      where: { tokenHash, userId: payload.sub, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
     if (consumed.count === 0) {
-      await this.prisma.refreshToken.deleteMany({ where: { userId: payload.sub } });
-      throw new UnauthorizedException("Session expired.");
+      const prior = await this.prisma.refreshToken.findUnique({ where: { tokenHash } });
+      const withinGrace = prior?.revokedAt && Date.now() - prior.revokedAt.getTime() <= REPLAY_GRACE_MS;
+      if (!withinGrace) {
+        await this.prisma.refreshToken.deleteMany({ where: { userId: payload.sub } });
+        throw new UnauthorizedException("Session expired.");
+      }
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || !user.isActive) throw new UnauthorizedException("Session expired.");
+
+    // Soft-revoked rows only need to outlive the replay-grace check above — sweep
+    // anything past that (plus any naturally-expired rows) so the table doesn't
+    // grow unbounded now that rotation no longer hard-deletes on every refresh.
+    void this.prisma.refreshToken
+      .deleteMany({ where: { userId: user.id, OR: [{ revokedAt: { lt: new Date(Date.now() - REPLAY_GRACE_MS) } }, { expiresAt: { lt: new Date() } }] } })
+      .catch(() => {});
 
     // Preserve an active "view as" session across refreshes so the Return button
     // keeps working for the full session.

@@ -32,6 +32,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -82,6 +83,10 @@ const tabs: { key: TabKey; label: string; icon: TabIcon; perm?: string; brand?: 
 ];
 
 type TabDef = { key: TabKey; label: string; icon: TabIcon; perm?: string; brand?: string };
+
+// Minimal shape of the latest crawl, just enough to drive the header status pill.
+// latestForProject() only ever returns COMPLETED/RUNNING/QUEUED crawls (never FAILED/CANCELLED).
+type LatestCrawl = { status: "QUEUED" | "RUNNING" | "COMPLETED"; finishedAt: string | null } | null;
 
 // Tabs are clustered into channel-style groups (like the competitor's grouped
 // Google/AI/Bing toggle). Multi-item groups render as a nested segmented pill;
@@ -230,6 +235,19 @@ export default function ProjectWorkspace() {
 
   const project = getProject(params.id);
 
+  // Header status pill: reflects the project's actual latest crawl, not a guess.
+  // Re-fetched on refresh and whenever a crawl finishes on the Audit tab.
+  const [latestCrawl, setLatestCrawl] = useState<LatestCrawl>(null);
+  useEffect(() => {
+    if (!project) return;
+    let cancelled = false;
+    api
+      .get<LatestCrawl>(`/projects/${project.id}/crawl/latest`)
+      .then((c) => { if (!cancelled) setLatestCrawl(c); })
+      .catch(() => { if (!cancelled) setLatestCrawl(null); });
+    return () => { cancelled = true; };
+  }, [project?.id, refreshNonce, tab]);
+
   // Deep-link support: `?tab=audit` (e.g. from the Copilot widget) opens that tab.
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
@@ -333,7 +351,7 @@ export default function ProjectWorkspace() {
             <div className="min-w-0">
               <div className="flex items-center gap-2 lg:gap-2.5">
                 <h2 className="truncate font-heading text-lg font-semibold lg:text-2xl">{project.name}</h2>
-                <Badge variant="primary">Ready to crawl</Badge>
+                <Badge variant="primary">{latestCrawl?.status === "RUNNING" || latestCrawl?.status === "QUEUED" ? "Crawling…" : "Ready to crawl"}</Badge>
               </div>
               <div className="mt-1 flex items-center gap-2 text-sm lg:mt-1.5 lg:gap-2.5 lg:text-base">
                 <a
@@ -346,7 +364,17 @@ export default function ProjectWorkspace() {
                   <ExternalLink className="h-3.5 w-3.5 shrink-0 lg:h-4 lg:w-4" />
                 </a>
                 <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground lg:px-2.5 lg:py-1 lg:text-[13px]">
-                  <span className="h-1.5 w-1.5 rounded-full bg-chart-3 lg:h-2 lg:w-2" /> Not crawled yet
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 rounded-full lg:h-2 lg:w-2",
+                      latestCrawl?.status === "COMPLETED" ? "bg-chart-2" : "bg-chart-3",
+                    )}
+                  />
+                  {latestCrawl?.status === "COMPLETED" && latestCrawl.finishedAt
+                    ? `Crawled ${new Date(latestCrawl.finishedAt).toLocaleDateString()}`
+                    : latestCrawl?.status === "RUNNING" || latestCrawl?.status === "QUEUED"
+                      ? "Crawl in progress"
+                      : "Not crawled yet"}
                 </span>
               </div>
             </div>
