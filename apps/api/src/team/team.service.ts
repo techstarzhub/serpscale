@@ -8,6 +8,7 @@ import { ALL_PERMS, type Permission } from "../auth/permissions";
 import type { AuthUser } from "../auth/decorators/current-user.decorator";
 import { EntitlementsService } from "../entitlements/entitlements.service";
 import { PermissionsService } from "../auth/permissions.service";
+import { StorageService } from "../storage/storage.service";
 import { normalizeEmail } from "../common/email.util";
 
 const VALID = new Set<string>(ALL_PERMS);
@@ -21,6 +22,7 @@ export class TeamService {
     private readonly notifications: NotificationsService,
     private readonly entitlements: EntitlementsService,
     private readonly permissions: PermissionsService,
+    private readonly storage: StorageService,
   ) {}
 
   private orgOf(user: AuthUser): string {
@@ -95,12 +97,20 @@ export class TeamService {
 
   // ---- Members ----
 
-  listMembers(user: AuthUser) {
-    return this.prisma.user.findMany({
+  async listMembers(user: AuthUser) {
+    const members = await this.prisma.user.findMany({
       where: { orgId: this.orgOf(user) },
       orderBy: { createdAt: "asc" },
-      select: { id: true, email: true, name: true, role: true, isActive: true, lastLoginAt: true, customRole: { select: { id: true, name: true } } },
+      select: { id: true, email: true, name: true, role: true, isActive: true, lastLoginAt: true, avatarKey: true, customRole: { select: { id: true, name: true } } },
     });
+    // Swap each stored R2 key for a fresh presigned URL so the client can render
+    // the member's profile photo (null when they haven't set one).
+    return Promise.all(
+      members.map(async ({ avatarKey, ...m }) => ({
+        ...m,
+        avatarUrl: avatarKey ? await this.storage.signedUrl(avatarKey) : null,
+      })),
+    );
   }
 
   async inviteMember(user: AuthUser, dto: { email: string; name?: string; customRoleId?: string; role?: string; password?: string }) {

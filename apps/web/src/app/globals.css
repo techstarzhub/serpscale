@@ -228,9 +228,17 @@ h2 { letter-spacing: -0.028em; }
 }
 .glow-pulse { animation: glow-pulse 2.8s ease-in-out infinite; }
 
+/* Sweeping shimmer over media that is being (re)generated. */
+@keyframes img-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.img-shimmer { animation: img-shimmer 1.4s linear infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .sheen:hover::after { animation: none; }
   .glow-pulse { animation: none; }
+  .img-shimmer { animation: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

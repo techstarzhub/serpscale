@@ -94,6 +94,9 @@ export function HomePricing({ plans }: { plans: Plan[] }) {
               <ul style={{ listStyle: "none", padding: 0, margin: "20px 0 0", display: "flex", flexDirection: "column", gap: 10 }}>
                 <li style={featRow}><Check /> <span><b style={{ color: "#0f1222" }}>{kw ? Number(kw).toLocaleString() : "—"}</b> keywords tracked</span></li>
                 <li style={featRow}><Check /> <span><b style={{ color: "#0f1222" }}>{limNum(p.limits?.projects)}</b> campaigns</span></li>
+                {Number(p.limits?.blogsPerMonth) > 0 && (
+                  <li style={featRow}><Check /> <span><b style={{ color: "#0f1222" }}>{Number(p.limits?.blogsPerMonth).toLocaleString()}</b> AI blog posts/mo <span style={{ color: "#9ca3af" }}>+ auto images</span></span></li>
+                )}
                 {feats.map((f) => <li key={f} style={featRow}><Check /> <span>{f}</span></li>)}
               </ul>
 

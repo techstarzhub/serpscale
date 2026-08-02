@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Menu, Moon, Sparkles, Sun, User, Settings, Palette, LogOut, KeyRound, Plus, Clock } from "lucide-react";
 import { useTheme } from "@/components/theme/theme-provider";
-import { useCurrentUser, displayName, roleLabel, trialDaysLeft } from "@/components/providers/user-provider";
+import { useCurrentUser, displayName, roleLabel, trialDaysLeft, useCan } from "@/components/providers/user-provider";
 import { UserAvatar } from "@/components/ui/user-avatar";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -49,6 +49,7 @@ export function Topbar({
   const pathname = usePathname();
   const { mode, toggleMode } = useTheme();
   const { user } = useCurrentUser();
+  const can = useCan();
   const title = TITLES.find((t) => t.match(pathname))?.title ?? "SEO Platform";
 
   return (
@@ -65,23 +66,27 @@ export function Topbar({
 
       <div className="flex items-center gap-1.5">
         <TrialPill />
-        {/* Primary action — always one click from anywhere */}
-        <Link
-          href="/dashboard/projects/new"
-          className="hidden items-center gap-2 rounded-full bg-gradient-to-r from-primary to-primary/85 py-1.5 pl-2 pr-4 text-sm font-semibold text-primary-foreground shadow-glow transition-all hover:-translate-y-0.5 hover:shadow-glow-lg active:translate-y-0 sm:inline-flex"
-        >
-          <span className="grid h-6 w-6 place-items-center rounded-full bg-white/20">
-            <Plus className="h-4 w-4" />
-          </span>
-          New Campaign
-        </Link>
-        <Link
-          href="/dashboard/projects/new"
-          aria-label="New campaign"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/85 text-primary-foreground shadow-glow transition-all hover:shadow-glow-lg sm:hidden"
-        >
-          <Plus className="h-[18px] w-[18px]" />
-        </Link>
+        {/* Primary action — only for roles allowed to create campaigns. */}
+        {can("projects.create") && (
+          <>
+            <Link
+              href="/dashboard/projects/new"
+              className="hidden items-center gap-2 rounded-full bg-gradient-to-r from-primary to-primary/85 py-1.5 pl-2 pr-4 text-sm font-semibold text-primary-foreground shadow-glow transition-all hover:-translate-y-0.5 hover:shadow-glow-lg active:translate-y-0 sm:inline-flex"
+            >
+              <span className="grid h-6 w-6 place-items-center rounded-full bg-white/20">
+                <Plus className="h-4 w-4" />
+              </span>
+              New Campaign
+            </Link>
+            <Link
+              href="/dashboard/projects/new"
+              aria-label="New campaign"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/85 text-primary-foreground shadow-glow transition-all hover:shadow-glow-lg sm:hidden"
+            >
+              <Plus className="h-[18px] w-[18px]" />
+            </Link>
+          </>
+        )}
 
         {/* Upgrade → org billing. Only the organization admin manages the plan. */}
         {user?.role === "ADMIN" && (

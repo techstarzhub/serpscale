@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { User, Palette, Lock, CreditCard, Users, Plug, Building2, Mail, Bell, KeyRound, Search, type LucideIcon } from "lucide-react";
+import { User, Palette, Lock, CreditCard, Users, Plug, Building2, Mail, Bell, KeyRound, Search, History, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCan } from "@/components/providers/user-provider";
 
@@ -20,6 +20,7 @@ const nav: { label: string; href: string; icon: LucideIcon; soon?: boolean; perm
   { label: "Email", href: "/dashboard/settings/email", icon: Mail, perm: "settings.manage" },
   { label: "Team", href: "/dashboard/settings/team", icon: Users, perm: "team.view" },
   { label: "Search activity", href: "/dashboard/settings/search-activity", icon: Search, perm: "team.manage" },
+  { label: "Activity log", href: "/dashboard/settings/activity", icon: History, perm: "team.manage" },
 ];
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {

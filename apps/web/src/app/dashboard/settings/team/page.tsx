@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Shield, Users, Plus, Trash2, Loader2, Check, UserPlus, Copy, KeyRound, Eye, Megaphone, Power } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Shield, Users, Plus, Trash2, Loader2, Check, UserPlus, Copy, KeyRound, Eye, Megaphone, Power, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,11 +11,13 @@ import { useCan, useCurrentUser, useLimit } from "@/components/providers/user-pr
 import { LockedFeature } from "@/components/ui/locked-feature";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { DropdownMenu } from "@/components/ui/dropdown-menu";
+import { UserAvatar } from "@/components/ui/user-avatar";
+import { Pagination } from "@/components/ui/pagination";
 
 interface PermItem { key: string; label: string }
 interface PermGroup { group: string; items: PermItem[] }
 interface Role { id: string; name: string; description: string | null; permissions: string[]; _count?: { users: number } }
-interface Member { id: string; email: string; name: string | null; role: string; isActive: boolean; customRole: { id: string; name: string } | null }
+interface Member { id: string; email: string; name: string | null; role: string; isActive: boolean; avatarUrl: string | null; customRole: { id: string; name: string } | null }
 
 export default function TeamPage() {
   const limit = useLimit();
@@ -191,8 +193,22 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
   const [campMember, setCampMember] = useState<Member | null>(null);
   const [campIds, setCampIds] = useState<Set<string>>(new Set());
   const [campSaving, setCampSaving] = useState(false);
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => { api.get<typeof orgProjects>("/team/projects").then(setOrgProjects).catch(() => {}); }, []);
+
+  useEffect(() => { setPage(1); }, [q, pageSize, members.length]);
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return members;
+    return members.filter((m) =>
+      [m.name || "", m.email || "", m.role, m.customRole?.name || ""].join(" ").toLowerCase().includes(needle),
+    );
+  }, [members, q]);
+  const paged = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
 
   async function openCampaigns(m: Member) {
     setCampMember(m);
@@ -301,13 +317,26 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
             </div>
           </div>
         )}
-        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
-          {members.map((m) => (
+        {members.length > 5 && (
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Search members by name, email or role…" className="h-9 pl-9" value={q} onChange={(e) => setQ(e.target.value)} />
+          </div>
+        )}
+        <div className="overflow-hidden rounded-xl border border-border">
+        <div className="divide-y divide-border">
+          {paged.length === 0 && (
+            <div className="px-3 py-8 text-center text-sm text-muted-foreground">No members match your search.</div>
+          )}
+          {paged.map((m) => (
             <div key={m.id} className="flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:gap-4">
               {/* Member identity */}
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">{m.name || (m.email ?? "").split("@")[0] || "Member"}</div>
-                <div className="truncate text-xs text-muted-foreground">{m.email}</div>
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <UserAvatar src={m.avatarUrl} className="h-9 w-9" />
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{m.name || (m.email ?? "").split("@")[0] || "Member"}</div>
+                  <div className="truncate text-xs text-muted-foreground">{m.email}</div>
+                </div>
               </div>
 
               {/* Role + status */}
@@ -381,6 +410,16 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
               )}
             </div>
           ))}
+        </div>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={filtered.length}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          pageSizeOptions={[10, 25, 50]}
+          label="members"
+        />
         </div>
       </CardContent>
     </Card>

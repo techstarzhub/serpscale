@@ -24,6 +24,78 @@ function Favicon({ domain }: { domain: string }) {
   );
 }
 
+type Pos = { x: number; y: number };
+
+/**
+ * Makes an element free-draggable and remembers where the user parked it
+ * (localStorage). The drag "handle" and the positioned element can differ —
+ * attach `targetRef` to the box being moved and `handleProps` to the grabbable
+ * area (e.g. a header). Movement is clamped to the viewport, a tiny threshold
+ * separates a click from a drag, and positions re-clamp on window resize.
+ */
+function useDraggable(storageKey: string, computeDefault: () => Pos) {
+  const [pos, setPos] = useState<Pos | null>(null);
+  const posRef = useRef<Pos | null>(null);
+  const targetRef = useRef<HTMLElement | null>(null);
+  const drag = useRef({ active: false, moved: false, px: 0, py: 0, ox: 0, oy: 0, w: 0, h: 0 });
+
+  const apply = useCallback((p: Pos) => { posRef.current = p; setPos(p); }, []);
+  const clamp = (x: number, y: number, w: number, h: number): Pos => ({
+    x: Math.min(Math.max(0, x), Math.max(0, window.innerWidth - w)),
+    y: Math.min(Math.max(0, y), Math.max(0, window.innerHeight - h)),
+  });
+
+  useEffect(() => {
+    let initial: Pos | null = null;
+    try { const s = localStorage.getItem(storageKey); if (s) initial = JSON.parse(s); } catch {}
+    apply(initial ?? computeDefault());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => {
+      const p = posRef.current, d = drag.current;
+      if (!p || !d.w) return;
+      apply(clamp(p.x, p.y, d.w, d.h));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    // Let real controls inside the handle (buttons) work without starting a drag.
+    if ((e.target as HTMLElement).closest("[data-no-drag]")) return;
+    const box = targetRef.current ?? (e.currentTarget as HTMLElement);
+    const r = box.getBoundingClientRect();
+    drag.current = { active: true, moved: false, px: e.clientX, py: e.clientY, ox: r.left, oy: r.top, w: r.width, h: r.height };
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d.active) return;
+    const dx = e.clientX - d.px, dy = e.clientY - d.py;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) d.moved = true;
+    apply(clamp(d.ox + dx, d.oy + dy, d.w, d.h));
+  };
+  const onPointerUp = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d.active) return;
+    d.active = false;
+    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    if (d.moved && posRef.current) {
+      try { localStorage.setItem(storageKey, JSON.stringify(posRef.current)); } catch {}
+    }
+  };
+
+  return {
+    pos,
+    targetRef,
+    justDragged: () => drag.current.moved,
+    handleProps: { onPointerDown, onPointerMove, onPointerUp },
+  };
+}
+
 export function CopilotWidget() {
   const { user } = useCurrentUser();
   const { projects } = useProjects();
@@ -43,6 +115,15 @@ export function CopilotWidget() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Both the launcher bubble and the open panel can be dragged anywhere and
+  // remember where they were parked. Defaults keep the familiar bottom-right spot.
+  const launcher = useDraggable("copilot:launcher-pos", () => ({ x: window.innerWidth - 56 - 20, y: window.innerHeight - 56 - 20 }));
+  const panel = useDraggable("copilot:panel-pos", () => {
+    const w = Math.min(400, window.innerWidth - 40);
+    const h = Math.min(600, window.innerHeight - 40);
+    return { x: window.innerWidth - w - 20, y: window.innerHeight - h - 20 };
+  });
 
   // Show only when the user actually has Copilot access (and campaigns to chat about).
   // Super admins run the platform, not campaigns.
@@ -156,13 +237,16 @@ export function CopilotWidget() {
 
   return (
     <>
-      {/* Launcher */}
+      {/* Launcher — draggable; a click still opens it, a drag just moves it. */}
       <button
-        onClick={() => setOpen((o) => !o)}
-        title="AI SEO Copilot"
+        ref={(el) => { launcher.targetRef.current = el; }}
+        {...launcher.handleProps}
+        onClick={() => { if (launcher.justDragged()) return; setOpen((o) => !o); }}
+        title="AI SEO Copilot — drag to move"
         aria-label="Open AI SEO Copilot"
+        style={launcher.pos ? { left: launcher.pos.x, top: launcher.pos.y, right: "auto", bottom: "auto" } : undefined}
         className={cn(
-          "copilot-pulse group fixed bottom-5 right-5 z-50 grid h-14 w-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg transition-all duration-300 hover:scale-105 hover:shadow-xl",
+          "copilot-pulse group fixed bottom-5 right-5 z-50 grid h-14 w-14 cursor-grab touch-none place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg transition-transform duration-300 hover:scale-105 hover:shadow-xl active:cursor-grabbing",
           open ? "pointer-events-none scale-0 opacity-0" : "scale-100 opacity-100",
         )}
       >
@@ -175,11 +259,16 @@ export function CopilotWidget() {
 
       {/* Panel */}
       {open && (
-        <div className="copilot-pop fixed bottom-5 right-5 z-50 flex h-[600px] max-h-[calc(100vh-2.5rem)] w-[400px] max-w-[calc(100vw-2.5rem)] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
-          {/* Header */}
-          <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+        <div
+          ref={(el) => { panel.targetRef.current = el; }}
+          style={panel.pos ? { left: panel.pos.x, top: panel.pos.y, right: "auto", bottom: "auto" } : undefined}
+          className="copilot-pop fixed bottom-5 right-5 z-50 flex h-[600px] max-h-[calc(100vh-2.5rem)] w-[400px] max-w-[calc(100vw-2.5rem)] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl"
+        >
+          {/* Header — drag handle for moving the whole panel. */}
+          <div {...panel.handleProps} className="flex cursor-grab touch-none items-center gap-3 border-b border-border px-4 py-3 active:cursor-grabbing">
             {active ? (
               <button
+                data-no-drag
                 onClick={backToList}
                 className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 title="Back to projects"
@@ -198,6 +287,7 @@ export function CopilotWidget() {
               </div>
             </div>
             <button
+              data-no-drag
               onClick={() => setOpen(false)}
               className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >

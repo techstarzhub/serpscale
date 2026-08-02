@@ -5,12 +5,16 @@ import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { RequirePermissions } from "../auth/decorators/require-permissions.decorator";
 import { PERMISSIONS } from "../auth/permissions";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
+import { AuditService } from "../auth/audit.service";
 import { BillingService } from "./billing.service";
 
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller("billing")
 export class BillingController {
-  constructor(private readonly billing: BillingService) {}
+  constructor(
+    private readonly billing: BillingService,
+    private readonly audit: AuditService,
+  ) {}
 
   private orgOf(user: AuthUser): string {
     if (!user.orgId) throw new ForbiddenException("No organization on this account");
@@ -60,40 +64,52 @@ export class BillingController {
 
   @Post("checkout")
   @RequirePermissions(PERMISSIONS.BILLING_MANAGE)
-  checkout(@CurrentUser() user: AuthUser, @Body() dto: { planId: string; gateway?: string; keywords?: number }) {
+  async checkout(@CurrentUser() user: AuthUser, @Body() dto: { planId: string; gateway?: string; keywords?: number }) {
     if (!dto?.planId) throw new BadRequestException("planId required");
-    return this.billing.createCheckout(this.orgOf(user), dto.planId, dto.gateway || "stripe", dto.keywords);
+    const res = await this.billing.createCheckout(this.orgOf(user), dto.planId, dto.gateway || "stripe", dto.keywords);
+    await this.audit.log(user, "billing.checkout", { target: dto.planId, metadata: { gateway: dto.gateway || "stripe", keywords: dto.keywords } });
+    return res;
   }
 
   @Post("trial")
   @RequirePermissions(PERMISSIONS.BILLING_MANAGE)
-  startTrial(@CurrentUser() user: AuthUser, @Body() dto: { planId: string }) {
+  async startTrial(@CurrentUser() user: AuthUser, @Body() dto: { planId: string }) {
     if (!dto?.planId) throw new BadRequestException("planId required");
-    return this.billing.startTrial(this.orgOf(user), dto.planId);
+    const res = await this.billing.startTrial(this.orgOf(user), dto.planId);
+    await this.audit.log(user, "billing.trial.start", { target: dto.planId });
+    return res;
   }
 
   // Webhook-less fallback: confirm + activate a PayPal subscription on return.
   @Post("confirm")
   @RequirePermissions(PERMISSIONS.BILLING_MANAGE)
-  confirm(@CurrentUser() user: AuthUser) {
-    return this.billing.confirmPending(this.orgOf(user));
+  async confirm(@CurrentUser() user: AuthUser) {
+    const res = await this.billing.confirmPending(this.orgOf(user));
+    await this.audit.log(user, "billing.confirm", {});
+    return res;
   }
 
   @Post("cancel")
   @RequirePermissions(PERMISSIONS.BILLING_MANAGE)
-  cancel(@CurrentUser() user: AuthUser) {
-    return this.billing.cancel(this.orgOf(user));
+  async cancel(@CurrentUser() user: AuthUser) {
+    const res = await this.billing.cancel(this.orgOf(user));
+    await this.audit.log(user, "billing.cancel", {});
+    return res;
   }
 
   @Post("schedule-change")
   @RequirePermissions(PERMISSIONS.BILLING_MANAGE)
-  scheduleChange(@CurrentUser() user: AuthUser, @Body() body: { planId: string; keywords?: number }) {
-    return this.billing.scheduleChange(this.orgOf(user), body.planId, body.keywords);
+  async scheduleChange(@CurrentUser() user: AuthUser, @Body() body: { planId: string; keywords?: number }) {
+    const res = await this.billing.scheduleChange(this.orgOf(user), body.planId, body.keywords);
+    await this.audit.log(user, "billing.change.schedule", { target: body.planId, metadata: { keywords: body.keywords } });
+    return res;
   }
 
   @Post("cancel-scheduled-change")
   @RequirePermissions(PERMISSIONS.BILLING_MANAGE)
-  cancelScheduledChange(@CurrentUser() user: AuthUser) {
-    return this.billing.cancelScheduledChange(this.orgOf(user));
+  async cancelScheduledChange(@CurrentUser() user: AuthUser) {
+    const res = await this.billing.cancelScheduledChange(this.orgOf(user));
+    await this.audit.log(user, "billing.change.cancel", {});
+    return res;
   }
 }

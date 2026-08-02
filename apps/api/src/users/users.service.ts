@@ -119,19 +119,21 @@ export class UsersService {
     }
     const ext = file.mimetype === "image/png" ? "png" : file.mimetype === "image/webp" ? "webp" : "jpg";
     const key = this.storage.key("avatars", userId, `${Date.now()}.${ext}`);
+    const prev = await this.prisma.user.findUnique({ where: { id: userId }, select: { avatarKey: true } });
     await this.storage.put(key, file.buffer, file.mimetype);
 
-    // remove the previous avatar (best effort)
-    const prev = await this.prisma.user.findUnique({ where: { id: userId } });
+    // Commit the DB pointer to the new object BEFORE deleting the old one. If the
+    // update failed after we'd removed the old key, the record would point at a
+    // deleted object and the avatar would 404. Order: put new → save → drop old.
+    const user = await this.prisma.user.update({ where: { id: userId }, data: { avatarKey: key } });
+
     if (prev?.avatarKey && prev.avatarKey !== key) {
       try {
-        await this.storage.remove(prev.avatarKey);
+        await this.storage.remove(prev.avatarKey); // best effort
       } catch {
         /* ignore */
       }
     }
-
-    const user = await this.prisma.user.update({ where: { id: userId }, data: { avatarKey: key } });
     return this.toPublic(user);
   }
 

@@ -5,6 +5,7 @@ import { GatewayService } from "./gateway.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { EmailService } from "../email/email.service";
 import { withFeatureLabels } from "../entitlements/entitlements.catalog";
+import { EntitlementsService } from "../entitlements/entitlements.service";
 import { renderInvoicePdf } from "./invoice";
 
 const WEB = () => process.env.WEB_ORIGIN || "http://localhost:3000";
@@ -19,6 +20,7 @@ export class BillingService {
     private readonly gw: GatewayService,
     private readonly notifications: NotificationsService,
     private readonly email: EmailService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   async publicPlans() {
@@ -170,10 +172,11 @@ export class BillingService {
   async usage(orgId: string) {
     const sub = await this.prisma.subscription.findUnique({ where: { orgId }, include: { plan: true } });
     const limits: any = { ...((sub?.plan?.limits as any) ?? {}), ...((sub?.limitOverrides as any) ?? {}) };
-    const [projects, seats, clients] = await Promise.all([
+    const [projects, seats, clients, blogs] = await Promise.all([
       this.prisma.project.count({ where: { orgId } }),
       this.prisma.user.count({ where: { orgId, isActive: true } }),
       this.prisma.client.count({ where: { orgId } }),
+      this.entitlements.blogUsageThisPeriod(orgId), // resets each renewal, not calendar month
     ]);
     // A cap of 0 is real (none allowed); only a missing/blank value is unlimited.
     const lim = (k: string) => {
@@ -188,6 +191,7 @@ export class BillingService {
       seats: { used: seats, limit: lim("seats") },
       clients: { used: clients, limit: lim("clients") },
       keywords: { limit: lim("keywords") },
+      blogs: { used: blogs, limit: lim("blogsPerMonth") },
     };
   }
 

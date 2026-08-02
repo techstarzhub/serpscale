@@ -5,9 +5,15 @@ import { RequirePermissions } from "../auth/decorators/require-permissions.decor
 import { PERMISSIONS as P } from "../auth/permissions";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
 import { AuditService } from "../auth/audit.service";
+import { FeaturesGuard } from "../entitlements/features.guard";
+import { RequireFeature } from "../entitlements/require-feature.decorator";
 import { ClientsService } from "./clients.service";
 
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+// The whole clients area is the "client_dashboards" plan feature — gated server-
+// side so a plan without it can't create/manage clients via the API (not just
+// hidden in the UI). Client-portal owners only exist under a plan that has it.
+@UseGuards(JwtAuthGuard, PermissionsGuard, FeaturesGuard)
+@RequireFeature("client_dashboards")
 @Controller("clients")
 export class ClientsController {
   constructor(private readonly clients: ClientsService, private readonly audit: AuditService) {}

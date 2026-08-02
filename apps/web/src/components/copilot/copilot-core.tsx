@@ -110,7 +110,7 @@ export interface StreamHandlers {
 export async function streamAuditFix(
   path: string,
   body: unknown,
-  h: { onToken: (full: string) => void; onDone: (full: string) => void; onError: () => void; signal?: AbortSignal },
+  h: { onToken: (full: string) => void; onDone: (full: string) => void; onError: (message?: string) => void; onStatus?: (message: string) => void; signal?: AbortSignal },
 ) {
   try {
     const res = await fetch(`${API_URL}${path}`, {
@@ -120,7 +120,14 @@ export async function streamAuditFix(
       body: JSON.stringify(body),
       signal: h.signal,
     });
-    if (!res.ok || !res.body) throw new Error("stream failed");
+    if (!res.ok) {
+      // Surface a real server message (e.g. plan limit reached) to the caller.
+      let message = "";
+      try { const d = await res.json(); message = Array.isArray(d?.message) ? d.message.join(", ") : d?.message; } catch { /* ignore */ }
+      h.onError(message || undefined);
+      return;
+    }
+    if (!res.body) { h.onError(); return; }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -136,7 +143,7 @@ export async function streamAuditFix(
       for (const chunk of chunks) {
         const line = chunk.split("\n").find((l) => l.startsWith("data:"));
         if (!line) continue;
-        let ev: { type: string; text?: string; full?: string };
+        let ev: { type: string; text?: string; full?: string; message?: string };
         try {
           ev = JSON.parse(line.slice(5).trim());
         } catch {
@@ -145,10 +152,12 @@ export async function streamAuditFix(
         if (ev.type === "token") {
           acc += ev.text ?? "";
           h.onToken(acc);
+        } else if (ev.type === "status") {
+          h.onStatus?.(ev.message ?? "");
         } else if (ev.type === "done") {
           full = ev.full ?? acc;
         } else if (ev.type === "error") {
-          h.onError();
+          h.onError(ev.message);
           return;
         }
       }

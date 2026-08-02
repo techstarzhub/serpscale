@@ -44,6 +44,7 @@ import {
 } from "@/components/providers/user-provider";
 import { useProjects } from "@/components/providers/projects-provider";
 import { CampaignRequestInput } from "@/components/access/campaign-request-input";
+import { CampaignInfo } from "@/components/layout/campaign-info";
 
 export function Sidebar({
   collapsed = false,
@@ -376,7 +377,10 @@ export function Sidebar({
                       className={cn(
                         "relative flex rounded-lg transition-colors",
                         rail ? "justify-center p-1" : "items-center gap-3 py-2 pl-2.5 pr-2.5",
-                        !rail && canArchive && "group-hover:pr-9",
+                        // Always leave room for the persistent info icon; widen on
+                        // hover when the archive button also slides in.
+                        !rail && "pr-9",
+                        !rail && canArchive && "group-hover:pr-14",
                         active ? "bg-primary/10" : "hover:bg-secondary",
                         isArchived && "opacity-70",
                       )}
@@ -399,21 +403,29 @@ export function Sidebar({
                         </span>
                       )}
                     </Link>
-                    {/* Archive / restore — sits over the row, revealed on hover */}
-                    {!rail && canArchive && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void setArchived(p.id, !isArchived);
-                        }}
-                        title={isArchived ? "Restore campaign" : "Archive campaign"}
-                        aria-label={isArchived ? "Restore campaign" : "Archive campaign"}
-                        className="absolute right-1.5 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground opacity-0 shadow-sm transition-all hover:bg-card hover:text-primary group-hover:opacity-100"
-                      >
-                        {isArchived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-                      </button>
+                    {!rail && (
+                      <>
+                        {/* Archive / restore — hover-only, sits just left of info */}
+                        {canArchive && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void setArchived(p.id, !isArchived);
+                            }}
+                            title={isArchived ? "Restore campaign" : "Archive campaign"}
+                            aria-label={isArchived ? "Restore campaign" : "Archive campaign"}
+                            className="absolute right-8 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground opacity-0 shadow-sm transition-all pointer-events-none hover:bg-card hover:text-primary group-hover:pointer-events-auto group-hover:opacity-100"
+                          >
+                            {isArchived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+                          </button>
+                        )}
+                        {/* Info card trigger — always visible, one per campaign */}
+                        <div className="absolute right-1.5 top-1/2 -translate-y-1/2">
+                          <CampaignInfo projectId={p.id} projectName={p.name} />
+                        </div>
+                      </>
                     )}
                   </div>
                 );

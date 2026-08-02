@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Sparkles, Star, X, FileText, Copy, Download, Check, PenLine, Trash2, Search, TrendingUp, RefreshCw } from "lucide-react";
+import { Loader2, Sparkles, Star, X, FileText, Copy, Download, Check, PenLine, Trash2, Search, TrendingUp, RefreshCw, Image as ImageIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,8 @@ interface InternalPage { url: string; title: string }
 
 const TONES = ["professional", "friendly", "authoritative", "conversational", "persuasive"];
 const field = "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary";
+// Compact search-volume label, e.g. 12,100 -> "12.1k".
+const fmtVol = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : String(v));
 
 export function ContentPanel({ project }: { project: Project }) {
   const [keywords, setKeywords] = useState<SavedKeyword[]>([]);
@@ -38,6 +40,13 @@ export function ContentPanel({ project }: { project: Project }) {
 
   const [blog, setBlog] = useState<string>("");
   const [generating, setGenerating] = useState(false);
+  const [withImages, setWithImages] = useState(true);
+  const [imageCount, setImageCount] = useState(1);
+  const [regenOpen, setRegenOpen] = useState(false);
+  const [reimaging, setReimaging] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [exporting, setExporting] = useState<"" | "pdf" | "doc">("");
+  const [imgStatus, setImgStatus] = useState<string>("");
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const [blogs, setBlogs] = useState<BlogRow[]>([]);
@@ -114,17 +123,60 @@ export function ContentPanel({ project }: { project: Project }) {
     loadKeywords();
   }
 
-  async function generate() {
+  async function generate(useImages: boolean = withImages) {
     const kws = allKeywords();
     if (!kws.length) return;
-    setGenerating(true); setBlog(""); setSaved(false);
+    setGenerating(true); setBlog(""); setSaved(false); setImgStatus("");
     await streamAuditFix(
       `/projects/${project.id}/blog/generate`,
-      { keywords: kws, title: title.trim() || undefined, tone, wordCount: words, instructions: instructions.trim() || undefined },
+      { keywords: kws, title: title.trim() || undefined, tone, wordCount: words, instructions: instructions.trim() || undefined, images: useImages, imageCount },
       {
         onToken: (t) => setBlog(t),
-        onDone: (t) => { setBlog(t); setGenerating(false); },
-        onError: () => { setBlog("Couldn't generate the blog right now. Please try again."); setGenerating(false); },
+        onStatus: (m) => setImgStatus(m),
+        onDone: (t) => { setBlog(t); setGenerating(false); setImgStatus(""); },
+        onError: (msg) => { setGenerating(false); setImgStatus(""); if (msg) alert(msg); else setBlog("Couldn't generate the blog right now. Please try again."); },
+      },
+    );
+  }
+
+  // URLs of images already embedded in the current draft.
+  function currentImageUrls(): string[] {
+    return [...blog.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map((m) => m[1]);
+  }
+
+  // Content-only regenerate: rewrite the text but KEEP the existing images
+  // (re-placed by the server — no new image API cost).
+  async function regenerateContent() {
+    const kws = allKeywords();
+    if (!kws.length) return;
+    const keepImages = currentImageUrls();
+    setGenerating(true); setBlog(""); setSaved(false); setImgStatus("");
+    await streamAuditFix(
+      `/projects/${project.id}/blog/generate`,
+      { keywords: kws, title: title.trim() || undefined, tone, wordCount: words, instructions: instructions.trim() || undefined, images: false, keepImages },
+      {
+        onToken: (t) => setBlog(t),
+        onStatus: (m) => setImgStatus(m),
+        onDone: (t) => { setBlog(t); setGenerating(false); setImgStatus(""); },
+        onError: (msg) => { setGenerating(false); setImgStatus(""); if (msg) alert(msg); else setBlog("Couldn't regenerate right now. Please try again."); },
+      },
+    );
+  }
+
+  // Regenerate ONLY the images for the current draft — keeps the text, so no
+  // writing-model cost, just the image API. `reimaging` drives the in-place
+  // "regenerating" animation over the existing images while it runs.
+  async function reimage() {
+    if (!blog) return;
+    setReimaging(true); setGenerating(true); setSaved(false); setImgStatus("Generating image…");
+    await streamAuditFix(
+      `/projects/${project.id}/blog/reimage`,
+      { content: blog, keywords: allKeywords(), imageCount },
+      {
+        onToken: () => {}, // no text tokens — only status + the final draft
+        onStatus: (m) => setImgStatus(m),
+        onDone: (t) => { if (t) setBlog(t); setGenerating(false); setReimaging(false); setImgStatus(""); },
+        onError: () => { setGenerating(false); setReimaging(false); setImgStatus(""); },
       },
     );
   }
@@ -139,13 +191,31 @@ export function ContentPanel({ project }: { project: Project }) {
   function copyBlog() {
     navigator.clipboard.writeText(blog).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {});
   }
-  function downloadBlog() {
-    const blobUrl = URL.createObjectURL(new Blob([blog], { type: "text/markdown" }));
+  function fileName(ext: string) {
+    const base = (title.trim() || blog.match(/^#\s+(.+)$/m)?.[1] || "blog-post").replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "blog-post";
+    return `${base}.${ext}`;
+  }
+  function triggerDownload(blob: Blob, name: string) {
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = blobUrl;
-    a.download = `${(title.trim() || "blog-post").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.md`;
-    a.click();
-    URL.revokeObjectURL(blobUrl);
+    a.href = url; a.download = name; a.click();
+    URL.revokeObjectURL(url);
+  }
+  function downloadMarkdown() {
+    triggerDownload(new Blob([blog], { type: "text/markdown" }), fileName("md"));
+  }
+  // PDF / Word are rendered server-side (Playwright for PDF, HTML-as-.doc for Word).
+  async function exportAs(format: "pdf" | "doc") {
+    if (!blog || exporting) return;
+    setExporting(format); setDownloadOpen(false);
+    try {
+      const blob = await api.postDownload(`/projects/${project.id}/blog/export`, { content: blog, title: title.trim() || undefined, format });
+      triggerDownload(blob, fileName(format));
+    } catch {
+      alert("Couldn't export the file right now. Please try again.");
+    } finally {
+      setExporting("");
+    }
   }
   async function openBlog(id: string) {
     const b = await api.get<{ title: string; content: string; keywords: string[] }>(`/projects/${project.id}/blogs/${id}`).catch(() => null);
@@ -168,124 +238,264 @@ export function ContentPanel({ project }: { project: Project }) {
   const readMin = Math.max(1, Math.round(wordCount / 200));
 
   return (
-    <div className="grid gap-3 lg:grid-cols-[320px_1fr] lg:items-start">
-      {/* Left: saved keywords + options — sticky so it stays in view while scrolling the draft */}
-      <div className="space-y-3 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:pr-1">
-        <Card>
-          <CardContent className="p-4">
-            <div className="mb-2 flex items-center gap-2">
-              <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary/10 text-primary"><Star className="h-4 w-4" /></span>
+    <div className="space-y-3">
+      {/* Regenerate choice — avoids re-spending on image API when only text is wanted. */}
+      {regenOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={() => setRegenOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-9 w-9 place-items-center rounded-lg bg-primary/10 text-primary"><RefreshCw className="h-4 w-4" /></span>
               <div>
-                <h4 className="text-sm font-semibold">Saved keywords</h4>
-                <p className="text-xs text-muted-foreground">Pick which to write about</p>
+                <h3 className="text-sm font-semibold leading-none">Regenerate</h3>
+                <p className="mt-1 text-xs text-muted-foreground">Images use paid AI credits — pick what to redo.</p>
               </div>
             </div>
-            {loadingKw ? (
-              <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
-            ) : keywords.length === 0 ? (
-              <p className="py-3 text-xs text-muted-foreground">No saved keywords yet. Go to the Keywords tab, research ideas, and hit the star to save them here.</p>
-            ) : (
-              <div className="max-h-72 space-y-1 overflow-y-auto">
-                {keywords.map((k) => (
-                  <div key={k.id} className={cn("flex items-center gap-2 rounded-lg border px-2 py-1.5 transition-colors", selected.has(k.keyword) ? "border-primary/50 bg-primary/5" : "border-border")}>
-                    <button onClick={() => toggle(k.keyword)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                      <span className={cn("grid h-4 w-4 shrink-0 place-items-center rounded border", selected.has(k.keyword) ? "border-primary bg-primary text-primary-foreground" : "border-border")}>
-                        {selected.has(k.keyword) && <Check className="h-3 w-3" />}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm">{k.keyword}</span>
-                      {k.volume != null && <span className="shrink-0 text-[10px] text-muted-foreground">{k.volume.toLocaleString()}</span>}
-                    </button>
-                    <button onClick={() => removeKeyword(k)} title="Remove" className="text-muted-foreground hover:text-destructive"><X className="h-3.5 w-3.5" /></button>
-                  </div>
-                ))}
+            <div className="mt-4 space-y-2">
+              <button
+                type="button"
+                disabled={totalSelected === 0}
+                onClick={() => { setRegenOpen(false); regenerateContent(); }}
+                className="flex w-full items-center gap-3 rounded-xl border border-border p-3 text-left transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-50"
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-secondary text-foreground"><FileText className="h-4 w-4" /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">Content only</span>
+                  <span className="block text-[11px] text-muted-foreground">Rewrites text · keeps your images</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setRegenOpen(false); reimage(); }}
+                className="flex w-full items-center gap-3 rounded-xl border border-border p-3 text-left transition-colors hover:bg-secondary"
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-secondary text-foreground"><ImageIcon className="h-4 w-4" /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">Images only</span>
+                  <span className="block text-[11px] text-muted-foreground">Keeps the text · makes {imageCount} new image{imageCount > 1 ? "s" : ""}</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={totalSelected === 0}
+                onClick={() => { setRegenOpen(false); generate(true); }}
+                className="flex w-full items-center gap-3 rounded-xl border border-primary/40 bg-primary/5 p-3 text-left transition-colors hover:bg-primary/10 disabled:pointer-events-none disabled:opacity-50"
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary/15 text-primary"><RefreshCw className="h-4 w-4" /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">Everything</span>
+                  <span className="block text-[11px] text-muted-foreground">New text + {imageCount} new image{imageCount > 1 ? "s" : ""}</span>
+                </span>
+              </button>
+            </div>
+            <button type="button" onClick={() => setRegenOpen(false)} className="mt-3 w-full rounded-lg py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Top bar: every article setting + the Generate action live here, so the
+          sidebar below is purely for picking keywords. */}
+      <Card>
+        <CardContent className="space-y-2.5 p-3">
+          <div className="flex flex-col gap-2.5 lg:flex-row lg:flex-wrap lg:items-end">
+            <div className="min-w-0 flex-1 lg:min-w-[180px]">
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Title / angle (optional)</label>
+              <Input className="h-9" placeholder="e.g. 10 tips for…" value={title} onChange={(e) => setTitle(e.target.value)} />
+            </div>
+            <div className="w-full sm:w-36">
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Tone</label>
+              <select className={cn(field, "h-9 capitalize")} value={tone} onChange={(e) => setTone(e.target.value)}>
+                {TONES.map((t) => <option key={t} value={t} className="capitalize">{t}</option>)}
+              </select>
+            </div>
+            <div className="w-full sm:w-24">
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Length</label>
+              <select className={cn(field, "h-9")} value={words} onChange={(e) => setWords(Number(e.target.value))}>
+                {[600, 900, 1200, 1500, 2000].map((w) => <option key={w} value={w}>{w}w</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted-foreground">AI images</label>
+              <button
+                type="button"
+                onClick={() => setWithImages((v) => !v)}
+                title={withImages ? "AI images on" : "AI images off"}
+                className={cn("flex h-9 items-center gap-2 rounded-lg border px-2.5 text-sm transition-colors", withImages ? "border-primary/40 bg-primary/5" : "border-border hover:bg-secondary")}
+              >
+                <ImageIcon className={cn("h-4 w-4", withImages ? "text-primary" : "text-muted-foreground")} />
+                <span className={cn("relative h-5 w-9 rounded-full transition-colors", withImages ? "bg-primary" : "bg-border")}>
+                  <span className={cn("absolute top-0.5 h-4 w-4 rounded-full bg-background shadow transition-all", withImages ? "left-[1.125rem]" : "left-0.5")} />
+                </span>
+              </button>
+            </div>
+            {withImages && (
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-muted-foreground">Count</label>
+                <div className="flex h-9 items-center rounded-lg border border-border bg-card p-0.5">
+                  {[1, 2, 3].map((n) => (
+                    <button key={n} type="button" onClick={() => setImageCount(n)} className={cn("h-7 w-7 rounded-md text-xs font-semibold tabular-nums transition-colors", imageCount === n ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{n}</button>
+                  ))}
+                </div>
               </div>
             )}
+            <Button
+              className="h-9 gap-2 px-5 font-semibold shadow-sm"
+              onClick={() => (blog ? setRegenOpen(true) : generate())}
+              disabled={generating || (!blog && totalSelected === 0)}
+            >
+              {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : blog ? <RefreshCw className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+              {generating ? (imgStatus || "Writing…") : blog ? "Regenerate" : totalSelected ? `Generate · ${totalSelected} kw` : "Generate"}
+            </Button>
+          </div>
+
+          {/* Optional freeform instructions — full-width under the controls. */}
+          <div className="relative">
+            <Sparkles className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="h-9 pl-8"
+              placeholder="Extra AI instructions (optional) — e.g. add a comparison, mention our free trial, short paragraphs…"
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              maxLength={1500}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Sidebar (keywords + drafts) + the editor */}
+      <div className="grid gap-3 lg:grid-cols-[300px_1fr] lg:items-start">
+        <div className="space-y-3 lg:sticky lg:top-4 lg:self-start">
+        {/* Box 1 — saved keywords (scrolls internally when long) */}
+        <Card>
+          <CardContent className="p-0">
+            <div className="flex items-center justify-between gap-2 border-b border-border bg-secondary/40 px-4 py-3">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary/10 text-primary shadow-sm"><Star className="h-4 w-4" /></span>
+                <div>
+                  <h4 className="text-sm font-semibold leading-none">Saved keywords</h4>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {selected.size > 0 ? <span className="font-medium text-primary">{selected.size} selected</span> : "Tap to pick topics"}
+                  </p>
+                </div>
+              </div>
+              {selected.size > 0 && (
+                <button
+                  onClick={() => setSelected(new Set())}
+                  className="shrink-0 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="max-h-[300px] overflow-y-auto p-2">
+              {loadingKw ? (
+                <div className="flex items-center gap-2 px-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+              ) : keywords.length === 0 ? (
+                <p className="m-1 rounded-xl border border-dashed border-border p-5 text-center text-xs leading-relaxed text-muted-foreground">
+                  No saved keywords yet.<br />Research in the <span className="font-medium text-foreground">Keywords</span> tab and tap ★ to save them here.
+                </p>
+              ) : (
+                <div className="space-y-0.5">
+                  {keywords.map((k) => {
+                    const on = selected.has(k.keyword);
+                    return (
+                      <div
+                        key={k.id}
+                        className={cn(
+                          "group flex items-center gap-2.5 rounded-lg border px-2.5 py-2 transition-colors",
+                          on ? "border-primary/40 bg-primary/5" : "border-transparent hover:bg-secondary/60",
+                        )}
+                      >
+                        <button onClick={() => toggle(k.keyword)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
+                          <span className={cn("grid h-4 w-4 shrink-0 place-items-center rounded border transition-colors", on ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40")}>
+                            {on && <Check className="h-3 w-3" />}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-sm">{k.keyword}</span>
+                        </button>
+                        {k.volume != null && (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-secondary px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground" title="Monthly searches">
+                            <Search className="h-2.5 w-2.5" />{fmtVol(k.volume)}
+                          </span>
+                        )}
+                        <button onClick={() => removeKeyword(k)} title="Remove keyword" className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
 
+        {/* Box 2 — whole searches (scrolls internally when long) */}
         {searches.length > 0 && (
           <Card>
-            <CardContent className="p-4">
-              <div className="mb-2 flex items-center gap-2">
-                <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary/10 text-primary"><Search className="h-4 w-4" /></span>
-                <div>
-                  <h4 className="text-sm font-semibold">Saved searches</h4>
-                  <p className="text-xs text-muted-foreground">Add a whole search — every keyword it found</p>
+            <CardContent className="p-0">
+              <div className="flex items-center justify-between gap-2 border-b border-border bg-secondary/40 px-4 py-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary/10 text-primary shadow-sm"><Search className="h-4 w-4" /></span>
+                  <div>
+                    <h4 className="text-sm font-semibold leading-none">Whole searches</h4>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {selectedSearches.size > 0 ? <span className="font-medium text-primary">{selectedSearches.size} added</span> : "Adds every keyword found"}
+                    </p>
+                  </div>
                 </div>
+                {selectedSearches.size > 0 && (
+                  <button
+                    onClick={() => setSelectedSearches(new Set())}
+                    className="shrink-0 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
-              <div className="max-h-60 space-y-1 overflow-y-auto">
-                {searches.map((s) => {
-                  const on = selectedSearches.has(s.id);
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => toggleSearch(s)}
-                      className={cn("flex w-full items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors", on ? "border-primary/50 bg-primary/5" : "border-border hover:bg-secondary/40")}
-                    >
-                      <span className={cn("grid h-4 w-4 shrink-0 place-items-center rounded border", on ? "border-primary bg-primary text-primary-foreground" : "border-border")}>
-                        {loadingSearch === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : on && <Check className="h-3 w-3" />}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm">{s.term}</span>
-                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                        <TrendingUp className="h-3 w-3" />{s.keywordCount}
-                      </span>
-                    </button>
-                  );
-                })}
+              <div className="max-h-[240px] overflow-y-auto p-2">
+                <div className="space-y-0.5">
+                  {searches.map((s) => {
+                    const on = selectedSearches.has(s.id);
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => toggleSearch(s)}
+                        className={cn(
+                          "flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors",
+                          on ? "border-primary/40 bg-primary/5" : "border-transparent hover:bg-secondary/60",
+                        )}
+                      >
+                        <span className={cn("grid h-4 w-4 shrink-0 place-items-center rounded border", on ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40")}>
+                          {loadingSearch === s.id ? <Loader2 className="h-3 w-3 animate-spin" /> : on && <Check className="h-3 w-3" />}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-sm">{s.term}</span>
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-secondary px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground" title="Keywords found in this search">
+                          <TrendingUp className="h-2.5 w-2.5" />{s.keywordCount} kw
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </CardContent>
           </Card>
         )}
 
-        <Card>
-          <CardContent className="space-y-3 p-4">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">Title / angle (optional)</label>
-              <Input className="h-9" placeholder="e.g. 10 tips for…" value={title} onChange={(e) => setTitle(e.target.value)} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Tone</label>
-                <select className={cn(field, "h-9 capitalize")} value={tone} onChange={(e) => setTone(e.target.value)}>
-                  {TONES.map((t) => <option key={t} value={t} className="capitalize">{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Length (words)</label>
-                <select className={cn(field, "h-9")} value={words} onChange={(e) => setWords(Number(e.target.value))}>
-                  {[600, 900, 1200, 1500, 2000].map((w) => <option key={w} value={w}>{w}</option>)}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                <Sparkles className="h-3.5 w-3.5" /> AI instructions (optional)
-              </label>
-              <textarea
-                className={cn(field, "min-h-[76px] resize-y")}
-                placeholder="Anything specific? e.g. include a comparison, mention our free trial, target beginners, add a call-to-action at the end, keep paragraphs short…"
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-                maxLength={1500}
-              />
-              <div className="mt-0.5 text-right text-[10px] text-muted-foreground">{instructions.length}/1500</div>
-            </div>
-            <Button className="w-full" onClick={generate} disabled={generating || totalSelected === 0}>
-              {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {generating ? "Writing…" : `Generate blog${totalSelected ? ` (${totalSelected} kw)` : ""}`}
-            </Button>
-          </CardContent>
-        </Card>
-
         {blogs.length > 0 && (
           <Card>
-            <CardContent className="p-4">
-              <h4 className="mb-2 text-sm font-semibold">Saved drafts</h4>
-              <div className="space-y-1">
+            <CardContent className="p-0">
+              <div className="flex items-center gap-2.5 border-b border-border bg-secondary/40 px-4 py-3">
+                <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary/10 text-primary shadow-sm"><FileText className="h-4 w-4" /></span>
+                <div>
+                  <h4 className="text-sm font-semibold leading-none">Saved drafts</h4>
+                  <p className="mt-1 text-[11px] text-muted-foreground">{blogs.length} saved</p>
+                </div>
+              </div>
+              <div className="space-y-0.5 p-2">
                 {blogs.map((b) => (
-                  <div key={b.id} className="flex items-center gap-2 rounded-lg border border-border px-2 py-1.5">
-                    <button onClick={() => openBlog(b.id)} className="min-w-0 flex-1 truncate text-left text-sm hover:text-primary">{b.title}</button>
-                    <button onClick={() => deleteBlog(b.id)} title="Delete" className="text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                  <div key={b.id} className="group flex items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-secondary/60">
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-secondary text-muted-foreground"><FileText className="h-3.5 w-3.5" /></span>
+                    <button onClick={() => openBlog(b.id)} className="min-w-0 flex-1 truncate text-left text-sm font-medium transition-colors hover:text-primary">{b.title}</button>
+                    <button onClick={() => deleteBlog(b.id)} title="Delete" className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                   </div>
                 ))}
               </div>
@@ -308,22 +518,78 @@ export function ContentPanel({ project }: { project: Project }) {
           </div>
           {blog && !generating && (
             <div className="flex items-center gap-1.5">
-              <Button variant="outline" size="sm" onClick={generate} disabled={totalSelected === 0} title={totalSelected === 0 ? "Select at least one keyword" : "Generate a fresh version"}><RefreshCw className="h-4 w-4" /> Regenerate</Button>
+              <Button variant="outline" size="sm" onClick={() => setRegenOpen(true)} title="Regenerate content, images, or both"><RefreshCw className="h-4 w-4" /> Regenerate</Button>
               <Button variant="outline" size="sm" onClick={copyBlog}>{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} {copied ? "Copied" : "Copy"}</Button>
-              <Button variant="outline" size="sm" onClick={downloadBlog}><Download className="h-4 w-4" /> .md</Button>
+              <div className="relative">
+                <Button variant="outline" size="sm" onClick={() => setDownloadOpen((o) => !o)} disabled={!!exporting}>
+                  {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  {exporting ? (exporting === "pdf" ? "PDF…" : "Word…") : "Download"}
+                </Button>
+                {downloadOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setDownloadOpen(false)} />
+                    <div className="absolute right-0 z-50 mt-1.5 min-w-[11rem] overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-xl">
+                      {([
+                        { key: "pdf", label: "PDF document", sub: ".pdf", run: () => exportAs("pdf") },
+                        { key: "doc", label: "Word document", sub: ".doc", run: () => exportAs("doc") },
+                        { key: "md", label: "Markdown", sub: ".md", run: () => { setDownloadOpen(false); downloadMarkdown(); } },
+                      ] as const).map((o) => (
+                        <button key={o.key} type="button" onClick={o.run} className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-secondary">
+                          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span className="flex-1 font-medium">{o.label}</span>
+                          <span className="text-[11px] text-muted-foreground">{o.sub}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
               <Button size="sm" onClick={saveBlog} disabled={saved}>{saved ? <Check className="h-4 w-4" /> : <FileText className="h-4 w-4" />} {saved ? "Saved" : "Save"}</Button>
             </div>
           )}
         </div>
         {!blog && !generating ? (
-          <div className="flex flex-col items-center gap-3 p-4 py-16 text-center">
-            <span className="grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary"><PenLine className="h-7 w-7" /></span>
-            <h3 className="font-heading text-lg font-semibold">Generate SEO blog content</h3>
-            <p className="max-w-md text-sm text-muted-foreground">Pick individual saved keywords or add a whole saved search on the left, tweak the tone/length, and hit Generate. You&apos;ll get a full, structured, publish-ready draft — with your target keywords highlighted (hover for volume) and internal links to your own pages — that you can edit, copy, download or save.</p>
+          <div className="flex flex-col items-center gap-4 p-6 py-16 text-center">
+            <span className="grid h-16 w-16 place-items-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/10"><PenLine className="h-8 w-8" /></span>
+            <div className="space-y-1.5">
+              <h3 className="font-heading text-lg font-semibold">Write a publish-ready blog</h3>
+              <p className="mx-auto max-w-sm text-sm text-muted-foreground">Pick your target keywords on the left, set the tone and length, and hit Generate — a full, structured draft appears here in seconds.</p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {[
+                { icon: <Star className="h-3 w-3" />, label: "Keyword-optimised" },
+                { icon: <TrendingUp className="h-3 w-3" />, label: "Internal links" },
+                { icon: <ImageIcon className="h-3 w-3" />, label: "AI images" },
+              ].map((f) => (
+                <span key={f.label} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                  {f.icon}{f.label}
+                </span>
+              ))}
+            </div>
           </div>
         ) : (
           <>
-            <BlogEditor value={blog} onChange={setBlog} vols={volMap} internalPages={internalPages} generating={generating} domain={project.domain} />
+            {imgStatus && (
+              <div className="flex items-center gap-3 border-b border-border bg-primary/5 px-4 py-2.5">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <ImageIcon className="h-4 w-4 animate-pulse" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                    {imgStatus}
+                    <span className="flex gap-0.5">
+                      <span className="h-1 w-1 animate-bounce rounded-full bg-primary [animation-delay:-0.3s]" />
+                      <span className="h-1 w-1 animate-bounce rounded-full bg-primary [animation-delay:-0.15s]" />
+                      <span className="h-1 w-1 animate-bounce rounded-full bg-primary" />
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-secondary">
+                    <div className="h-full w-1/2 animate-pulse rounded-full bg-primary/70" />
+                  </div>
+                </div>
+              </div>
+            )}
+            <BlogEditor value={blog} onChange={setBlog} vols={volMap} internalPages={internalPages} generating={generating} domain={project.domain} projectId={project.id} imagesBusy={reimaging} />
             {volMap.size > 0 && (
               <div className="flex items-center gap-2 border-t border-border px-4 py-2 text-xs text-muted-foreground">
                 <mark className="rounded bg-primary/15 px-1 font-medium text-primary">keyword</mark>
@@ -333,6 +599,7 @@ export function ContentPanel({ project }: { project: Project }) {
           </>
         )}
       </Card>
+      </div>
     </div>
   );
 }

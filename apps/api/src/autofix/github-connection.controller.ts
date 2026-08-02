@@ -6,6 +6,7 @@ import { PERMISSIONS } from "../auth/permissions";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 import { assertProjectAccess } from "../projects/access";
+import { AuditService } from "../auth/audit.service";
 import { GithubConnectionService, type ConnectInput } from "./github-connection.service";
 
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -15,6 +16,7 @@ export class GithubConnectionController {
   constructor(
     private readonly connections: GithubConnectionService,
     private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
   ) {}
 
   private async assertAccess(user: AuthUser, projectId: string) {
@@ -32,12 +34,16 @@ export class GithubConnectionController {
   @Post()
   async connect(@CurrentUser() user: AuthUser, @Param("projectId") projectId: string, @Body() body: ConnectInput) {
     await this.assertAccess(user, projectId);
-    return this.connections.connect(projectId, body);
+    const res = await this.connections.connect(projectId, body);
+    await this.audit.log(user, "github.connect", { target: projectId });
+    return res;
   }
 
   @Delete()
   async disconnect(@CurrentUser() user: AuthUser, @Param("projectId") projectId: string) {
     await this.assertAccess(user, projectId);
-    return this.connections.disconnect(projectId);
+    const res = await this.connections.disconnect(projectId);
+    await this.audit.log(user, "github.disconnect", { target: projectId });
+    return res;
   }
 }

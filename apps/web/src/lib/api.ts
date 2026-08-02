@@ -56,6 +56,20 @@ export const api = {
     if (!res.ok) throw new Error("Could not download the file");
     return res.blob();
   },
+  // POST a JSON body and get a binary file back (e.g. PDF/Word export), with one
+  // silent refresh on 401. Returns a Blob the caller can turn into a download.
+  postDownload: async (path: string, body: unknown): Promise<Blob> => {
+    const opts = () => ({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include" as const,
+      body: JSON.stringify(body),
+    });
+    let res = await fetch(`${API_URL}${path}`, opts());
+    if (res.status === 401 && (await tryRefresh())) res = await fetch(`${API_URL}${path}`, opts());
+    if (!res.ok) throw new Error("Could not export the file");
+    return res.blob();
+  },
   // Multipart upload (do NOT set Content-Type - the browser adds the boundary).
   upload: async <T>(path: string, formData: FormData) => {
     const res = await fetch(`${API_URL}${path}`, {

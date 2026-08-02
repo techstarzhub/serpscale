@@ -7,12 +7,18 @@ import { PERMISSIONS as P } from "../auth/permissions";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
 import { FeaturesGuard } from "../entitlements/features.guard";
 import { RequireFeature } from "../entitlements/require-feature.decorator";
+import { AuditService } from "../auth/audit.service";
+import { EntitlementsService } from "../entitlements/entitlements.service";
 import { ContentService } from "./content.service";
 
 @UseGuards(JwtAuthGuard, PermissionsGuard, FeaturesGuard)
 @Controller("projects")
 export class ContentController {
-  constructor(private readonly content: ContentService) {}
+  constructor(
+    private readonly content: ContentService,
+    private readonly audit: AuditService,
+    private readonly entitlements: EntitlementsService,
+  ) {}
 
   // ---- Saved keywords ----
   @Get(":id/keywords/saved")
@@ -23,18 +29,22 @@ export class ContentController {
 
   @Post(":id/keywords/saved")
   @RequirePermissions(P.KEYWORDS_RESEARCH)
-  saveKeyword(
+  async saveKeyword(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
     @Body() dto: { keyword?: string; volume?: number; difficulty?: number; cpc?: number },
   ) {
-    return this.content.saveKeyword(user, id, dto);
+    const res = await this.content.saveKeyword(user, id, dto);
+    await this.audit.log(user, "content.keyword.save", { target: dto?.keyword ?? undefined, metadata: { projectId: id } });
+    return res;
   }
 
   @Delete(":id/keywords/saved/:kid")
   @RequirePermissions(P.KEYWORDS_RESEARCH)
-  removeKeyword(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("kid") kid: string) {
-    return this.content.removeKeyword(user, id, kid);
+  async removeKeyword(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("kid") kid: string) {
+    const res = await this.content.removeKeyword(user, id, kid);
+    await this.audit.log(user, "content.keyword.remove", { target: kid, metadata: { projectId: id } });
+    return res;
   }
 
   // AI keyword advisor — real data + AI prioritisation for what to target next.
@@ -107,15 +117,19 @@ export class ContentController {
   @Post(":id/blogs")
   @RequirePermissions(P.KEYWORDS_RESEARCH)
   @RequireFeature("content")
-  saveBlog(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { title?: string; content?: string; keywords?: string[] }) {
-    return this.content.saveBlog(user, id, dto);
+  async saveBlog(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { title?: string; content?: string; keywords?: string[] }) {
+    const res = await this.content.saveBlog(user, id, dto);
+    await this.audit.log(user, "content.blog.save", { target: dto?.title ?? undefined, metadata: { projectId: id } });
+    return res;
   }
 
   @Delete(":id/blogs/:bid")
   @RequirePermissions(P.KEYWORDS_RESEARCH)
   @RequireFeature("content")
-  removeBlog(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("bid") bid: string) {
-    return this.content.removeBlog(user, id, bid);
+  async removeBlog(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("bid") bid: string) {
+    const res = await this.content.removeBlog(user, id, bid);
+    await this.audit.log(user, "content.blog.delete", { target: bid, metadata: { projectId: id } });
+    return res;
   }
 
   // Generate a blog from selected keywords — streamed token-by-token over SSE.
@@ -125,12 +139,21 @@ export class ContentController {
   async generate(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
-    @Body() dto: { keywords?: string[]; title?: string; tone?: string; wordCount?: number; instructions?: string },
+    @Body() dto: { keywords?: string[]; title?: string; tone?: string; wordCount?: number; instructions?: string; images?: boolean; imageCount?: number; keepImages?: string[] },
     @Res() res: Response,
   ) {
     if (!Array.isArray(dto?.keywords) || dto.keywords.length === 0) {
       throw new BadRequestException("Select at least one keyword.");
     }
+    // Enforce the plan's monthly blog-generation cap BEFORE streaming (image-only
+    // regenerations don't count — this is for fresh writes). Throws 403 with a
+    // clear upgrade message; headers aren't flushed yet so it returns cleanly.
+    await this.entitlements.assertBlogQuota(user.orgId);
+    // Record usage UP-FRONT (right after the quota check), before streaming — so the
+    // generation still counts toward the monthly cap even if the client disconnects
+    // mid-stream. Otherwise a user could bypass the limit by aborting each request.
+    // This also narrows the check→count concurrency window to milliseconds.
+    await this.audit.log(user, "content.blog.generate", { target: dto?.title ?? undefined, metadata: { projectId: id, keywords: dto.keywords.length } });
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
@@ -144,5 +167,57 @@ export class ContentController {
     } finally {
       res.end();
     }
+  }
+
+  // Regenerate ONLY the images for an existing draft (keeps the text) — streamed.
+  @Post(":id/blog/reimage")
+  @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("content")
+  async reimage(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body() dto: { content?: string; keywords?: string[]; imageCount?: number },
+    @Res() res: Response,
+  ) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+    try {
+      for await (const ev of this.content.reimageBlog(user, id, dto)) {
+        res.write(`data: ${JSON.stringify(ev)}\n\n`);
+      }
+      await this.audit.log(user, "content.image.generate", { target: "reimage", metadata: { projectId: id, count: dto?.imageCount ?? 1 } });
+    } catch {
+      res.write(`data: ${JSON.stringify({ type: "error", message: "Couldn't regenerate images right now." })}\n\n`);
+    } finally {
+      res.end();
+    }
+  }
+
+  // Download a draft as PDF or Word (.doc).
+  @Post(":id/blog/export")
+  @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("content")
+  async exportBlog(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body() dto: { content?: string; title?: string; format?: string },
+    @Res() res: Response,
+  ) {
+    const { buffer, filename, contentType } = await this.content.exportBlog(user, id, dto);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
+
+  // Generate a single AI image from a prompt (editor's "Generate image" button).
+  @Post(":id/blog/image")
+  @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("content")
+  async blogImage(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { prompt?: string; aspectRatio?: string }) {
+    const res = await this.content.generateImage(user, id, dto);
+    await this.audit.log(user, "content.image.generate", { target: (dto?.prompt ?? "").slice(0, 80), metadata: { projectId: id } });
+    return res;
   }
 }

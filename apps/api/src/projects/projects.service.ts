@@ -80,14 +80,20 @@ export class ProjectsService {
     if (p.has(PERMISSIONS.PROJECTS_VIEW)) {
       return this.prisma.project.findMany({ where: { orgId: user.orgId }, orderBy: { createdAt: "desc" } });
     }
-    // "View assigned projects" → only the campaigns assigned to this member.
+    // "View assigned projects" → campaigns assigned to this member, PLUS any they
+    // created themselves (a creator must always see their own campaign even with
+    // only assigned-scope, otherwise a new campaign they add vanishes).
     if (p.has(PERMISSIONS.PROJECTS_VIEW_ASSIGNED)) {
       return this.prisma.project.findMany({
-        where: { orgId: user.orgId, members: { some: { id: user.id } } },
+        where: { orgId: user.orgId, OR: [{ members: { some: { id: user.id } } }, { createdById: user.id }] },
         orderBy: { createdAt: "desc" },
       });
     }
-    return [];
+    // No view permission, but a creator can still see the campaigns they made.
+    return this.prisma.project.findMany({
+      where: { orgId: user.orgId, createdById: user.id },
+      orderBy: { createdAt: "desc" },
+    });
   }
 
   async get(user: AuthUser, id: string): Promise<Project> {
@@ -95,6 +101,30 @@ export class ProjectsService {
     if (!project) throw new NotFoundException("Project not found");
     await this.assertAccess(user, project);
     return project;
+  }
+
+  // Lightweight campaign summary for the sidebar hover card: who created it, when,
+  // and the members explicitly assigned to it (with signed avatars). Fetched
+  // lazily on hover so the main project list stays cheap.
+  async meta(user: AuthUser, id: string) {
+    const project = await this.get(user, id); // enforces campaign access
+    const [creator, members] = await Promise.all([
+      project.createdById
+        ? this.prisma.user.findUnique({ where: { id: project.createdById }, select: { id: true, name: true, email: true, avatarKey: true } })
+        : Promise.resolve(null),
+      this.prisma.user.findMany({
+        where: { assignedProjects: { some: { id } }, isActive: true },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, name: true, email: true, role: true, avatarKey: true, customRole: { select: { name: true } } },
+      }),
+    ]);
+    return {
+      createdAt: project.createdAt,
+      createdBy: creator
+        ? { id: creator.id, name: creator.name, email: creator.email, avatarUrl: creator.avatarKey ? await this.storage.signedUrl(creator.avatarKey) : null }
+        : null,
+      members: await Promise.all(members.map((u) => this.stripMember(u))),
+    };
   }
 
   // ---- Campaign member assignment (who can access this campaign) ----
@@ -249,7 +279,21 @@ export class ProjectsService {
     return { ok: true };
   }
 
-  async create(user: AuthUser, input: { name: string; domain: string; enabledTabs?: string[] }) {
+  // Keep a campaign's chosen Google account only if that email is actually a
+  // connected Google integration for this owner; otherwise fall back to null
+  // (auto-detect by domain). Stops a bogus/stale account from being persisted.
+  private async resolveGoogleAccount(user: AuthUser, email?: string | null): Promise<string | null> {
+    const wanted = (email ?? "").trim();
+    if (!wanted) return null;
+    const ownerKey = user.orgId ?? `user:${user.id}`;
+    const match = await this.prisma.integration.findFirst({
+      where: { ownerKey, provider: "google", accountEmail: wanted },
+      select: { accountEmail: true },
+    });
+    return match?.accountEmail ?? null;
+  }
+
+  async create(user: AuthUser, input: { name: string; domain: string; enabledTabs?: string[]; googleAccountEmail?: string }) {
     const domain = cleanDomain(input.domain);
     if (!domain || domain.length < 3) throw new BadRequestException("A valid domain is required");
     if (isInternalDomain(domain)) throw new BadRequestException("That domain is not allowed.");
@@ -258,6 +302,7 @@ export class ProjectsService {
     const enabledTabs = Array.isArray(input.enabledTabs)
       ? [...new Set(input.enabledTabs.filter((t) => VALID_TABS.includes(t)))]
       : [];
+    const googleAccountEmail = await this.resolveGoogleAccount(user, input.googleAccountEmail);
     const orgId = user.orgId ?? null;
     if (orgId) {
       const ent = await this.entitlements.forOrg(orgId);
@@ -278,17 +323,17 @@ export class ProjectsService {
           const count = await tx.project.count({ where: { orgId } });
           if (count >= cap) throw new ForbiddenException(`Your plan allows ${cap} project${cap === 1 ? "" : "s"}. Upgrade to add more.`);
           return tx.project.create({
-            data: { name: input.name.trim(), domain, enabledTabs, orgId, createdById: user.id },
+            data: { name: input.name.trim(), domain, enabledTabs, googleAccountEmail, orgId, createdById: user.id },
           });
         });
       }
     }
     return this.prisma.project.create({
-      data: { name: input.name.trim(), domain, enabledTabs, orgId, createdById: user.id },
+      data: { name: input.name.trim(), domain, enabledTabs, googleAccountEmail, orgId, createdById: user.id },
     });
   }
 
-  async update(user: AuthUser, id: string, input: { name?: string; domain?: string; enabledTabs?: string[] }) {
+  async update(user: AuthUser, id: string, input: { name?: string; domain?: string; enabledTabs?: string[]; googleAccountEmail?: string }) {
     await this.get(user, id);
     // Keep only real dashboard keys; drop anything unknown the client may send.
     const VALID_TABS = ["overview", "copilot", "keywords", "content", "ranks", "competitors", "traffic", "backlinks", "domain", "ai", "audit"];
@@ -300,14 +345,29 @@ export class ProjectsService {
       domain = cleanDomain(input.domain);
       if (!domain || domain.length < 3 || isInternalDomain(domain)) throw new BadRequestException("A valid, public domain is required");
     }
-    return this.prisma.project.update({
+    // Only touch the data source when the caller explicitly sent the field.
+    const changingSource = input.googleAccountEmail !== undefined || domain !== undefined;
+    const googleAccountEmail = input.googleAccountEmail !== undefined
+      ? await this.resolveGoogleAccount(user, input.googleAccountEmail)
+      : undefined;
+    const project = await this.prisma.project.update({
       where: { id },
       data: {
         name: input.name?.trim() ?? undefined,
         domain,
         enabledTabs,
+        googleAccountEmail,
       },
     });
+    // The GSC/GA/GMB caches are keyed per project, so a change to the domain or
+    // chosen account would otherwise keep serving the old account's data until
+    // TTL. Drop them so the dashboards refetch from the new source.
+    if (changingSource) {
+      await this.prisma.dataCache.deleteMany({
+        where: { OR: [{ key: { startsWith: `gsc:${id}:` } }, { key: { startsWith: `ga:${id}:` } }, { key: { startsWith: `gmb:${id}` } }] },
+      }).catch(() => {});
+    }
+    return project;
   }
 
   // Archive / unarchive a campaign. Archived campaigns stay fully intact and
@@ -395,6 +455,9 @@ export class ProjectsService {
       if (project.createdById !== user.id) throw new ForbiddenException("You do not have access to this project.");
       return;
     }
+    // You can always access a campaign you created — even with only assigned-scope
+    // (or none) — so a campaign you just added never becomes invisible to you.
+    if (project.createdById === user.id) return;
     const p = await this.perms.resolve(user);
     // "View all projects" → access to any campaign in the org.
     if (p.has(PERMISSIONS.PROJECTS_VIEW)) return;

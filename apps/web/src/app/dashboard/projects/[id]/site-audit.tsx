@@ -146,7 +146,7 @@ function StatusBadge({ code }: { code: number | null }) {
 
 // ---------------------------------------------------------------------------
 
-export function SiteAudit({ project }: { project: Project }) {
+export function SiteAudit({ project, autoStart = false, onAutoStarted }: { project: Project; autoStart?: boolean; onAutoStarted?: () => void }) {
   const [crawl, setCrawl] = useState<Crawl | null>(null); // completed results
   const [reRun, setReRun] = useState<Crawl | null>(null); // an in-progress re-run
   const [loading, setLoading] = useState(true);
@@ -190,6 +190,16 @@ export function SiteAudit({ project }: { project: Project }) {
     }, needSpeed && !inProgress ? 3000 : 1500);
     return () => clearInterval(iv);
   }, [inProgress, needSpeed, reRun, fetchLatest]);
+
+  // Header "Run audit" opened this tab AND asked us to start. Once the latest
+  // status is known, consume the request and kick off a crawl — unless one is
+  // already running (then we just show it, no duplicate crawl).
+  useEffect(() => {
+    if (!autoStart || loading) return;
+    onAutoStarted?.();
+    if (!starting && !inProgress) void runAudit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart, loading]);
 
   async function runAudit() {
     setStarting(true);

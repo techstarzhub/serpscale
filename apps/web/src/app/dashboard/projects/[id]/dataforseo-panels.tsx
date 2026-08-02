@@ -18,6 +18,45 @@ import { COUNTRIES, LANGUAGES } from "@/lib/locations";
 import { BarCell, MetricCard } from "@/components/ui/metric";
 import { KpiGridSkeleton, TableCardSkeleton } from "@/components/ui/panel-skeletons";
 
+/** A just-created campaign whose DataForSeo caches are still being warmed on the
+ *  server (see projects.controller.warmProjectData). */
+export function isNewProject(project: { createdAt?: string }): boolean {
+  if (!project?.createdAt) return false;
+  return Date.now() - new Date(project.createdAt).getTime() < 12 * 60_000;
+}
+
+/** For a brand-new campaign, poll the FREE cached endpoint every few seconds
+ *  while the backend finishes warming its DataForSeo data — so the panel fills
+ *  in on its own (no manual "Load" click). Caps out so it never polls forever. */
+export function useWarmupPoll(isNew: boolean, needsData: boolean, reload: () => void): boolean {
+  const [tries, setTries] = useState(0);
+  const active = isNew && needsData && tries < 8; // ~24s of polling max
+  useEffect(() => {
+    if (!active) return;
+    const t = setTimeout(() => { setTries((n) => n + 1); reload(); }, 3000);
+    return () => clearTimeout(t);
+  }, [active, tries, reload]);
+  return active;
+}
+
+/** Animated "we're fetching your new campaign's data" placeholder. */
+export function WarmingCard({ label }: { label: string }) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+        <span className="grid h-11 w-11 place-items-center rounded-full bg-primary/10 text-primary"><Loader2 className="h-5 w-5 animate-spin" /></span>
+        <div>
+          <p className="text-sm font-medium">Preparing your {label.toLowerCase()}…</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">Fetching fresh data for your new campaign — this takes a few seconds.</p>
+        </div>
+        <div className="mt-1 h-1 w-44 overflow-hidden rounded-full bg-secondary">
+          <div className="img-shimmer h-full w-1/2 rounded-full bg-primary/60" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 /** Shown when a paid DataForSEO panel has no cached data — the user loads it on
  *  demand so opening the tab never spends money by itself. */
 export function LoadDataCard({ label, onLoad }: { label: string; onLoad: () => void }) {
@@ -67,7 +106,7 @@ interface CompResp { connected: boolean; loaded?: boolean; target?: string; over
 interface GapKw { keyword: string; volume: number; cpc: number | null; difficulty: number | null; yourPosition: number | null; competitorPosition: number | null }
 interface GapResp { connected: boolean; competitor?: string; keywords: GapKw[] }
 
-export function CompetitorsPanel({ project, refreshNonce = 0, base, readOnly = false }: { project: Project; refreshNonce?: number; base?: string; readOnly?: boolean }) {
+export function CompetitorsPanel({ project, refreshNonce = 0, refreshMode = "live", base, readOnly = false }: { project: Project; refreshNonce?: number; refreshMode?: "live" | "cached"; base?: string; readOnly?: boolean }) {
   const apiBase = base ?? `/projects/${project.id}`;
   const [country, setCountry] = useState("US");
   const [language, setLanguage] = useState("en");
@@ -92,7 +131,10 @@ export function CompetitorsPanel({ project, refreshNonce = 0, base, readOnly = f
     [project.id, country, language],
   );
   useEffect(() => { load("cached"); }, [load]); // open / filter change → free, no paid call
-  useEffect(() => { if (refreshNonce) load("live"); }, [refreshNonce]); // global Refresh → paid
+  useEffect(() => { if (refreshNonce) load(refreshMode); }, [refreshNonce]); // Refresh → paid once/day, else cached
+  // New campaign? auto-poll the free cache while the server warms this data.
+  const reloadCached = useCallback(() => load("cached"), [load]);
+  const warming = useWarmupPoll(isNewProject(project), data?.loaded === false, reloadCached);
 
   function runGap(domain: string) {
     if (readOnly) return; // keyword-gap is a paid live call — not exposed publicly
@@ -126,7 +168,7 @@ export function CompetitorsPanel({ project, refreshNonce = 0, base, readOnly = f
           <TableCardSkeleton rows={8} />
         </>
       ) : data?.loaded === false ? (
-        <LoadDataCard label="Competitor data" onLoad={() => load("live")} />
+        warming ? <WarmingCard label="Competitor data" /> : <LoadDataCard label="Competitor data" onLoad={() => load("live")} />
       ) : !data?.connected ? (
         <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">Competitor data unavailable for this domain.</CardContent></Card>
       ) : (
@@ -246,7 +288,7 @@ interface TechResp {
   emails: string[]; phones: string[]; social: string[]; groups: { group: string; items: string[] }[];
 }
 
-export function DomainPanel({ project, refreshNonce = 0 }: { project: Project; refreshNonce?: number }) {
+export function DomainPanel({ project, refreshNonce = 0, refreshMode = "live" }: { project: Project; refreshNonce?: number; refreshMode?: "live" | "cached" }) {
   const [data, setData] = useState<TechResp | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -262,10 +304,12 @@ export function DomainPanel({ project, refreshNonce = 0 }: { project: Project; r
     [project.id],
   );
   useEffect(() => { load("cached"); }, [load]);
-  useEffect(() => { if (refreshNonce) load("live"); }, [refreshNonce]);
+  useEffect(() => { if (refreshNonce) load(refreshMode); }, [refreshNonce]);
+  const reloadCached = useCallback(() => load("cached"), [load]);
+  const warming = useWarmupPoll(isNewProject(project), data?.loaded === false, reloadCached);
 
   if (loading) return <div className="space-y-3"><KpiGridSkeleton count={3} /><TableCardSkeleton rows={5} /></div>;
-  if (data?.loaded === false) return <LoadDataCard label="Domain analytics" onLoad={() => load("live")} />;
+  if (data?.loaded === false) return warming ? <WarmingCard label="Domain analytics" /> : <LoadDataCard label="Domain analytics" onLoad={() => load("live")} />;
   if (!data?.connected) return <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">Domain analytics unavailable for this domain.</CardContent></Card>;
 
   return (

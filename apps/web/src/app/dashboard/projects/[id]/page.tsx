@@ -199,8 +199,19 @@ export default function ProjectWorkspace() {
   const { user } = useCurrentUser();
   const can = useCan();
   const hasFeature = useFeature();
-  const [tab, setTab] = useState<TabKey>("overview");
+  // Start on the tab named in the URL (?tab=) so a reload restores it. Guarded
+  // for SSR; during data-loading the skeleton renders, so no hydration mismatch.
+  const [tab, setTab] = useState<TabKey>(() => {
+    if (typeof window === "undefined") return "overview";
+    const t = new URLSearchParams(window.location.search).get("tab");
+    return t && tabs.some((x) => x.key === t) ? (t as TabKey) : "overview";
+  });
   const [refreshNonce, setRefreshNonce] = useState(0);
+  // The Refresh button spends a paid DataForSeo call at most ONCE per day per
+  // campaign; every other refresh that day just re-reads the cache (free).
+  const [refreshMode, setRefreshMode] = useState<"live" | "cached">("live");
+  // "Run audit" in the header should both open the Audit tab AND kick off a crawl.
+  const [pendingAudit, setPendingAudit] = useState(false);
   // Super admins manage the platform, not campaigns — send them to the admin panel.
   useEffect(() => {
     if (user?.role === "SUPER_ADMIN") router.replace("/dashboard/admin");
@@ -229,9 +240,12 @@ export default function ProjectWorkspace() {
     return true;
   });
   const tabAllowed = visibleTabs.some((t) => t.key === tab);
+  // Only fall back to the first tab once the project + entitlements have loaded —
+  // otherwise a restored tab (from ?tab=) gets clobbered before its feature is
+  // known to be allowed.
   useEffect(() => {
-    if (visibleTabs.length && !tabAllowed) setTab(visibleTabs[0].key);
-  }, [tabAllowed, visibleTabs]);
+    if (!loading && projectForTabs && visibleTabs.length && !tabAllowed) setTab(visibleTabs[0].key);
+  }, [loading, projectForTabs, tabAllowed, visibleTabs]);
 
   const project = getProject(params.id);
 
@@ -254,11 +268,22 @@ export default function ProjectWorkspace() {
     if (t && tabs.some((x) => x.key === t)) setTab(t as TabKey);
   }, []);
 
+  // Keep the active tab in the URL so a reload (or a shared/bookmarked link)
+  // reopens exactly where the user was — without adding history entries.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("tab") !== tab) {
+      url.searchParams.set("tab", tab);
+      window.history.replaceState(window.history.state, "", url.toString());
+    }
+  }, [tab]);
+
   // If the page was opened with the raw id (or an old link), swap the address
   // bar to the readable slug without a reload.
   useEffect(() => {
     if (project && params.id !== project.slug) {
-      router.replace(`/dashboard/projects/${project.slug}`);
+      // Preserve the current query (e.g. ?tab=) through the id→slug address swap.
+      router.replace(`/dashboard/projects/${project.slug}${window.location.search}`);
     }
   }, [project, params.id, router]);
 
@@ -284,6 +309,15 @@ export default function ProjectWorkspace() {
   // Force a live re-fetch of the active tab (bypasses the server cache via ?fresh=1).
   // No spinner — panels swap to structured skeletons while the fresh data loads.
   function onRefresh() {
+    // First refresh of the day → paid live re-fetch; the rest → cache only.
+    let mode: "live" | "cached" = "live";
+    try {
+      const key = `df-paid-refresh:${project!.id}`;
+      const today = new Date().toDateString();
+      if (localStorage.getItem(key) === today) mode = "cached";
+      else localStorage.setItem(key, today);
+    } catch { /* localStorage blocked → default to live */ }
+    setRefreshMode(mode);
     setRefreshNonce((n) => n + 1);
   }
 
@@ -395,7 +429,7 @@ export default function ProjectWorkspace() {
                 <RefreshCw className="h-4 w-4 lg:h-[18px] lg:w-[18px]" />
               </Button>
             )}
-            <Button className="h-10 gap-2 px-4 text-sm lg:h-11 lg:px-5 lg:text-[15px]" onClick={() => setTab("audit")}>
+            <Button className="h-10 gap-2 px-4 text-sm lg:h-11 lg:px-5 lg:text-[15px]" onClick={() => { setPendingAudit(true); setTab("audit"); }}>
               <FileSearch className="h-4 w-4 lg:h-[18px] lg:w-[18px]" />
               Run audit
             </Button>
@@ -494,17 +528,17 @@ export default function ProjectWorkspace() {
               traffic chart, not a keyword list) sits full-width below. */}
           <div className="grid items-stretch gap-4 lg:grid-cols-2">
             <TrackedKeywords project={project} />
-            <RankedKeywords project={project} refreshNonce={refreshNonce} />
+            <RankedKeywords project={project} refreshNonce={refreshNonce} refreshMode={refreshMode} />
           </div>
           <GscRankTracker project={project} refreshNonce={refreshNonce} />
         </div>
       )}
-      {tab === "competitors" && <CompetitorsPanel project={project} refreshNonce={refreshNonce} />}
+      {tab === "competitors" && <CompetitorsPanel project={project} refreshNonce={refreshNonce} refreshMode={refreshMode} />}
       {tab === "traffic" && <GaTraffic project={project} refreshNonce={refreshNonce} />}
-      {tab === "backlinks" && <BacklinksPanel project={project} refreshNonce={refreshNonce} />}
-      {tab === "domain" && <DomainPanel project={project} refreshNonce={refreshNonce} />}
+      {tab === "backlinks" && <BacklinksPanel project={project} refreshNonce={refreshNonce} refreshMode={refreshMode} />}
+      {tab === "domain" && <DomainPanel project={project} refreshNonce={refreshNonce} refreshMode={refreshMode} />}
       {tab === "ai" && <AiVisibilityPanel project={project} />}
-      {tab === "audit" && <SiteAudit project={project} />}
+      {tab === "audit" && <SiteAudit project={project} autoStart={pendingAudit} onAutoStarted={() => setPendingAudit(false)} />}
       {tab === "settings" && <SettingsPanel project={project} />}
       </>
       )}

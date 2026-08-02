@@ -1,17 +1,19 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { RequirePermissions } from "../auth/decorators/require-permissions.decorator";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
 import { PERMISSIONS, PERMISSION_GROUPS } from "../auth/permissions";
 import { AuditService } from "../auth/audit.service";
+import { FeaturesGuard } from "../entitlements/features.guard";
+import { RequireFeature } from "../entitlements/require-feature.decorator";
 import { AuthService } from "../auth/auth.service";
 import { EmailService } from "../email/email.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { TeamService } from "./team.service";
 import { AssignProjectsDto, CreateRoleDto, InviteMemberDto, UpdateMemberDto, UpdateRoleDto } from "./dto/team.dto";
 
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, FeaturesGuard)
 @Controller("team")
 export class TeamController {
   constructor(
@@ -27,6 +29,14 @@ export class TeamController {
   @RequirePermissions(PERMISSIONS.ROLES_MANAGE)
   catalog() {
     return { groups: PERMISSION_GROUPS };
+  }
+
+  // Org-wide activity trail — the admin's team members AND their clients' portal
+  // users, enriched with identity and a team/client scope. team.manage gated.
+  @Get("activity")
+  @RequirePermissions(PERMISSIONS.TEAM_MANAGE)
+  activity(@CurrentUser() user: AuthUser, @Query("limit") limit?: string) {
+    return this.audit.activityForOrg(user, { limit: Number(limit) || 250 });
   }
 
   // ---- Custom roles ----
@@ -106,12 +116,14 @@ export class TeamController {
 
   @Get("branding")
   @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
+  @RequireFeature("white_label")
   getBranding(@CurrentUser() user: AuthUser) {
     return this.team.getBranding(user);
   }
 
   @Put("branding")
   @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
+  @RequireFeature("white_label")
   async setBranding(@CurrentUser() user: AuthUser, @Body() dto: { agencyName?: string; logoDataUrl?: string | null }) {
     const res = await this.team.setBranding(user, dto);
     await this.audit.log(user, "org.branding.update", { metadata: { agencyName: dto?.agencyName ?? null } });
@@ -122,12 +134,14 @@ export class TeamController {
 
   @Get("smtp")
   @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
+  @RequireFeature("white_label")
   getSmtp(@CurrentUser() user: AuthUser) {
     return this.team.getSmtp(user);
   }
 
   @Put("smtp")
   @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
+  @RequireFeature("white_label")
   async setSmtp(@CurrentUser() user: AuthUser, @Body() dto: Record<string, unknown>) {
     const res = await this.team.setSmtp(user, dto);
     await this.audit.log(user, "org.smtp.update", { metadata: { host: (dto?.host as string) ?? null } });
@@ -136,6 +150,7 @@ export class TeamController {
 
   @Post("smtp/test")
   @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
+  @RequireFeature("white_label")
   async testSmtp(@CurrentUser() user: AuthUser, @Body() dto: { to?: string }) {
     return this.team.testSmtp(user, dto?.to);
   }

@@ -5,6 +5,7 @@ import { Search, Loader2, Clock, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Pagination } from "@/components/ui/pagination";
 import { api } from "@/lib/api";
 import { useCan } from "@/components/providers/user-provider";
 
@@ -39,6 +40,8 @@ export default function SearchActivityPage() {
   const [rows, setRows] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   useEffect(() => {
     if (!allowed) { setLoading(false); return; }
@@ -49,6 +52,8 @@ export default function SearchActivityPage() {
       .finally(() => setLoading(false));
   }, [allowed]);
 
+  useEffect(() => { setPage(1); }, [q, pageSize]);
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return rows;
@@ -56,6 +61,8 @@ export default function SearchActivityPage() {
       (r) => r.term.toLowerCase().includes(needle) || r.user.name.toLowerCase().includes(needle) || r.user.email.toLowerCase().includes(needle),
     );
   }, [rows, q]);
+
+  const paged = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
 
   const uniqueUsers = useMemo(() => new Set(rows.map((r) => r.user.email)).size, [rows]);
 
@@ -103,8 +110,9 @@ export default function SearchActivityPage() {
             {rows.length === 0 ? "No searches yet. Once your team uses the SERP Explorer, their searches will appear here." : "No searches match your filter."}
           </CardContent>
         ) : (
+          <>
           <div className="divide-y divide-border">
-            {filtered.map((r) => (
+            {paged.map((r) => (
               <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
                 {r.user.avatarUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -125,6 +133,15 @@ export default function SearchActivityPage() {
               </div>
             ))}
           </div>
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={filtered.length}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            label="searches"
+          />
+          </>
         )}
       </Card>
     </div>

@@ -18,6 +18,7 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
 import { AuthService } from "../auth/auth.service";
+import { AuditService } from "../auth/audit.service";
 import { setAuthCookies } from "../auth/cookies.util";
 import { UsersService } from "./users.service";
 import {
@@ -33,6 +34,7 @@ export class UsersController {
   constructor(
     private readonly users: UsersService,
     private readonly auth: AuthService,
+    private readonly audit: AuditService,
   ) {}
 
   @Get("me")
@@ -41,13 +43,17 @@ export class UsersController {
   }
 
   @Patch("me")
-  updateProfile(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto) {
-    return this.users.updateProfile(user.id, dto);
+  async updateProfile(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto) {
+    const res = await this.users.updateProfile(user.id, dto);
+    await this.audit.log(user, "user.profile.update", {});
+    return res;
   }
 
   @Patch("me/password")
-  changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto) {
-    return this.users.changePassword(user.id, dto.currentPassword, dto.newPassword);
+  async changePassword(@CurrentUser() user: AuthUser, @Body() dto: ChangePasswordDto) {
+    const res = await this.users.changePassword(user.id, dto.currentPassword, dto.newPassword);
+    await this.audit.log(user, "user.password.change", {});
+    return res;
   }
 
   // Persist dashboard theme (dynamic tokens + light/dark) so it follows the user.
@@ -68,6 +74,7 @@ export class UsersController {
   ) {
     const result = await this.users.completeOnboarding(user.id, dto);
     if (dto.newPassword) setAuthCookies(res, await this.auth.issueTokensFor(user.id));
+    await this.audit.log(user, "user.onboarding.complete", {});
     return result;
   }
 
@@ -75,13 +82,17 @@ export class UsersController {
   @UseInterceptors(
     FileInterceptor("file", { limits: { fileSize: 2 * 1024 * 1024 } }), // 2MB
   )
-  uploadAvatar(@CurrentUser() user: AuthUser, @UploadedFile() file: Express.Multer.File) {
-    return this.users.setAvatar(user.id, file);
+  async uploadAvatar(@CurrentUser() user: AuthUser, @UploadedFile() file: Express.Multer.File) {
+    const res = await this.users.setAvatar(user.id, file);
+    await this.audit.log(user, "user.avatar.update", {});
+    return res;
   }
 
   @Delete("me/avatar")
-  removeAvatar(@CurrentUser() user: AuthUser) {
-    return this.users.removeAvatar(user.id);
+  async removeAvatar(@CurrentUser() user: AuthUser) {
+    const res = await this.users.removeAvatar(user.id);
+    await this.audit.log(user, "user.avatar.remove", {});
+    return res;
   }
 
   // Super-admin only: list every user across all organizations.
