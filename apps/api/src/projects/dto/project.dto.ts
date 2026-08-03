@@ -16,6 +16,13 @@ export class CreateProjectDto {
   @IsArray()
   @IsString({ each: true })
   enabledTabs?: string[];
+
+  // Connected Google account (email) to source GSC/GA4/GMB data from. Empty/absent
+  // = auto-detect by domain across every connected account.
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  googleAccountEmail?: string;
 }
 
 export class UpdateProjectDto {
@@ -34,4 +41,11 @@ export class UpdateProjectDto {
   @IsArray()
   @IsString({ each: true })
   enabledTabs?: string[];
+
+  // Connected Google account (email) to source GSC/GA4/GMB data from. Empty
+  // string clears the choice (back to auto-detect by domain).
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  googleAccountEmail?: string;
 }

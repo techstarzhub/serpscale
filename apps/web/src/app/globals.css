@@ -228,9 +228,17 @@ h2 { letter-spacing: -0.028em; }
 }
 .glow-pulse { animation: glow-pulse 2.8s ease-in-out infinite; }
 
+/* Sweeping shimmer over media that is being (re)generated. */
+@keyframes img-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.img-shimmer { animation: img-shimmer 1.4s linear infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .sheen:hover::after { animation: none; }
   .glow-pulse { animation: none; }
+  .img-shimmer { animation: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -241,6 +249,14 @@ h2 { letter-spacing: -0.028em; }
 /* Blog editor: always render markdown links as clearly underlined, themed links —
    so internal links are visibly distinguishable in both our preview and the
    editor's own markdown renderer. */
+/* Give the blog editor a tall, viewport-based height and let BOTH panes scroll
+   independently, so a long draft is fully readable instead of clipped at a small
+   fixed height. */
+.blog-md-editor .w-md-editor { height: min(80vh, 1000px) !important; min-height: 460px; }
+.blog-md-editor .w-md-editor-content { height: calc(100% - 30px) !important; }
+.blog-md-editor .w-md-editor-text,
+.blog-md-editor .w-md-editor-preview { height: 100% !important; overflow-y: auto !important; }
+
 .blog-md-editor .wmde-markdown a,
 .blog-md-editor a[href] {
   color: hsl(var(--primary));

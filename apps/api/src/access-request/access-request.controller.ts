@@ -4,12 +4,16 @@ import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { RequirePermissions } from "../auth/decorators/require-permissions.decorator";
 import { PERMISSIONS as P } from "../auth/permissions";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
+import { AuditService } from "../auth/audit.service";
 import { AccessRequestService } from "./access-request.service";
 
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller("access-requests")
 export class AccessRequestController {
-  constructor(private readonly service: AccessRequestService) {}
+  constructor(
+    private readonly service: AccessRequestService,
+    private readonly audit: AuditService,
+  ) {}
 
   // Anyone may request / see their own requests + options.
   @Get("options")
@@ -35,8 +39,10 @@ export class AccessRequestController {
   }
 
   @Post()
-  create(@CurrentUser() user: AuthUser, @Body() dto: { type?: string; target?: string; note?: string }) {
-    return this.service.create(user, dto);
+  async create(@CurrentUser() user: AuthUser, @Body() dto: { type?: string; target?: string; note?: string }) {
+    const res = await this.service.create(user, dto);
+    await this.audit.log(user, "access.request", { target: dto?.target ?? undefined, metadata: { type: dto?.type ?? null } });
+    return res;
   }
 
   // Reviewing + deciding requires team-management permission.
@@ -48,7 +54,9 @@ export class AccessRequestController {
 
   @Post(":id/decide")
   @RequirePermissions(P.TEAM_MANAGE)
-  decide(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { approve?: boolean }) {
-    return this.service.decide(user, id, !!dto?.approve);
+  async decide(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { approve?: boolean }) {
+    const res = await this.service.decide(user, id, !!dto?.approve);
+    await this.audit.log(user, dto?.approve ? "access.approve" : "access.deny", { target: id });
+    return res;
   }
 }

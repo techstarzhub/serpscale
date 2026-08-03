@@ -3,9 +3,21 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CopilotService, type ChatTurn } from "../copilot/copilot.service";
 import { DataForSeoService } from "../dataforseo/dataforseo.service";
 import { StorageService } from "../storage/storage.service";
+import { ImagesService } from "../images/images.service";
+import { ProjectsService } from "../projects/projects.service";
+import { renderPdf } from "../crawl/report";
+import { blogToHtml } from "./blog-export";
 import type { AuthUser } from "../auth/decorators/current-user.decorator";
 
-type BlogEvent = { type: "token"; text: string } | { type: "done"; full: string } | { type: "error"; message: string };
+type BlogEvent =
+  | { type: "token"; text: string }
+  | { type: "status"; message: string }
+  | { type: "done"; full: string }
+  | { type: "error"; message: string };
+
+// How many in-body section images to add (on top of the cover). Keeps a blog
+// visually rich without ballooning cost (~₹0.26/image).
+const MAX_SECTION_IMAGES = 3;
 
 const toInt = (v: unknown) => (v == null || v === "" || isNaN(Number(v)) ? null : Math.round(Number(v)));
 const toNum = (v: unknown) => (v == null || v === "" || isNaN(Number(v)) ? null : Number(v));
@@ -44,6 +56,8 @@ export class ContentService {
     private readonly llm: CopilotService,
     private readonly storage: StorageService,
     private readonly dfs: DataForSeoService,
+    private readonly images: ImagesService,
+    private readonly projects: ProjectsService,
   ) {}
 
   // ---- AI keyword advisor ----
@@ -239,10 +253,10 @@ export class ContentService {
 
   // Org-scoped access check (permission gating handled at the controller).
   private async project(user: AuthUser, projectId: string) {
-    const where = user.orgId ? { id: projectId, orgId: user.orgId } : { id: projectId, createdById: user.id };
-    const p = await this.prisma.project.findFirst({ where });
-    if (!p) throw new NotFoundException("Project not found");
-    return p;
+    // Delegate to the canonical access rule so content honours assigned-scope
+    // (a "view assigned only" member can't reach an unassigned campaign's blogs/
+    // keywords) and org isolation — not just an org-wide id lookup.
+    return this.projects.get(user, projectId);
   }
 
   // ---- Saved keywords ----
@@ -293,7 +307,7 @@ export class ContentService {
   async *generateBlog(
     user: AuthUser,
     projectId: string,
-    dto: { keywords?: string[]; title?: string; tone?: string; wordCount?: number; instructions?: string },
+    dto: { keywords?: string[]; title?: string; tone?: string; wordCount?: number; instructions?: string; images?: boolean; imageCount?: number; keepImages?: string[] },
   ): AsyncGenerator<BlogEvent> {
     const project = await this.project(user, projectId);
     const keywords = (dto?.keywords ?? []).map((k) => String(k).trim()).filter(Boolean).slice(0, 15);
@@ -388,14 +402,341 @@ export class ContentService {
           piece = ev.content || piece;
         }
       }
-      piece = stripRefusal(piece.trim());
+      piece = stripRefusal(piece.trim())
+        .replace(/^\s*meta (title|description):.*$/gim, "") // stray meta lines
+        .replace(/^#\s+.*$/gm, "") // a re-emitted title / H1 (continuation is body-only)
+        .trim();
       // Guard against the model ignoring instructions and re-emitting the article.
       if (!piece || (firstH2 && piece.includes(firstH2))) break;
       acc = `${body}\n\n${piece}${trailer ? `\n\n${trailer}` : ""}`.trim();
     }
 
     const clean = this.sanitizeBlog(acc, allPages, project.domain);
-    yield { type: "done", full: this.ensureInternalLinks(clean, allPages, project.domain, 4) };
+    let full = this.ensureInternalLinks(clean, allPages, project.domain, 4);
+
+    // Brand-aware AI images: a cover + a few in-body section images. Best-effort —
+    // if generation is disabled or fails, the blog just ships without them.
+    if (Array.isArray(dto?.keepImages) && dto.keepImages.length) {
+      // Content-only regenerate: re-use the images the draft already had (no new
+      // image API cost) — just place them into the fresh text.
+      full = this.placeImages(full, dto.keepImages.filter((u) => typeof u === "string" && u));
+    } else if (dto?.images !== false && this.images.isEnabled()) {
+      // Total images the blog gets (cover + section images), capped at 3, default 1.
+      const total = Math.max(1, Math.min(3, Math.round(Number(dto?.imageCount)) || 1));
+      const plan = await this.planBlogImages(project, full, keywords, tone, total).catch(() => null);
+      if (plan && plan.order.length) full = yield* this.runImagePlan(project, plan);
+    }
+    yield { type: "done", full };
+  }
+
+  // ---- AI images for blogs -------------------------------------------------
+
+  /** H2 headings worth illustrating (skips wrap-up / FAQ sections). */
+  private illustratableHeadings(markdown: string): string[] {
+    const out: string[] = [];
+    for (const m of markdown.matchAll(/^##\s+(.+)$/gm)) {
+      const h = m[1].trim();
+      if (/\b(faq|frequently asked|conclusion|final thoughts|wrapping up|in summary|key takeaways?)\b/i.test(h)) continue;
+      out.push(h);
+    }
+    return out;
+  }
+
+  /**
+   * Brand identity for image prompts: the white-label name and a brand colour so
+   * generated visuals match the agency/client's look. Prefers a client's own
+   * branding (when the campaign is attached to one) over the org's.
+   */
+  private async brandInfo(project: { id: string; orgId: string | null }): Promise<{ name: string; color: string }> {
+    let name = "";
+    let color = "";
+    if (project.orgId) {
+      const org = await this.prisma.organization.findUnique({ where: { id: project.orgId }, select: { branding: true } }).catch(() => null);
+      const b = (org?.branding as Record<string, unknown> | null) ?? {};
+      name = String(b.agencyName ?? "").slice(0, 80);
+    }
+    // A client attached to this campaign may carry its own white-label brand + colour.
+    const client = await this.prisma.client
+      .findFirst({ where: { projects: { some: { id: project.id } } }, select: { name: true, branding: true } })
+      .catch(() => null);
+    if (client) {
+      const cb = (client.branding as Record<string, unknown> | null) ?? {};
+      name = String(cb.agencyName || client.name || name).slice(0, 80);
+      const c = String(cb.logoBg ?? "").trim();
+      if (/^#?[0-9a-f]{3,8}$/i.test(c)) color = c.startsWith("#") ? c : `#${c}`;
+    }
+    return { name, color };
+  }
+
+  /**
+   * Ask the LLM (Groq) to turn the blog + brand context into concrete, on-brand
+   * image prompts — one cover, one per chosen section. Falls back to sensible
+   * templated prompts when the LLM is unavailable or returns junk.
+   */
+  private async craftImagePrompts(
+    ctx: { domain: string; brand: string; color: string; title: string; keywords: string[]; intro: string; sections: { heading: string; excerpt: string }[]; tone: string },
+  ): Promise<{ cover: string; sections: string[] }> {
+    const topic = ctx.keywords.slice(0, 3).join(", ") || ctx.title;
+    const brandBit = ctx.brand ? ` for the brand ${ctx.brand}` : "";
+    const colorBit = ctx.color ? ` Colour palette around ${ctx.color}.` : "";
+    const styleBit = ` Modern, professional, high quality, ${ctx.tone} mood.${colorBit}`;
+    const fallbackCover = `Professional blog hero image${brandBit} about ${topic}.${styleBit}`;
+    const fallback = {
+      cover: fallbackCover,
+      sections: ctx.sections.map((s) => `Professional, engaging image representing "${s.heading}" (topic: ${topic})${brandBit}.${styleBit}`),
+    };
+    if (!this.llm.configured || (ctx.sections.length === 0 && !ctx.title)) return fallback;
+
+    // No creative restrictions — let the writer craft whatever best illustrates
+    // the actual content + brand; the image model decides the rest.
+    const sys =
+      "You are an expert art director writing text-to-image prompts for a blog. For each image you get the real text it will sit beside — craft a vivid, specific, professional prompt that best illustrates that exact content for this brand. You have full creative freedom over style, subject and composition. Reply with STRICT JSON only, no prose.";
+    const user =
+      `Brand: ${ctx.brand || ctx.domain} (site ${ctx.domain}). Tone: ${ctx.tone}. ` +
+      (ctx.color ? `Brand colour: ${ctx.color} — reflect it in the palette. ` : "") +
+      `Primary keywords: ${ctx.keywords.slice(0, 6).join(", ")}.\n\n` +
+      `COVER image — for the whole article titled "${ctx.title}"${ctx.intro ? `, which opens: "${ctx.intro}"` : ""}.\n\n` +
+      `SECTION images — one per section, each matching that section's actual content:\n` +
+      ctx.sections.map((s, i) => `${i + 1}) Section "${s.heading}" — content: ${s.excerpt || s.heading}`).join("\n") + "\n\n" +
+      `Write a prompt for the cover and one for EACH section (in order) — each a specific, professional, visually engaging image that best represents that content for this brand. 1-2 sentences each.\n` +
+      `Return exactly: {"cover":"...","sections":["...", ...]} — ${ctx.sections.length} section prompt(s), same order.`;
+    try {
+      // Cap the wait: if the LLM is slow, fall back to templated prompts rather
+      // than making the user stare at "Generating images…" for ages.
+      const raw = await Promise.race([
+        this.llm.once(sys, user, []),
+        new Promise<string>((resolve) => setTimeout(() => resolve(""), 10_000)),
+      ]);
+      if (!raw) return fallback;
+      const json = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+      const cover = String(json.cover || fallbackCover).slice(0, 900);
+      const secs: string[] = Array.isArray(json.sections) ? json.sections : [];
+      return {
+        cover,
+        sections: ctx.sections.map((s, i) => String(secs[i] || fallback.sections[i]).slice(0, 900)),
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
+   * Plan where images go and what each depicts — WITHOUT generating them. The
+   * caller generates one at a time (so it can show "image N of M" and respect
+   * provider throttling) then splices by LINE POSITION, so every image that
+   * succeeds is actually placed. Anchors: cover after H1, then H2/H3 headings,
+   * and evenly-spaced paragraphs as fallback when a short post has too few.
+   */
+  private async planBlogImages(
+    project: { id: string; domain: string; orgId: string | null },
+    markdown: string,
+    keywords: string[],
+    tone: string,
+    totalImages = MAX_SECTION_IMAGES + 1,
+  ): Promise<{ lines: string[]; title: string; order: { idx: number; heading: string; cover: boolean; prompt: string }[] }> {
+    const total = Math.max(1, Math.min(3, totalImages));
+    const lines = markdown.split("\n");
+    const skippable = (h: string) => /\b(faq|frequently asked|conclusion|final thoughts|wrapping up|in summary|key takeaways?)\b/i.test(h);
+
+    const h1Idx = lines.findIndex((l) => /^#\s+/.test(l));
+    const title = (h1Idx >= 0 ? lines[h1Idx].replace(/^#\s+/, "") : keywords[0] || "").trim();
+
+    const slots: { idx: number; heading: string; cover: boolean }[] = [];
+    // The featured/cover image ALWAYS exists and is generated first. idx may be
+    // -1 when the post has no H1 — runImagePlan then places it at the very top.
+    slots.push({ idx: h1Idx, heading: title, cover: true });
+    for (let i = 0; i < lines.length && slots.length < total; i++) {
+      const m = lines[i].match(/^(#{2,3})\s+(.+)$/);
+      if (m && !skippable(m[2])) slots.push({ idx: i, heading: m[2].trim(), cover: false });
+    }
+    // Too few headings for the requested count? fill with spaced-out paragraphs.
+    if (slots.length < total) {
+      const used = new Set(slots.map((s) => s.idx));
+      const paras = lines
+        .map((l, i) => ({ l: l.trim(), i }))
+        .filter((x) => !used.has(x.i) && x.l.length > 100 && !/^[#!\-*>|]/.test(x.l))
+        .map((x) => x.i);
+      const need = total - slots.length;
+      for (let k = 1; k <= need && paras.length; k++) {
+        slots.push({ idx: paras[Math.floor((k / (need + 1)) * paras.length)], heading: title, cover: false });
+      }
+    }
+    slots.sort((a, b) => a.idx - b.idx);
+    if (!slots.length) return { lines, title, order: [] };
+
+    // Grab the readable text starting at a line (strips markdown/links) up to the
+    // next heading — the actual content each image should depict.
+    const excerptAt = (idx: number): string => {
+      const out: string[] = [];
+      for (let i = Math.max(0, idx); i < lines.length && out.join(" ").length < 280; i++) {
+        if (i > idx && /^#{1,6}\s+/.test(lines[i])) break;
+        const t = lines[i].trim().replace(/^#{1,6}\s+/, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[#*_>`~]/g, "");
+        if (t) out.push(t);
+      }
+      return out.join(" ").slice(0, 280);
+    };
+    const introIdx = lines.findIndex((l, i) => i > h1Idx && l.trim().length > 60 && !/^[#!\-*>|]/.test(l.trim()));
+    const intro = introIdx >= 0 ? excerptAt(introIdx) : "";
+
+    const brand = await this.brandInfo(project);
+    const nonCover = slots.filter((s) => !s.cover);
+    const prompts = await this.craftImagePrompts({
+      domain: project.domain, brand: brand.name, color: brand.color, title, keywords, tone, intro,
+      sections: nonCover.map((s) => ({ heading: s.heading, excerpt: excerptAt(s.idx) })),
+    });
+
+    const order = slots.map((s) => ({
+      idx: s.idx, heading: s.heading, cover: s.cover,
+      prompt: s.cover ? prompts.cover : prompts.sections[nonCover.indexOf(s)] || prompts.cover,
+    }));
+    return { lines, title, order };
+  }
+
+  /**
+   * Generate each planned image ONE AT A TIME (throttle-friendly, with a live
+   * "image N of M" status), splice them into the plan's lines, and return the
+   * final markdown. Shared by first-time generation and image-only regeneration.
+   */
+  private async *runImagePlan(
+    project: { id: string },
+    plan: { lines: string[]; title: string; order: { idx: number; heading: string; cover: boolean; prompt: string }[] },
+  ): AsyncGenerator<BlogEvent, string> {
+    const placed: { idx: number; cover: boolean; heading: string; url: string }[] = [];
+    for (let i = 0; i < plan.order.length; i++) {
+      const s = plan.order[i];
+      yield { type: "status", message: plan.order.length > 1 ? `Generating image ${i + 1} of ${plan.order.length}…` : "Generating image…" };
+      const img = await this.images.create(project.id, s.prompt, { aspectRatio: "16:9" });
+      if (img) placed.push({ idx: s.idx, cover: s.cover, heading: s.heading, url: img.url });
+    }
+    if (placed.length) {
+      // The FEATURED image always sits at the very top of the article: use the
+      // cover if it generated, otherwise promote the first image that did — so a
+      // blog always opens with an image, and the rest sit between the sections.
+      const featured = placed.find((p) => p.cover) ?? placed[0];
+      const middle = placed.filter((p) => p !== featured && p.idx >= 0);
+
+      // Body images first (bottom-up so earlier indices stay valid).
+      middle.sort((a, b) => b.idx - a.idx);
+      for (const x of middle) plan.lines.splice(x.idx + 1, 0, "", `![${this.alt(x.heading)}](${x.url})`);
+
+      // Then the featured image at the top: right after the H1 title, or at the
+      // very start when there's no H1.
+      const h1 = plan.lines.findIndex((l) => /^#\s+/.test(l));
+      const featuredMd = `![${this.alt(plan.title)}](${featured.url})`;
+      if (h1 >= 0) plan.lines.splice(h1 + 1, 0, "", featuredMd);
+      else plan.lines.unshift(featuredMd, "");
+    }
+    return plan.lines.join("\n");
+  }
+
+  /**
+   * Regenerate ONLY the images for an existing draft: strip the current images,
+   * then plan + generate fresh ones. The text is untouched, so no writing-model
+   * cost is incurred — only the image API.
+   */
+  async *reimageBlog(
+    user: AuthUser,
+    projectId: string,
+    dto: { content?: string; keywords?: string[]; imageCount?: number },
+  ): AsyncGenerator<BlogEvent> {
+    const project = await this.project(user, projectId);
+    // Remove any existing standalone image lines (and the blank line they leave).
+    const stripped = String(dto?.content ?? "")
+      .replace(/^!\[[^\]]*\]\([^)]*\)\s*$/gm, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    if (!stripped) { yield { type: "error", message: "Nothing to add images to." }; return; }
+    let full = stripped;
+    if (this.images.isEnabled()) {
+      const total = Math.max(1, Math.min(3, Math.round(Number(dto?.imageCount)) || 1));
+      const keywords = (dto?.keywords ?? []).map((k) => String(k).trim()).filter(Boolean).slice(0, 15);
+      const plan = await this.planBlogImages(project, stripped, keywords, "professional", total).catch(() => null);
+      if (plan && plan.order.length) full = yield* this.runImagePlan(project, plan);
+    }
+    yield { type: "done", full };
+  }
+
+  /** Place a set of EXISTING image URLs into markdown (used to keep images on a
+   *  content-only redo): the FIRST url is the featured image at the very top, the
+   *  rest go between the sections. */
+  private placeImages(markdown: string, urls: string[]): string {
+    if (!urls.length) return markdown;
+    const lines = markdown.split("\n");
+    const skippable = (h: string) => /\b(faq|frequently asked|conclusion|final thoughts|wrapping up|in summary|key takeaways?)\b/i.test(h);
+    const h1Idx = lines.findIndex((l) => /^#\s+/.test(l));
+    const title = (h1Idx >= 0 ? lines[h1Idx].replace(/^#\s+/, "") : "").trim();
+
+    // Body images (urls[1..]) go at H2/H3 headings.
+    const bodyUrls = urls.slice(1);
+    const headingSlots: { idx: number; alt: string }[] = [];
+    for (let i = 0; i < lines.length && headingSlots.length < bodyUrls.length; i++) {
+      const m = lines[i].match(/^(#{2,3})\s+(.+)$/);
+      if (m && !skippable(m[2])) headingSlots.push({ idx: i, alt: m[2].trim() });
+    }
+    const placed = headingSlots.map((s, i) => ({ ...s, url: bodyUrls[i] }));
+    placed.sort((a, b) => b.idx - a.idx);
+    for (const x of placed) lines.splice(x.idx + 1, 0, "", `![${this.alt(x.alt)}](${x.url})`);
+
+    // Featured image (urls[0]) at the very top — after the H1, or at the start.
+    const h1 = lines.findIndex((l) => /^#\s+/.test(l));
+    const featuredMd = `![${this.alt(title)}](${urls[0]})`;
+    if (h1 >= 0) lines.splice(h1 + 1, 0, "", featuredMd);
+    else lines.unshift(featuredMd, "");
+    return lines.join("\n");
+  }
+
+  private alt(s: string): string {
+    return (s || "illustration").replace(/[\[\]()]/g, "").slice(0, 100);
+  }
+
+  /** Export a draft as a downloadable PDF or Word (.doc) file. */
+  async exportBlog(
+    user: AuthUser,
+    projectId: string,
+    dto: { content?: string; title?: string; format?: string },
+  ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
+    await this.project(user, projectId);
+    const content = String(dto?.content ?? "").trim();
+    if (!content) throw new BadRequestException("Nothing to export.");
+    const rawTitle = (dto?.title || content.match(/^#\s+(.+)$/m)?.[1] || "blog").trim();
+    const slug = rawTitle.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase().slice(0, 60) || "blog";
+    const html = blogToHtml(content, rawTitle);
+    const format = (dto?.format || "pdf").toLowerCase();
+    if (format === "pdf") {
+      const pdf = await renderPdf(html);
+      if (!pdf) throw new BadRequestException("Couldn't render the PDF right now. Please try again.");
+      return { buffer: pdf, filename: `${slug}.pdf`, contentType: "application/pdf" };
+    }
+    if (format === "doc" || format === "docx" || format === "word") {
+      // Word (and Google Docs) open HTML content saved as .doc, preserving
+      // headings, images, links and lists — no extra dependency needed.
+      return { buffer: Buffer.from(html, "utf-8"), filename: `${slug}.doc`, contentType: "application/msword" };
+    }
+    throw new BadRequestException("Unsupported export format.");
+  }
+
+  /** One-off image for the editor's "Generate image" button. */
+  async generateImage(user: AuthUser, projectId: string, dto: { prompt?: string; aspectRatio?: string }): Promise<{ url: string }> {
+    const project = await this.project(user, projectId);
+    if (!this.images.isEnabled()) throw new BadRequestException("Image generation isn't configured.");
+    const hint = (dto?.prompt ?? "").trim().slice(0, 500);
+    if (!hint) throw new BadRequestException("Describe the image you want.");
+    const brand = await this.brandInfo(project);
+    // Let the LLM enrich a short hint into a strong, on-brand prompt (best effort).
+    let prompt = hint;
+    if (this.llm.configured) {
+      const enriched = await this.llm
+        .once(
+          "You write one vivid, professional text-to-image prompt. Reply with ONLY the prompt, no quotes or preamble.",
+          `Brand ${brand.name || project.domain} (${project.domain}).${brand.color ? ` Brand colour ${brand.color} — bias the palette toward it.` : ""} Turn this into a single professional, on-brand image prompt: "${hint}".`,
+          [],
+        )
+        .catch(() => "");
+      if (enriched && enriched.length > hint.length / 2) prompt = enriched.trim().slice(0, 900);
+    }
+    const res = await this.images.create(projectId, prompt, { aspectRatio: dto?.aspectRatio || "16:9" });
+    if (!res) throw new BadRequestException("Couldn't generate an image right now. Please try again.");
+    return res;
   }
 
   // Internal links are a hard requirement. If the model added fewer than `min`, weave
@@ -526,6 +867,32 @@ export class ContentService {
         return true;
       })
       .join("\n\n");
+
+    // 3b) Structure hygiene — the model (esp. on continuation rounds) sometimes
+    //     re-emits the title, H1 or FAQ. Keep exactly ONE Meta title / description
+    //     and ONE H1, demote any stray extra H1s to H2, drop exact-duplicate title
+    //     lines, and collapse a doubled FAQ heading.
+    {
+      let mt = false, md = false, firstH1 = "";
+      text = text
+        .split("\n")
+        .map((line) => {
+          if (/^\s*meta title:/i.test(line)) { if (mt) return null; mt = true; return line; }
+          if (/^\s*meta description:/i.test(line)) { if (md) return null; md = true; return line; }
+          const h = line.match(/^#\s+(.+)$/);
+          if (h) {
+            const t = h[1].trim();
+            if (!firstH1) { firstH1 = t; return line; }
+            if (t.toLowerCase() === firstH1.toLowerCase()) return null; // duplicate title line
+            return line.replace(/^#\s+/, "## "); // a stray extra H1 → section heading
+          }
+          return line;
+        })
+        .filter((l): l is string => l !== null)
+        .join("\n");
+      // "## FAQ" immediately followed by "## Frequently Asked…" → keep the latter only.
+      text = text.replace(/^#{1,3}\s*faq\s*$\n+(?=#{1,3}\s*frequently asked)/gim, "");
+    }
 
     // 4) Tidy whitespace.
     return text.replace(/\n{3,}/g, "\n\n").trim();

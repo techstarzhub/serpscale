@@ -51,9 +51,9 @@ function withSlugs(list: Omit<Project, "slug">[]): Project[] {
 interface ProjectsContextValue {
   projects: Project[];
   loading: boolean;
-  addProject: (input: { name: string; domain: string; enabledTabs?: string[] }) => Promise<Project>;
+  addProject: (input: { name: string; domain: string; enabledTabs?: string[]; googleAccountEmail?: string }) => Promise<Project>;
   // Edit an existing campaign (name / domain / dashboards). Re-slugs the list.
-  updateProject: (id: string, input: { name?: string; domain?: string; enabledTabs?: string[] }) => Promise<Project>;
+  updateProject: (id: string, input: { name?: string; domain?: string; enabledTabs?: string[]; googleAccountEmail?: string }) => Promise<Project>;
   removeProject: (id: string) => Promise<void>;
   // Generate (once) or revoke the campaign's public read-only view key.
   generateShareKey: (id: string) => Promise<string>;
@@ -83,7 +83,7 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
     refresh().finally(() => setLoading(false));
   }, [refresh]);
 
-  const addProject = useCallback(async (input: { name: string; domain: string; enabledTabs?: string[] }) => {
+  const addProject = useCallback(async (input: { name: string; domain: string; enabledTabs?: string[]; googleAccountEmail?: string }) => {
     const created = await api.post<Omit<Project, "slug">>("/projects", input);
     let withSlug!: Project;
     setProjects((prev) => {

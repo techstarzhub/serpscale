@@ -6,15 +6,20 @@ import { PERMISSIONS } from "../auth/permissions";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
 import { PrismaService } from "../prisma/prisma.service";
 import { assertProjectAccess } from "../projects/access";
+import { AuditService } from "../auth/audit.service";
+import { FeaturesGuard } from "../entitlements/features.guard";
+import { RequireFeature } from "../entitlements/require-feature.decorator";
 import { AutofixService } from "./autofix.service";
 
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, PermissionsGuard, FeaturesGuard)
 @RequirePermissions(PERMISSIONS.AUDIT_RUN)
+@RequireFeature("audit")
 @Controller("autofix")
 export class AutofixController {
   constructor(
     private readonly autofix: AutofixService,
     private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
   ) {}
 
   private async assertCrawlAccess(user: AuthUser, crawlId: string) {
@@ -37,6 +42,8 @@ export class AutofixController {
   @Post(":crawlId/pr")
   async openPr(@CurrentUser() user: AuthUser, @Param("crawlId") crawlId: string) {
     await this.assertCrawlAccess(user, crawlId);
-    return this.autofix.createPullRequest(crawlId);
+    const res = await this.autofix.createPullRequest(crawlId);
+    await this.audit.log(user, "autofix.pr.open", { target: crawlId });
+    return res;
   }
 }

@@ -41,6 +41,19 @@ export class StorageService {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
+  /** Fetch an object's bytes + content type (used to stream media publicly). */
+  async getObject(key: string): Promise<{ body: Buffer; contentType: string } | null> {
+    this.assertOwned(key);
+    try {
+      const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      const bytes = await res.Body?.transformToByteArray();
+      if (!bytes) return null;
+      return { body: Buffer.from(bytes), contentType: res.ContentType || "application/octet-stream" };
+    } catch {
+      return null;
+    }
+  }
+
   async signedUrl(key: string, expiresIn = 60 * 60 * 24): Promise<string> {
     return getSignedUrl(
       this.client,

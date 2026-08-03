@@ -91,9 +91,19 @@ export class GoogleService {
     }
   }
 
-  // All GSC sites across every connected Google account for this owner.
-  async listSites(ownerKey: string): Promise<GscSite[]> {
-    const integs = await this.prisma.integration.findMany({ where: { ownerKey, provider: "google" } });
+  // The connected Google integrations for an owner. When accountEmail is given,
+  // narrow to just that account — but if that account was since disconnected,
+  // gracefully fall back to every account so the campaign doesn't go dark.
+  private async googleIntegs(ownerKey: string, accountEmail?: string | null): Promise<Integration[]> {
+    const all = await this.prisma.integration.findMany({ where: { ownerKey, provider: "google" } });
+    if (!accountEmail) return all;
+    const picked = all.filter((i) => i.accountEmail === accountEmail);
+    return picked.length ? picked : all;
+  }
+
+  // All GSC sites for this owner. Scoped to the campaign's chosen account when set.
+  async listSites(ownerKey: string, accountEmail?: string | null): Promise<GscSite[]> {
+    const integs = await this.googleIntegs(ownerKey, accountEmail);
     const out: GscSite[] = [];
     for (const integ of integs) {
       const token = await this.getToken(integ);
@@ -166,9 +176,9 @@ export class GoogleService {
   }
 
   // Search Console overview for a project (auto-matched by domain).
-  async gscForProject(project: { orgId: string | null; createdById: string | null; domain: string }, days = 28, range?: { from?: string; to?: string }) {
+  async gscForProject(project: { orgId: string | null; createdById: string | null; domain: string; googleAccountEmail?: string | null }, days = 28, range?: { from?: string; to?: string }) {
     const ownerKey = this.ownerKeyForProject(project);
-    const sites = await this.listSites(ownerKey);
+    const sites = await this.listSites(ownerKey, project.googleAccountEmail);
     if (sites.length === 0) return { connected: false, matched: false, sites: [] as string[] };
     const match = this.matchSite(sites, project.domain);
     if (!match) return { connected: true, matched: false, sites: sites.map((s) => s.siteUrl) };
@@ -228,8 +238,8 @@ export class GoogleService {
 
   // All GA4 properties across every connected Google account, with their web
   // stream URIs (used to auto-match a property to a project's domain).
-  async listGaProperties(ownerKey: string): Promise<GaProperty[]> {
-    const integs = await this.prisma.integration.findMany({ where: { ownerKey, provider: "google" } });
+  async listGaProperties(ownerKey: string, accountEmail?: string | null): Promise<GaProperty[]> {
+    const integs = await this.googleIntegs(ownerKey, accountEmail);
     const out: GaProperty[] = [];
     for (const integ of integs) {
       const token = await this.getToken(integ);
@@ -314,9 +324,9 @@ export class GoogleService {
   }
 
   // GA4 traffic overview for a project (auto-matched by domain).
-  async gaForProject(project: { orgId: string | null; createdById: string | null; domain: string }, days = 28, range?: { from?: string; to?: string }) {
+  async gaForProject(project: { orgId: string | null; createdById: string | null; domain: string; googleAccountEmail?: string | null }, days = 28, range?: { from?: string; to?: string }) {
     const ownerKey = this.ownerKeyForProject(project);
-    const props = await this.listGaProperties(ownerKey);
+    const props = await this.listGaProperties(ownerKey, project.googleAccountEmail);
     if (props.length === 0) return { connected: false, matched: false, properties: [] as string[] };
     const match = this.matchProperty(props, project.domain);
     if (!match) return { connected: true, matched: false, properties: props.map((p) => p.displayName) };
@@ -501,9 +511,9 @@ export class GoogleService {
   // project's domain, then returns its rating + reviews + profile. Activates once
   // Google approves the project's Business Profile API access (until then the
   // accounts call returns 403 and we degrade to { connected:true, matched:false }).
-  async gmbForProject(project: { orgId: string | null; createdById: string | null; domain: string }) {
+  async gmbForProject(project: { orgId: string | null; createdById: string | null; domain: string; googleAccountEmail?: string | null }) {
     const ownerKey = this.ownerKeyForProject(project);
-    const integs = await this.prisma.integration.findMany({ where: { ownerKey, provider: "google" } });
+    const integs = await this.googleIntegs(ownerKey, project.googleAccountEmail);
     if (integs.length === 0) return { connected: false, matched: false };
     const domain = project.domain.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").toLowerCase();
     const sameHost = (uri?: string) => {

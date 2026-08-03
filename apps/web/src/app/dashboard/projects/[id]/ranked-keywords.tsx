@@ -38,7 +38,7 @@ function posTone(p: number | null) {
  * Every keyword the domain organically ranks for on Google, via DataForSEO Labs
  * (far broader than GSC's sampled query set). Cached 7 days server-side.
  */
-export function RankedKeywords({ project, refreshNonce = 0, base }: { project: Project; refreshNonce?: number; base?: string }) {
+export function RankedKeywords({ project, refreshNonce = 0, refreshMode = "live", base }: { project: Project; refreshNonce?: number; refreshMode?: "live" | "cached"; base?: string }) {
   const apiBase = base ?? `/projects/${project.id}`;
   const [data, setData] = useState<RankedResp | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,8 +48,10 @@ export function RankedKeywords({ project, refreshNonce = 0, base }: { project: P
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    // Refresh → paid live once/day; further same-day refreshes read cache only.
+    const refreshQ = refreshNonce ? (refreshMode === "cached" ? "&cachedOnly=1" : "&fresh=1") : "";
     api
-      .get<RankedResp>(`${apiBase}/ranked-keywords?country=${country}${refreshNonce ? "&fresh=1" : ""}`)
+      .get<RankedResp>(`${apiBase}/ranked-keywords?country=${country}${refreshQ}`)
       .then((d) => alive && (setData(d), setLoading(false)))
       .catch(() => alive && (setData(null), setLoading(false)));
     return () => {

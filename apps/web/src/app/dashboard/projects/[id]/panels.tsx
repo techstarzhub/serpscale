@@ -48,7 +48,7 @@ import { TrendChart, BarList, DonutChart, ChartCard } from "@/components/ui/char
 import { OverviewSkeleton, KpiGridSkeleton, TableCardSkeleton } from "@/components/ui/panel-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RichText, streamAuditFix } from "@/components/copilot/copilot-core";
-import { LoadDataCard } from "./dataforseo-panels";
+import { LoadDataCard, WarmingCard, useWarmupPoll, isNewProject } from "./dataforseo-panels";
 // GitHub auto-fix PR feature hidden for now — re-enable by uncommenting here and below.
 // import { GithubConnectCard } from "./autofix-panel";
 
@@ -918,7 +918,7 @@ type BacklinksData = {
   tld?: Record<string, number>;
 };
 
-export function BacklinksPanel({ project, refreshNonce = 0, base }: { project: Project; refreshNonce?: number; base?: string }) {
+export function BacklinksPanel({ project, refreshNonce = 0, refreshMode = "live", base }: { project: Project; refreshNonce?: number; refreshMode?: "live" | "cached"; base?: string }) {
   const apiBase = base ?? `/projects/${project.id}`;
   const [data, setData] = useState<BacklinksData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -935,7 +935,9 @@ export function BacklinksPanel({ project, refreshNonce = 0, base }: { project: P
     [project.id],
   );
   useEffect(() => { load("cached"); }, [load]);
-  useEffect(() => { if (refreshNonce) load("live"); }, [refreshNonce]);
+  useEffect(() => { if (refreshNonce) load(refreshMode); }, [refreshNonce]);
+  const reloadCached = useCallback(() => load("cached"), [load]);
+  const warming = useWarmupPoll(isNewProject(project), data?.loaded === false, reloadCached);
 
   if (loading) {
     return (
@@ -953,7 +955,7 @@ export function BacklinksPanel({ project, refreshNonce = 0, base }: { project: P
   }
 
   if (data?.loaded === false) {
-    return <LoadDataCard label="Backlink data" onLoad={() => load("live")} />;
+    return warming ? <WarmingCard label="Backlink data" /> : <LoadDataCard label="Backlink data" onLoad={() => load("live")} />;
   }
 
   if (!data?.connected || !data.summary) {

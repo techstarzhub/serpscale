@@ -30,6 +30,7 @@ import { ClientsService } from "../clients/clients.service";
 import { RankTrackerService } from "../rank-tracker/rank-tracker.service";
 import { EmailService } from "../email/email.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { AuditService } from "../auth/audit.service";
 import { CreateProjectDto, UpdateProjectDto } from "./dto/project.dto";
 
 // "?fresh=1" / "?fresh=true" → bypass cache and re-fetch live (Refresh button).
@@ -48,6 +49,7 @@ export class ProjectsController {
     private readonly email: EmailService,
     private readonly rankTracker: RankTrackerService,
     private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
   ) {}
 
   // ---- Scheduled rank tracking ----
@@ -61,23 +63,27 @@ export class ProjectsController {
   }
 
   @Post(":id/rank-keywords")
-  @RequirePermissions(P.RANKS_VIEW)
+  @RequirePermissions(P.PROJECTS_EDIT)
   @RequireFeature("ranks")
   async addRankKeyword(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { keyword?: string; country?: string; device?: string }) {
     await this.projects.get(user, id);
-    return this.rankTracker.add(id, dto?.keyword ?? "", dto?.country, dto?.device);
+    const res = await this.rankTracker.add(id, dto?.keyword ?? "", dto?.country, dto?.device);
+    await this.audit.log(user, "project.keyword.add", { target: dto?.keyword ?? "", metadata: { projectId: id, country: dto?.country, device: dto?.device } });
+    return res;
   }
 
   @Delete(":id/rank-keywords/:kid")
-  @RequirePermissions(P.RANKS_VIEW)
+  @RequirePermissions(P.PROJECTS_EDIT)
   @RequireFeature("ranks")
   async removeRankKeyword(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("kid") kid: string) {
     await this.projects.get(user, id);
-    return this.rankTracker.remove(id, kid);
+    const res = await this.rankTracker.remove(id, kid);
+    await this.audit.log(user, "project.keyword.remove", { target: kid, metadata: { projectId: id } });
+    return res;
   }
 
   @Post(":id/rank-keywords/refresh")
-  @RequirePermissions(P.RANKS_VIEW)
+  @RequirePermissions(P.PROJECTS_EDIT)
   @RequireFeature("ranks")
   async refreshRankKeywords(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     await this.projects.get(user, id);
@@ -104,8 +110,24 @@ export class ProjectsController {
 
   @Post()
   @RequirePermissions(P.PROJECTS_CREATE)
-  create(@CurrentUser() user: AuthUser, @Body() dto: CreateProjectDto) {
-    return this.projects.create(user, dto);
+  async create(@CurrentUser() user: AuthUser, @Body() dto: CreateProjectDto) {
+    const project = await this.projects.create(user, dto);
+    await this.audit.log(user, "project.create", { target: project.domain, metadata: { id: project.id, name: project.name } });
+    // Fire the DataForSeo lookups NOW (background), so by the time the creator lands
+    // on the new campaign its backlinks, rankings, competitors and tech stack are
+    // already in cache — the panels show real data (after their skeletons) instead
+    // of an empty "click Refresh" state. Best-effort; respects the daily budget.
+    this.warmProjectData(project.domain);
+    return project;
+  }
+
+  /** Populate the DataForSeo caches for a domain in the background (fire-and-forget). */
+  private warmProjectData(domain: string) {
+    if (!domain) return;
+    void this.dataforseo.backlinksForDomain(domain).catch(() => {});
+    void this.dataforseo.rankedKeywords(domain).catch(() => {});
+    void this.dataforseo.competitors(domain).catch(() => {});
+    void this.dataforseo.technologies(domain).catch(() => {});
   }
 
   // Access is enforced by projects.get -> assertAccess (view-all / assigned / client).
@@ -114,37 +136,55 @@ export class ProjectsController {
     return this.projects.get(user, id);
   }
 
+  // Sidebar hover card: created-by, created-at and assigned members. Access is
+  // enforced by projects.meta -> get -> assertAccess.
+  @Get(":id/meta")
+  meta(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.projects.meta(user, id);
+  }
+
   @Patch(":id")
   @RequirePermissions(P.PROJECTS_EDIT)
-  update(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: UpdateProjectDto) {
-    return this.projects.update(user, id, dto);
+  async update(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: UpdateProjectDto) {
+    const project = await this.projects.update(user, id, dto);
+    await this.audit.log(user, "project.update", { target: project.domain, metadata: { id: project.id } });
+    return project;
   }
 
   // Archive / restore a campaign (soft — data is kept, just hidden by default).
   @Patch(":id/archive")
   @RequirePermissions(P.PROJECTS_EDIT)
-  setArchived(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { archived?: boolean }) {
-    return this.projects.setArchived(user, id, dto?.archived !== false);
+  async setArchived(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { archived?: boolean }) {
+    const archived = dto?.archived !== false;
+    const project = await this.projects.setArchived(user, id, archived);
+    await this.audit.log(user, archived ? "project.archive" : "project.restore", { target: project.domain, metadata: { id: project.id } });
+    return project;
   }
 
   // Generate (or fetch) the campaign's public read-only view key.
   @Post(":id/share")
   @RequirePermissions(P.PROJECTS_EDIT)
-  generateShare(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.projects.generateShare(user, id);
+  async generateShare(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const res = await this.projects.generateShare(user, id);
+    await this.audit.log(user, "project.share.create", { target: id });
+    return res;
   }
 
   // Revoke the public view key — the link stops working immediately.
   @Delete(":id/share")
   @RequirePermissions(P.PROJECTS_EDIT)
-  revokeShare(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.projects.revokeShare(user, id);
+  async revokeShare(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const res = await this.projects.revokeShare(user, id);
+    await this.audit.log(user, "project.share.revoke", { target: id });
+    return res;
   }
 
   @Delete(":id")
   @RequirePermissions(P.PROJECTS_DELETE)
-  remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.projects.remove(user, id);
+  async remove(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const res = await this.projects.remove(user, id);
+    await this.audit.log(user, "project.delete", { target: id });
+    return res;
   }
 
   // ---- Site crawl / audit ----
@@ -159,7 +199,9 @@ export class ProjectsController {
   ) {
     const project = await this.projects.get(user, id);
     const maxPages = Math.min(100000, Math.max(1, Number(body?.maxPages) || 1000));
-    return this.crawls.start(project, maxPages, user.id);
+    const res = await this.crawls.start(project, maxPages, user.id);
+    await this.audit.log(user, "project.audit.run", { target: project.domain, metadata: { id, maxPages } });
+    return res;
   }
 
   // Cancel the running audit for this campaign.
@@ -191,6 +233,7 @@ export class ProjectsController {
   // Analytics + keyword rankings + backlinks + competitors (all cached).
   @Get(":id/report.pdf")
   @RequirePermissions(P.REPORTS_GENERATE)
+  @RequireFeature("white_label")
   async report(@CurrentUser() user: AuthUser, @Param("id") id: string, @Res() res: Response) {
     const project = await this.projects.get(user, id);
     // White-label: an agency-client's own brand for its portal users, else the org's.
@@ -219,6 +262,7 @@ export class ProjectsController {
   // Email this campaign's white-label PDF report to a client's members.
   @Post(":id/send-report")
   @RequirePermissions(P.CLIENTS_SEND_REPORTS)
+  @RequireFeature("white_label")
   async sendReport(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { clientId?: string }) {
     const project = await this.projects.get(user, id);
     if (!dto?.clientId) throw new BadRequestException("clientId is required.");
@@ -248,6 +292,7 @@ export class ProjectsController {
       body: `The ${project.domain} report was emailed to ${sent} recipient(s).`,
       link: `/dashboard/projects/${id}`,
     });
+    await this.audit.log(user, "project.report.send", { target: clientName, metadata: { projectId: id, domain: project.domain, sent, total: emails.length } });
     return { sent, total: emails.length, client: clientName };
   }
 
@@ -490,15 +535,19 @@ export class ProjectsController {
 
   @Post(":id/members")
   @RequirePermissions(P.TEAM_MANAGE)
-  assignMember(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { userId?: string }) {
+  async assignMember(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { userId?: string }) {
     if (!dto?.userId) throw new BadRequestException("userId is required.");
-    return this.projects.assignMember(user, id, dto.userId);
+    const res = await this.projects.assignMember(user, id, dto.userId);
+    await this.audit.log(user, "project.member.assign", { target: dto.userId, metadata: { projectId: id } });
+    return res;
   }
 
   @Delete(":id/members/:userId")
   @RequirePermissions(P.TEAM_MANAGE)
-  unassignMember(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("userId") userId: string) {
-    return this.projects.unassignMember(user, id, userId);
+  async unassignMember(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("userId") userId: string) {
+    const res = await this.projects.unassignMember(user, id, userId);
+    await this.audit.log(user, "project.member.unassign", { target: userId, metadata: { projectId: id } });
+    return res;
   }
 
   // ---- Attach / detach clients to this campaign from the header ----
@@ -510,15 +559,19 @@ export class ProjectsController {
 
   @Post(":id/clients")
   @RequirePermissions(P.CLIENTS_ASSIGN_CAMPAIGNS)
-  attachClient(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { clientId?: string }) {
+  async attachClient(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: { clientId?: string }) {
     if (!dto?.clientId) throw new BadRequestException("clientId is required.");
-    return this.projects.attachClient(user, id, dto.clientId);
+    const res = await this.projects.attachClient(user, id, dto.clientId);
+    await this.audit.log(user, "project.client.attach", { target: dto.clientId, metadata: { projectId: id } });
+    return res;
   }
 
   @Delete(":id/clients/:clientId")
   @RequirePermissions(P.CLIENTS_ASSIGN_CAMPAIGNS)
-  detachClient(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("clientId") clientId: string) {
-    return this.projects.detachClient(user, id, clientId);
+  async detachClient(@CurrentUser() user: AuthUser, @Param("id") id: string, @Param("clientId") clientId: string) {
+    const res = await this.projects.detachClient(user, id, clientId);
+    await this.audit.log(user, "project.client.detach", { target: clientId, metadata: { projectId: id } });
+    return res;
   }
 
   // Whole-audit prioritised AI action plan.

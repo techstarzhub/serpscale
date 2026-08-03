@@ -13,6 +13,7 @@ import { PermissionsGuard } from "../auth/guards/permissions.guard";
 import { RequirePermissions } from "../auth/decorators/require-permissions.decorator";
 import { PERMISSIONS } from "../auth/permissions";
 import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.decorator";
+import { AuditService } from "../auth/audit.service";
 import { IntegrationsService } from "./integrations.service";
 
 function ownerKeyOf(user: AuthUser): string {
@@ -21,7 +22,10 @@ function ownerKeyOf(user: AuthUser): string {
 
 @Controller("integrations")
 export class IntegrationsController {
-  constructor(private readonly svc: IntegrationsService) {}
+  constructor(
+    private readonly svc: IntegrationsService,
+    private readonly audit: AuditService,
+  ) {}
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(PERMISSIONS.INTEGRATIONS_MANAGE)
@@ -54,7 +58,9 @@ export class IntegrationsController {
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @RequirePermissions(PERMISSIONS.INTEGRATIONS_MANAGE)
   @Delete(":id")
-  disconnect(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.svc.disconnectById(ownerKeyOf(user), id);
+  async disconnect(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const res = await this.svc.disconnectById(ownerKeyOf(user), id);
+    await this.audit.log(user, "integration.google.disconnect", { target: id });
+    return res;
   }
 }

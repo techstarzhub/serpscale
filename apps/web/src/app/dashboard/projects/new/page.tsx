@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Check, Link2, LayoutGrid, Plug, ListChecks, Lock, Info, ExternalLink } from "lucide-react";
+import { ArrowLeft, Loader2, Check, Link2, LayoutGrid, Plug, ListChecks, Lock, Info, ExternalLink, Database } from "lucide-react";
 import { FcGoogle } from "react-icons/fc";
 import { SiGoogleanalytics, SiGooglesearchconsole, SiGoogleads, SiMeta, SiInstagram, SiYoutube, SiPinterest } from "react-icons/si";
 import { FaGithub, FaLinkedin } from "react-icons/fa6";
@@ -123,11 +123,14 @@ export default function NewCampaignPage() {
   const [device, setDevice] = useState("Desktop");
 
   // Real integration status (Google account is org-level → shared by GSC/GA/GMB).
-  const [intg, setIntg] = useState({ loaded: false, googleConnected: false, googleConfigured: true });
+  const [intg, setIntg] = useState<{ loaded: boolean; configured: boolean; accounts: { id: string; accountEmail: string | null }[] }>({ loaded: false, configured: true, accounts: [] });
+  // Which connected Google account powers this campaign's data. "" = auto-detect
+  // by domain across every account (default, and the only option with one account).
+  const [dataSource, setDataSource] = useState("");
   const fetchIntg = useCallback(async () => {
     try {
-      const s = await api.get<{ googleAccounts?: unknown[]; googleConfigured?: boolean }>("/integrations");
-      setIntg({ loaded: true, googleConnected: (s?.googleAccounts ?? []).length > 0, googleConfigured: s?.googleConfigured ?? false });
+      const s = await api.get<{ googleAccounts?: { id: string; accountEmail: string | null }[]; googleConfigured?: boolean }>("/integrations");
+      setIntg({ loaded: true, configured: s?.googleConfigured ?? false, accounts: s?.googleAccounts ?? [] });
     } catch {
       setIntg((p) => ({ ...p, loaded: true }));
     }
@@ -150,10 +153,17 @@ export default function NewCampaignPage() {
   const kwCount = keywords.split("\n").map((k) => k.trim()).filter(Boolean).length;
   const step1Valid = name.trim().length > 0 && domain.trim().length >= 3;
 
+  // Google connection state derived from the connected-accounts list.
+  const googleConnected = intg.accounts.length > 0;
+  // The account that will actually be used: an explicit pick, or the sole account,
+  // else "Auto-detect by domain" (shown to the user so the source is never a mystery).
+  const effectiveAccount = dataSource || (intg.accounts.length === 1 ? intg.accounts[0].accountEmail ?? "" : "");
+  const accountLabel = effectiveAccount || "Auto-detect by domain";
+
   async function finish() {
     setError(""); setLoading(true);
     try {
-      const project = await addProject({ name: name.trim(), domain: domain.trim(), enabledTabs: mods });
+      const project = await addProject({ name: name.trim(), domain: domain.trim(), enabledTabs: mods, googleAccountEmail: dataSource || undefined });
       // Actually enrol the entered keywords into the rank tracker with the chosen
       // location + device (the real backend fields), so those selectors do real work.
       const kws = keywords.split("\n").map((k) => k.trim()).filter(Boolean);
@@ -257,11 +267,31 @@ export default function NewCampaignPage() {
               <h2 className="font-heading text-2xl font-semibold">Integrations,</h2>
               <p className="mt-0.5 text-[15px] text-muted-foreground">Connect your accounts to pull live data. You can skip and connect any later.</p>
             </div>
+
+            {/* Data source picker — only when several Google accounts are connected.
+                One account powers all three Google services, so it lives once here. */}
+            {googleConnected && intg.accounts.length >= 2 && (
+              <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-primary/30 bg-primary/[0.04] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1.5 text-[15px] font-semibold"><Database className="h-4 w-4 text-primary" /> Data source</p>
+                  <p className="mt-0.5 text-sm text-muted-foreground">{intg.accounts.length} Google accounts connected — choose which one this campaign pulls its data from.</p>
+                </div>
+                <select
+                  value={dataSource}
+                  onChange={(e) => setDataSource(e.target.value)}
+                  className="h-11 shrink-0 cursor-pointer rounded-xl border border-input bg-card px-3 text-sm font-medium outline-none focus:border-primary focus:ring-2 focus:ring-ring/20 sm:min-w-[240px]"
+                >
+                  <option value="">Auto-detect by domain</option>
+                  {intg.accounts.map((a) => <option key={a.id} value={a.accountEmail ?? ""}>{a.accountEmail ?? "Connected account"}</option>)}
+                </select>
+              </div>
+            )}
+
             <div className="space-y-3">
               {INTEGRATIONS.map((it) => {
                 const isGoogle = it.provider === "google";
-                const connected = isGoogle && intg.googleConnected;
-                const needsSetup = isGoogle && intg.loaded && !intg.googleConfigured;
+                const connected = isGoogle && googleConnected;
+                const needsSetup = isGoogle && intg.loaded && !intg.configured;
                 return (
                   <div key={it.id} className={cn("flex items-center gap-4 rounded-2xl border px-5 py-4 transition-shadow hover:shadow-sm", connected ? "border-success/40 bg-success/[0.04]" : "border-border bg-card")}>
                     <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-border bg-card">
@@ -270,6 +300,7 @@ export default function NewCampaignPage() {
                     <div className="min-w-0 flex-1">
                       <p className="text-[15px] font-semibold">{it.name}</p>
                       <p className="truncate text-sm text-muted-foreground">{needsSetup ? "Add GOOGLE_CLIENT_ID & secret in settings to enable this." : it.desc}</p>
+                      {connected && <p className="mt-0.5 flex items-center gap-1 truncate text-xs font-medium text-success"><Database className="h-3 w-3 shrink-0" /> {accountLabel}</p>}
                     </div>
                     {/* GitHub is per-campaign → available after launch */}
                     {it.provider === "github" ? (
@@ -352,7 +383,7 @@ export default function NewCampaignPage() {
         <div className="flex gap-3">
           {step > 1 && <button onClick={() => setStep((s) => s - 1)} className="rounded-full border border-input bg-card px-7 py-2.5 text-sm font-semibold transition-colors hover:bg-muted">Previous</button>}
           {step === 1 && <Button className="rounded-full px-8" disabled={!step1Valid} onClick={() => setStep(2)}>Continue</Button>}
-          {step === 2 && <Button className="rounded-full px-8" onClick={() => setStep(3)}>{intg.googleConnected ? "Next" : "Next / Skip"}</Button>}
+          {step === 2 && <Button className="rounded-full px-8" onClick={() => setStep(3)}>{googleConnected ? "Next" : "Next / Skip"}</Button>}
           {step === 3 && <Button className="rounded-full px-8" onClick={finish} disabled={loading}>{loading && <Loader2 className="h-4 w-4 animate-spin" />} Finish</Button>}
         </div>
       </div>

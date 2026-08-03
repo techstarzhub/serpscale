@@ -14,6 +14,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { EmailService } from "../email/email.service";
 import { OtpService } from "./otp.service";
+import { AuditService } from "./audit.service";
 import { normalizeEmail } from "../common/email.util";
 import type { AuthUser } from "./decorators/current-user.decorator";
 
@@ -33,7 +34,14 @@ export class AuthService {
     private readonly storage: StorageService,
     private readonly email: EmailService,
     private readonly otp: OtpService,
+    private readonly audit: AuditService,
   ) {}
+
+  // Record a successful sign-in on the activity trail (best effort — never blocks
+  // the login). Captures the source IP when the controller passes it through.
+  private async logLogin(user: { id: string; email: string; orgId: string | null }, ip?: string) {
+    await this.audit.log({ id: user.id, email: user.email, orgId: user.orgId }, "auth.login", { ip });
+  }
 
   // ---- Signup: email-OTP verified. The account is only created once the code
   // is confirmed, so unverified emails never become real accounts. ----
@@ -67,7 +75,7 @@ export class AuthService {
   }
 
   // ---- Login: password first, then an email OTP (2FA) when SMTP is set up. ----
-  async login(input: { email: string; password: string }, tenantSlug?: string | null): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
+  async login(input: { email: string; password: string }, tenantSlug?: string | null, ip?: string): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
     const email = normalizeEmail(input.email);
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user || !user.isActive) throw new UnauthorizedException("Invalid email or password.");
@@ -77,13 +85,14 @@ export class AuthService {
     await this.assertTenantAccess(user, tenantSlug ?? null);
     if (!(await this.email.platformReady())) {
       await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+      await this.logLogin(user, ip);
       return { tokens: await this.issueTokens(user) };
     }
     return this.otp.issue(email, "LOGIN", null);
   }
 
   // ---- Verify the emailed code and complete signup or login. ----
-  async verifyOtp(purpose: "SIGNUP" | "LOGIN", emailInput: string, code: string, tenantSlug?: string | null): Promise<Tokens> {
+  async verifyOtp(purpose: "SIGNUP" | "LOGIN", emailInput: string, code: string, tenantSlug?: string | null, ip?: string): Promise<Tokens> {
     const email = normalizeEmail(emailInput);
     const payload = await this.otp.verify(email, purpose, code);
     if (purpose === "SIGNUP") {
@@ -94,12 +103,14 @@ export class AuthService {
         throw new ConflictException("An account with this email already exists.");
       }
       const user = await this.createAccount(p);
+      await this.logLogin(user, ip);
       return this.issueTokens(user);
     }
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user || !user.isActive) throw new UnauthorizedException("Account not found.");
     await this.assertTenantAccess(user, tenantSlug ?? null);
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    await this.logLogin(user, ip);
     return this.issueTokens(user);
   }
 

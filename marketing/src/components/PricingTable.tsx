@@ -33,6 +33,18 @@ function limitLabel(plan: Plan, key: string): string {
   if (n == null || n === 0) return "—";
   return n >= 1000 ? "Unlimited" : n.toLocaleString();
 }
+// Monthly AI blog allowance — shows the REAL number (never "Unlimited", since it's
+// a genuine metered cap). 0 / missing content plan → "—".
+function blogLabel(plan: Plan): string {
+  const n = plan.limits?.blogsPerMonth;
+  if (n == null) return "Unlimited";
+  if (n <= 0) return "—";
+  return `${n.toLocaleString()}/mo`;
+}
+// Whether the plan includes the content tools (AI blog + auto images).
+function hasContent(plan: Plan): boolean {
+  return Array.isArray(plan.features) ? plan.features.includes("content") : false;
+}
 
 const labelCell: CSSProperties = {
   padding: "14px 16px", textAlign: "left", fontSize: 14, fontWeight: 500,
@@ -187,6 +199,16 @@ export function PricingTable({ plans }: { plans: Plan[] }) {
             <tr>
               <td style={labelCell}>Clients</td>
               {plans.map((p) => <td key={p.id} style={cell}>{limitLabel(p, "clients")}</td>)}
+            </tr>
+
+            <SectionRow label="AI content &amp; images" cols={cols} />
+            <tr>
+              <td style={labelCell}>AI blog posts / month</td>
+              {plans.map((p) => <td key={p.id} style={{ ...cell, fontWeight: 700, color: "#111827" }}>{blogLabel(p)}</td>)}
+            </tr>
+            <tr>
+              <td style={labelCell}>AI images auto-added to blogs</td>
+              {plans.map((p) => <td key={p.id} style={cell}>{hasContent(p) ? <Check /> : <Dash />}</td>)}
             </tr>
 
             <SectionRow label="Features included" cols={cols} />

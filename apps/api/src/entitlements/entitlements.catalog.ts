@@ -46,6 +46,7 @@ export const LIMIT_CATALOG: LimitDef[] = [
   { key: "clients", label: "Clients", countModel: "client" },
   { key: "rankChecksPerDay", label: "Rank checks / day" },
   { key: "crawlPagesPerMonth", label: "Crawl pages / month" },
+  { key: "blogsPerMonth", label: "Blog generations / month" },
 ];
 
 export const MODULE_KEYS = MODULE_CATALOG.map((m) => m.key);

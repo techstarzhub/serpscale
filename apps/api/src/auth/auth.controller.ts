@@ -11,6 +11,7 @@ import { VerifyOtpDto, ResendOtpDto, ResetPasswordDto } from "./dto/otp.dto";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CurrentUser, type AuthUser } from "./decorators/current-user.decorator";
 import { PermissionsService } from "./permissions.service";
+import { AuditService } from "./audit.service";
 import { EntitlementsService } from "../entitlements/entitlements.service";
 
 @Controller("auth")
@@ -19,6 +20,7 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly perms: PermissionsService,
     private readonly entitlements: EntitlementsService,
+    private readonly audit: AuditService,
   ) {}
 
   // Stricter limits on unauthenticated auth endpoints — anti brute-force / abuse.
@@ -35,7 +37,7 @@ export class AuthController {
   @Throttle({ default: { limit: 8, ttl: 60_000 } })
   @Post("login")
   async login(@Body() dto: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const r = await this.auth.login(dto, tenantSlugFromRequest(req));
+    const r = await this.auth.login(dto, tenantSlugFromRequest(req), req.ip);
     if ("tokens" in r) { setAuthCookies(res, r.tokens); return { ok: true }; }
     return r; // { otpRequired, email }
   }
@@ -43,7 +45,7 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post("verify-otp")
   async verifyOtp(@Body() dto: VerifyOtpDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    setAuthCookies(res, await this.auth.verifyOtp(dto.purpose, dto.email, dto.code, tenantSlugFromRequest(req)));
+    setAuthCookies(res, await this.auth.verifyOtp(dto.purpose, dto.email, dto.code, tenantSlugFromRequest(req), req.ip));
     return { ok: true };
   }
 
@@ -115,6 +117,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     setAuthCookies(res, await this.auth.impersonate(user, { userId: dto?.userId, clientId: dto?.clientId }));
+    await this.audit.log(user, "auth.impersonate.start", { target: dto?.userId ?? dto?.clientId ?? undefined, metadata: { userId: dto?.userId ?? null, clientId: dto?.clientId ?? null } });
     return { ok: true };
   }
 
@@ -123,6 +126,7 @@ export class AuthController {
   @Post("stop-impersonate")
   async stopImpersonate(@CurrentUser() user: AuthUser, @Res({ passthrough: true }) res: Response) {
     setAuthCookies(res, await this.auth.stopImpersonate(user));
+    await this.audit.log(user, "auth.impersonate.stop", {});
     return { ok: true };
   }
 }

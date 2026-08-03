@@ -88,17 +88,6 @@ type TabDef = { key: TabKey; label: string; icon: TabIcon; perm?: string; brand?
 // latestForProject() only ever returns COMPLETED/RUNNING/QUEUED crawls (never FAILED/CANCELLED).
 type LatestCrawl = { status: "QUEUED" | "RUNNING" | "COMPLETED"; finishedAt: string | null } | null;
 
-// Tabs are clustered into channel-style groups (like the competitor's grouped
-// Google/AI/Bing toggle). Multi-item groups render as a nested segmented pill;
-// single-item groups render as a plain pill. Copilot + Settings are pulled out
-// as their own round accent buttons beside the bar.
-const TAB_GROUPS: { id: string; keys: TabKey[] }[] = [
-  { id: "start", keys: ["overview"] },
-  { id: "research", keys: ["keywords", "content", "ranks", "competitors"] },
-  { id: "insights", keys: ["traffic", "backlinks", "domain", "ai"] },
-  { id: "tech", keys: ["audit"] },
-];
-
 // Per-tab icon tint so inactive tabs read as colourful glyphs (like a channel
 // bar) instead of a flat grey row. Active tabs go white on the gradient pill.
 const TAB_ACCENT: Record<TabKey, string> = {
@@ -199,8 +188,19 @@ export default function ProjectWorkspace() {
   const { user } = useCurrentUser();
   const can = useCan();
   const hasFeature = useFeature();
-  const [tab, setTab] = useState<TabKey>("overview");
+  // Start on the tab named in the URL (?tab=) so a reload restores it. Guarded
+  // for SSR; during data-loading the skeleton renders, so no hydration mismatch.
+  const [tab, setTab] = useState<TabKey>(() => {
+    if (typeof window === "undefined") return "overview";
+    const t = new URLSearchParams(window.location.search).get("tab");
+    return t && tabs.some((x) => x.key === t) ? (t as TabKey) : "overview";
+  });
   const [refreshNonce, setRefreshNonce] = useState(0);
+  // The Refresh button spends a paid DataForSeo call at most ONCE per day per
+  // campaign; every other refresh that day just re-reads the cache (free).
+  const [refreshMode, setRefreshMode] = useState<"live" | "cached">("live");
+  // "Run audit" in the header should both open the Audit tab AND kick off a crawl.
+  const [pendingAudit, setPendingAudit] = useState(false);
   // Super admins manage the platform, not campaigns — send them to the admin panel.
   useEffect(() => {
     if (user?.role === "SUPER_ADMIN") router.replace("/dashboard/admin");
@@ -229,9 +229,12 @@ export default function ProjectWorkspace() {
     return true;
   });
   const tabAllowed = visibleTabs.some((t) => t.key === tab);
+  // Only fall back to the first tab once the project + entitlements have loaded —
+  // otherwise a restored tab (from ?tab=) gets clobbered before its feature is
+  // known to be allowed.
   useEffect(() => {
-    if (visibleTabs.length && !tabAllowed) setTab(visibleTabs[0].key);
-  }, [tabAllowed, visibleTabs]);
+    if (!loading && projectForTabs && visibleTabs.length && !tabAllowed) setTab(visibleTabs[0].key);
+  }, [loading, projectForTabs, tabAllowed, visibleTabs]);
 
   const project = getProject(params.id);
 
@@ -254,11 +257,22 @@ export default function ProjectWorkspace() {
     if (t && tabs.some((x) => x.key === t)) setTab(t as TabKey);
   }, []);
 
+  // Keep the active tab in the URL so a reload (or a shared/bookmarked link)
+  // reopens exactly where the user was — without adding history entries.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("tab") !== tab) {
+      url.searchParams.set("tab", tab);
+      window.history.replaceState(window.history.state, "", url.toString());
+    }
+  }, [tab]);
+
   // If the page was opened with the raw id (or an old link), swap the address
   // bar to the readable slug without a reload.
   useEffect(() => {
     if (project && params.id !== project.slug) {
-      router.replace(`/dashboard/projects/${project.slug}`);
+      // Preserve the current query (e.g. ?tab=) through the id→slug address swap.
+      router.replace(`/dashboard/projects/${project.slug}${window.location.search}`);
     }
   }, [project, params.id, router]);
 
@@ -284,6 +298,15 @@ export default function ProjectWorkspace() {
   // Force a live re-fetch of the active tab (bypasses the server cache via ?fresh=1).
   // No spinner — panels swap to structured skeletons while the fresh data loads.
   function onRefresh() {
+    // First refresh of the day → paid live re-fetch; the rest → cache only.
+    let mode: "live" | "cached" = "live";
+    try {
+      const key = `df-paid-refresh:${project!.id}`;
+      const today = new Date().toDateString();
+      if (localStorage.getItem(key) === today) mode = "cached";
+      else localStorage.setItem(key, today);
+    } catch { /* localStorage blocked → default to live */ }
+    setRefreshMode(mode);
     setRefreshNonce((n) => n + 1);
   }
 
@@ -313,18 +336,18 @@ export default function ProjectWorkspace() {
         onClick={() => setTab(t.key)}
         title={locked ? `${t.label} — upgrade to unlock` : t.label}
         className={cn(
-          "group relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-2 text-[13px] transition-all duration-200 lg:px-3.5 lg:py-2.5 lg:text-[14px] xl:px-4 xl:py-3 xl:text-[15px]",
+          "group relative flex items-center gap-1.5 whitespace-nowrap rounded-xl px-2.5 py-2 text-[13px] transition-colors duration-200 sm:px-3 lg:text-sm",
           isActive
-            ? "bg-gradient-to-br from-primary to-primary/85 text-primary-foreground shadow-glow"
+            ? "bg-primary text-primary-foreground shadow-sm"
             : "font-medium text-muted-foreground hover:bg-secondary hover:text-foreground",
         )}
       >
         <Icon
           className={cn(
-            "h-4 w-4 shrink-0 transition-all duration-200 group-hover:scale-110 xl:h-[18px] xl:w-[18px]",
-            // Active → white on the gradient pill. Inactive brand tabs use their
-            // real logo colour (inline style); the rest use their accent tint.
-            isActive ? "text-primary-foreground" : t.brand ? "opacity-95 group-hover:opacity-100" : cn(TAB_ACCENT[t.key], "opacity-90 group-hover:opacity-100"),
+            "h-4 w-4 shrink-0 transition-transform duration-200 group-hover:scale-110",
+            // Active → white on the filled pill. Inactive brand tabs use their real
+            // logo colour (inline style); the rest use their accent tint.
+            isActive ? "text-primary-foreground" : t.brand ? "" : TAB_ACCENT[t.key],
           )}
           style={!isActive && t.brand ? { color: t.brand } : undefined}
         />
@@ -334,12 +357,8 @@ export default function ProjectWorkspace() {
     );
   }
 
-  // Resolve the group clusters to only the tabs actually visible right now.
-  const renderedGroups = TAB_GROUPS.map((g) => ({
-    id: g.id,
-    seg: g.keys.length > 1,
-    tabs: g.keys.map((k) => visibleTabs.find((t) => t.key === k)).filter(Boolean) as TabDef[],
-  })).filter((g) => g.tabs.length > 0);
+  // Tabs shown in the main bar (Copilot + Settings are separate side actions).
+  const barTabs = visibleTabs.filter((t) => t.key !== "copilot" && t.key !== "settings");
 
   return (
     <div className="space-y-3" style={{ zoom: 0.9 }}>
@@ -395,7 +414,7 @@ export default function ProjectWorkspace() {
                 <RefreshCw className="h-4 w-4 lg:h-[18px] lg:w-[18px]" />
               </Button>
             )}
-            <Button className="h-10 gap-2 px-4 text-sm lg:h-11 lg:px-5 lg:text-[15px]" onClick={() => setTab("audit")}>
+            <Button className="h-10 gap-2 px-4 text-sm lg:h-11 lg:px-5 lg:text-[15px]" onClick={() => { setPendingAudit(true); setTab("audit"); }}>
               <FileSearch className="h-4 w-4 lg:h-[18px] lg:w-[18px]" />
               Run audit
             </Button>
@@ -403,46 +422,39 @@ export default function ProjectWorkspace() {
         </CardContent>
       </Card>
 
-      {/* Tabs — premium channel-style bar with grouped segments (scrolls if narrow) */}
-      <div className="flex items-center gap-2">
-        <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-x-auto rounded-full border border-border bg-card p-1.5 shadow-soft [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:p-2 xl:justify-between">
-          {renderedGroups.map((g, gi) => (
-            <div key={g.id} className="flex shrink-0 items-center gap-1">
-              {gi > 0 && <span aria-hidden className="h-5 w-px shrink-0 bg-border" />}
-              {g.seg ? (
-                <div className="flex shrink-0 items-center gap-0.5 rounded-full p-0.5 ring-1 ring-inset ring-border">
-                  {g.tabs.map((t) => renderTab(t))}
-                </div>
-              ) : (
-                g.tabs.map((t) => renderTab(t))
+      {/* Tabs — a wrapping chip bar so EVERY section stays visible and tappable at
+          any width (no hidden horizontal scroll). Copilot + campaign actions sit
+          to the side (below the bar on small screens). */}
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-start">
+        <nav className="flex min-w-0 flex-1 flex-wrap items-center gap-1 rounded-2xl border border-border bg-card p-1.5 shadow-soft">
+          {barTabs.map((t) => renderTab(t))}
+        </nav>
+
+        <div className="flex shrink-0 items-center gap-2 self-end lg:self-auto">
+          {/* Settings gear → campaign options dropdown (report / edit / share / delete) */}
+          <ProjectActionsMenu
+            project={project}
+            canReport={can("reports.generate")}
+            canEdit={visibleTabs.some((t) => t.key === "settings")}
+            canDelete={can("projects.delete")}
+            onEdit={() => setTab("settings")}
+          />
+
+          {/* Circular AI accent action */}
+          {visibleTabs.some((t) => t.key === "copilot") && (
+            <button
+              onClick={() => setTab("copilot")}
+              title="Ask AI Copilot"
+              aria-label="Ask AI Copilot"
+              className={cn(
+                "grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-glow transition-all duration-200 hover:-translate-y-0.5 hover:shadow-glow-lg",
+                tab === "copilot" && "ring-2 ring-primary/40 ring-offset-2 ring-offset-background",
               )}
-            </div>
-          ))}
+            >
+              <Sparkles className="h-[18px] w-[18px]" />
+            </button>
+          )}
         </div>
-
-        {/* Settings gear → campaign options dropdown (report / edit / share / delete) */}
-        <ProjectActionsMenu
-          project={project}
-          canReport={can("reports.generate")}
-          canEdit={visibleTabs.some((t) => t.key === "settings")}
-          canDelete={can("projects.delete")}
-          onEdit={() => setTab("settings")}
-        />
-
-        {/* Circular AI accent action — mirrors the competitor's standout round button */}
-        {visibleTabs.some((t) => t.key === "copilot") && (
-          <button
-            onClick={() => setTab("copilot")}
-            title="Ask AI Copilot"
-            aria-label="Ask AI Copilot"
-            className={cn(
-              "grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-glow transition-all duration-200 hover:-translate-y-0.5 hover:shadow-glow-lg",
-              tab === "copilot" && "ring-2 ring-primary/40 ring-offset-2 ring-offset-background",
-            )}
-          >
-            <Sparkles className="h-[18px] w-[18px]" />
-          </button>
-        )}
       </div>
 
       {/* Active panel — a plan-locked feature shows the upgrade wall instead. */}
@@ -494,17 +506,17 @@ export default function ProjectWorkspace() {
               traffic chart, not a keyword list) sits full-width below. */}
           <div className="grid items-stretch gap-4 lg:grid-cols-2">
             <TrackedKeywords project={project} />
-            <RankedKeywords project={project} refreshNonce={refreshNonce} />
+            <RankedKeywords project={project} refreshNonce={refreshNonce} refreshMode={refreshMode} />
           </div>
           <GscRankTracker project={project} refreshNonce={refreshNonce} />
         </div>
       )}
-      {tab === "competitors" && <CompetitorsPanel project={project} refreshNonce={refreshNonce} />}
+      {tab === "competitors" && <CompetitorsPanel project={project} refreshNonce={refreshNonce} refreshMode={refreshMode} />}
       {tab === "traffic" && <GaTraffic project={project} refreshNonce={refreshNonce} />}
-      {tab === "backlinks" && <BacklinksPanel project={project} refreshNonce={refreshNonce} />}
-      {tab === "domain" && <DomainPanel project={project} refreshNonce={refreshNonce} />}
+      {tab === "backlinks" && <BacklinksPanel project={project} refreshNonce={refreshNonce} refreshMode={refreshMode} />}
+      {tab === "domain" && <DomainPanel project={project} refreshNonce={refreshNonce} refreshMode={refreshMode} />}
       {tab === "ai" && <AiVisibilityPanel project={project} />}
-      {tab === "audit" && <SiteAudit project={project} />}
+      {tab === "audit" && <SiteAudit project={project} autoStart={pendingAudit} onAutoStarted={() => setPendingAudit(false)} />}
       {tab === "settings" && <SettingsPanel project={project} />}
       </>
       )}

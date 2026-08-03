@@ -47,14 +47,15 @@ async function main() {
     {
       name: "Starter", slug: "starter", priceCents: 500, sortOrder: 0,
       // Solo plan: 1 user (the owner), no team members and no clients to add.
-      limits: { projects: 1, seats: 1, clients: 0, keywords: 35 },
+      // No content tools at all (blog generator excluded) → 0 blog generations.
+      limits: { projects: 1, seats: 1, clients: 0, keywords: 35, blogsPerMonth: 0 },
       features: STARTER,
       pricingTiers: [] as { keywords: number; priceCents: number }[],
       trialDays: 7, // Starter offers a 7-day free trial.
     },
     {
       name: "Freelancer", slug: "freelancer", priceCents: 3500, sortOrder: 1,
-      limits: { projects: 10, seats: 10, clients: 10, keywords: 250 },
+      limits: { projects: 10, seats: 10, clients: 10, keywords: 250, blogsPerMonth: 100 },
       features: ALL_FEATURES,
       pricingTiers: [ { keywords: 250, priceCents: 3500 }, { keywords: 400, priceCents: 5500 }, { keywords: 600, priceCents: 8500 } ],
     },
@@ -62,19 +63,19 @@ async function main() {
       // Agency and up get UNLIMITED campaigns / seats / clients — only keyword
       // tracking is metered. Omitting a limit key means "unlimited".
       name: "Agency", slug: "agency", priceCents: 12500, sortOrder: 2,
-      limits: { keywords: 800 },
+      limits: { keywords: 800, blogsPerMonth: 500 },
       features: ALL_FEATURES,
       pricingTiers: [ { keywords: 800, priceCents: 12500 }, { keywords: 1400, priceCents: 20000 }, { keywords: 2000, priceCents: 30000 } ],
     },
     {
       name: "Agency Plus", slug: "agency-plus", priceCents: 19500, sortOrder: 3,
-      limits: { keywords: 1200 },
+      limits: { keywords: 1200, blogsPerMonth: 1000 },
       features: ALL_FEATURES,
       pricingTiers: [ { keywords: 1200, priceCents: 19500 }, { keywords: 2400, priceCents: 35000 }, { keywords: 3600, priceCents: 55000 } ],
     },
     {
       name: "Enterprise", slug: "enterprise", priceCents: 70000, sortOrder: 4,
-      limits: { keywords: 4500 },
+      limits: { keywords: 4500, blogsPerMonth: 3000 },
       features: ALL_FEATURES,
       pricingTiers: [ { keywords: 4500, priceCents: 70000 }, { keywords: 8000, priceCents: 130000 }, { keywords: 13000, priceCents: 200000 } ],
     },

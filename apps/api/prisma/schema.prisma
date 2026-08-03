@@ -372,6 +372,11 @@ model Project {
   // Which dashboards (project detail tabs) are active for THIS campaign. Empty =
   // all tabs available. Chosen in the create-campaign wizard, editable later.
   enabledTabs  String[]      @default([])
+  // Which connected Google account (by email) powers this campaign's Search
+  // Console / Analytics / Business Profile data. Null = auto-detect the best
+  // account by domain match (the default when only one account is connected).
+  // Chosen in the create-campaign wizard when several Google accounts exist.
+  googleAccountEmail String?
   createdById  String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt

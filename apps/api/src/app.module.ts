@@ -21,6 +21,7 @@ import { AdminModule } from "./admin/admin.module";
 import { BillingModule } from "./billing/billing.module";
 import { AutofixModule } from "./autofix/autofix.module";
 import { ContentModule } from "./content/content.module";
+import { ImagesModule } from "./images/images.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { PublicModule } from "./public/public.module";
 import { EntitlementsModule } from "./entitlements/entitlements.module";
@@ -51,6 +52,7 @@ import { EntitlementsModule } from "./entitlements/entitlements.module";
     BillingModule,
     AutofixModule,
     ContentModule,
+    ImagesModule,
     DashboardModule,
     PublicModule,
   ],
