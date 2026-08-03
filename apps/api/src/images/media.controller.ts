@@ -21,7 +21,7 @@ export class MediaController {
     @Res() res: Response,
   ) {
     // Guard the filename so a crafted param can't escape the folder.
-    if (!/^[a-f0-9]{1,64}\.webp$/i.test(file) || !/^[a-z0-9-]{1,64}$/i.test(projectId)) {
+    if (!/^[a-f0-9]{1,64}\.(webp|png|jpe?g|avif)$/i.test(file) || !/^[a-z0-9-]{1,64}$/i.test(projectId)) {
       throw new NotFoundException();
     }
     const obj = await this.storage.getObject(this.images.keyFor(projectId, file));

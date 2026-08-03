@@ -402,7 +402,10 @@ export class ContentService {
           piece = ev.content || piece;
         }
       }
-      piece = stripRefusal(piece.trim());
+      piece = stripRefusal(piece.trim())
+        .replace(/^\s*meta (title|description):.*$/gim, "") // stray meta lines
+        .replace(/^#\s+.*$/gm, "") // a re-emitted title / H1 (continuation is body-only)
+        .trim();
       // Guard against the model ignoring instructions and re-emitting the article.
       if (!piece || (firstH2 && piece.includes(firstH2))) break;
       acc = `${body}\n\n${piece}${trailer ? `\n\n${trailer}` : ""}`.trim();
@@ -471,27 +474,32 @@ export class ContentService {
    * templated prompts when the LLM is unavailable or returns junk.
    */
   private async craftImagePrompts(
-    ctx: { domain: string; brand: string; color: string; title: string; keywords: string[]; headings: string[]; tone: string },
+    ctx: { domain: string; brand: string; color: string; title: string; keywords: string[]; intro: string; sections: { heading: string; excerpt: string }[]; tone: string },
   ): Promise<{ cover: string; sections: string[] }> {
     const topic = ctx.keywords.slice(0, 3).join(", ") || ctx.title;
     const brandBit = ctx.brand ? ` for the brand ${ctx.brand}` : "";
-    const colorBit = ctx.color ? ` Use a colour palette built around ${ctx.color}.` : "";
-    const fallbackCover = `Modern, professional editorial hero image${brandBit} about ${topic}. Clean composition, ${ctx.tone} mood, soft lighting, high quality.${colorBit} No text or words in the image.`;
+    const colorBit = ctx.color ? ` Colour palette around ${ctx.color}.` : "";
+    const styleBit = ` Modern, professional, high quality, ${ctx.tone} mood.${colorBit}`;
+    const fallbackCover = `Professional blog hero image${brandBit} about ${topic}.${styleBit}`;
     const fallback = {
       cover: fallbackCover,
-      sections: ctx.headings.map((h) => `Clean, modern editorial illustration representing "${h}" (topic: ${topic})${brandBit}. Professional, high quality.${colorBit} No text or words.`),
+      sections: ctx.sections.map((s) => `Professional, engaging image representing "${s.heading}" (topic: ${topic})${brandBit}.${styleBit}`),
     };
-    if (!this.llm.configured || ctx.headings.length === 0 && !ctx.title) return fallback;
+    if (!this.llm.configured || (ctx.sections.length === 0 && !ctx.title)) return fallback;
 
-    const sys = "You write vivid text-to-image prompts for a blog's images. Reply with STRICT JSON only, no prose.";
+    // No creative restrictions — let the writer craft whatever best illustrates
+    // the actual content + brand; the image model decides the rest.
+    const sys =
+      "You are an expert art director writing text-to-image prompts for a blog. For each image you get the real text it will sit beside — craft a vivid, specific, professional prompt that best illustrates that exact content for this brand. You have full creative freedom over style, subject and composition. Reply with STRICT JSON only, no prose.";
     const user =
-      `Brand: ${ctx.brand || ctx.domain} (site ${ctx.domain}). Blog title: "${ctx.title}". Tone: ${ctx.tone}. ` +
-      (ctx.color ? `Brand colour: ${ctx.color} — bias each image's palette toward it. ` : "") +
-      `Primary keywords: ${ctx.keywords.slice(0, 6).join(", ")}.\n` +
-      `Sections needing an image (in order): ${ctx.headings.map((h, i) => `${i + 1}) ${h}`).join("  ") || "(none)"}.\n` +
-      `Write ONE "cover" prompt and one prompt per section. Each: a specific, photoreal-or-clean-illustration scene fitting the brand + topic, professional and on-brand. ` +
-      `CRITICAL: never request any letters, words, captions or text in the image. 1-2 sentences each.\n` +
-      `Return exactly: {"cover":"...","sections":["...", ...]} — sections in the same order and count as listed above.`;
+      `Brand: ${ctx.brand || ctx.domain} (site ${ctx.domain}). Tone: ${ctx.tone}. ` +
+      (ctx.color ? `Brand colour: ${ctx.color} — reflect it in the palette. ` : "") +
+      `Primary keywords: ${ctx.keywords.slice(0, 6).join(", ")}.\n\n` +
+      `COVER image — for the whole article titled "${ctx.title}"${ctx.intro ? `, which opens: "${ctx.intro}"` : ""}.\n\n` +
+      `SECTION images — one per section, each matching that section's actual content:\n` +
+      ctx.sections.map((s, i) => `${i + 1}) Section "${s.heading}" — content: ${s.excerpt || s.heading}`).join("\n") + "\n\n" +
+      `Write a prompt for the cover and one for EACH section (in order) — each a specific, professional, visually engaging image that best represents that content for this brand. 1-2 sentences each.\n` +
+      `Return exactly: {"cover":"...","sections":["...", ...]} — ${ctx.sections.length} section prompt(s), same order.`;
     try {
       // Cap the wait: if the LLM is slow, fall back to templated prompts rather
       // than making the user stare at "Generating images…" for ages.
@@ -505,7 +513,7 @@ export class ContentService {
       const secs: string[] = Array.isArray(json.sections) ? json.sections : [];
       return {
         cover,
-        sections: ctx.headings.map((h, i) => String(secs[i] || fallback.sections[i]).slice(0, 900)),
+        sections: ctx.sections.map((s, i) => String(secs[i] || fallback.sections[i]).slice(0, 900)),
       };
     } catch {
       return fallback;
@@ -534,7 +542,9 @@ export class ContentService {
     const title = (h1Idx >= 0 ? lines[h1Idx].replace(/^#\s+/, "") : keywords[0] || "").trim();
 
     const slots: { idx: number; heading: string; cover: boolean }[] = [];
-    if (h1Idx >= 0) slots.push({ idx: h1Idx, heading: title, cover: true });
+    // The featured/cover image ALWAYS exists and is generated first. idx may be
+    // -1 when the post has no H1 — runImagePlan then places it at the very top.
+    slots.push({ idx: h1Idx, heading: title, cover: true });
     for (let i = 0; i < lines.length && slots.length < total; i++) {
       const m = lines[i].match(/^(#{2,3})\s+(.+)$/);
       if (m && !skippable(m[2])) slots.push({ idx: i, heading: m[2].trim(), cover: false });
@@ -554,11 +564,25 @@ export class ContentService {
     slots.sort((a, b) => a.idx - b.idx);
     if (!slots.length) return { lines, title, order: [] };
 
+    // Grab the readable text starting at a line (strips markdown/links) up to the
+    // next heading — the actual content each image should depict.
+    const excerptAt = (idx: number): string => {
+      const out: string[] = [];
+      for (let i = Math.max(0, idx); i < lines.length && out.join(" ").length < 280; i++) {
+        if (i > idx && /^#{1,6}\s+/.test(lines[i])) break;
+        const t = lines[i].trim().replace(/^#{1,6}\s+/, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[#*_>`~]/g, "");
+        if (t) out.push(t);
+      }
+      return out.join(" ").slice(0, 280);
+    };
+    const introIdx = lines.findIndex((l, i) => i > h1Idx && l.trim().length > 60 && !/^[#!\-*>|]/.test(l.trim()));
+    const intro = introIdx >= 0 ? excerptAt(introIdx) : "";
+
     const brand = await this.brandInfo(project);
     const nonCover = slots.filter((s) => !s.cover);
     const prompts = await this.craftImagePrompts({
-      domain: project.domain, brand: brand.name, color: brand.color, title, keywords,
-      headings: nonCover.map((s) => s.heading), tone,
+      domain: project.domain, brand: brand.name, color: brand.color, title, keywords, tone, intro,
+      sections: nonCover.map((s) => ({ heading: s.heading, excerpt: excerptAt(s.idx) })),
     });
 
     const order = slots.map((s) => ({
@@ -585,8 +609,22 @@ export class ContentService {
       if (img) placed.push({ idx: s.idx, cover: s.cover, heading: s.heading, url: img.url });
     }
     if (placed.length) {
-      placed.sort((a, b) => b.idx - a.idx); // splice bottom-up so indices stay valid
-      for (const x of placed) plan.lines.splice(x.idx + 1, 0, "", `![${this.alt(x.cover ? plan.title : x.heading)}](${x.url})`);
+      // The FEATURED image always sits at the very top of the article: use the
+      // cover if it generated, otherwise promote the first image that did — so a
+      // blog always opens with an image, and the rest sit between the sections.
+      const featured = placed.find((p) => p.cover) ?? placed[0];
+      const middle = placed.filter((p) => p !== featured && p.idx >= 0);
+
+      // Body images first (bottom-up so earlier indices stay valid).
+      middle.sort((a, b) => b.idx - a.idx);
+      for (const x of middle) plan.lines.splice(x.idx + 1, 0, "", `![${this.alt(x.heading)}](${x.url})`);
+
+      // Then the featured image at the top: right after the H1 title, or at the
+      // very start when there's no H1.
+      const h1 = plan.lines.findIndex((l) => /^#\s+/.test(l));
+      const featuredMd = `![${this.alt(plan.title)}](${featured.url})`;
+      if (h1 >= 0) plan.lines.splice(h1 + 1, 0, "", featuredMd);
+      else plan.lines.unshift(featuredMd, "");
     }
     return plan.lines.join("\n");
   }
@@ -618,23 +656,32 @@ export class ContentService {
     yield { type: "done", full };
   }
 
-  /** Place a set of EXISTING image URLs into markdown at cover/heading anchors,
-   *  without generating anything (used to keep images on a content-only redo). */
+  /** Place a set of EXISTING image URLs into markdown (used to keep images on a
+   *  content-only redo): the FIRST url is the featured image at the very top, the
+   *  rest go between the sections. */
   private placeImages(markdown: string, urls: string[]): string {
     if (!urls.length) return markdown;
     const lines = markdown.split("\n");
     const skippable = (h: string) => /\b(faq|frequently asked|conclusion|final thoughts|wrapping up|in summary|key takeaways?)\b/i.test(h);
     const h1Idx = lines.findIndex((l) => /^#\s+/.test(l));
     const title = (h1Idx >= 0 ? lines[h1Idx].replace(/^#\s+/, "") : "").trim();
-    const slots: { idx: number; alt: string }[] = [];
-    if (h1Idx >= 0) slots.push({ idx: h1Idx, alt: title });
-    for (let i = 0; i < lines.length && slots.length < urls.length; i++) {
+
+    // Body images (urls[1..]) go at H2/H3 headings.
+    const bodyUrls = urls.slice(1);
+    const headingSlots: { idx: number; alt: string }[] = [];
+    for (let i = 0; i < lines.length && headingSlots.length < bodyUrls.length; i++) {
       const m = lines[i].match(/^(#{2,3})\s+(.+)$/);
-      if (m && !skippable(m[2])) slots.push({ idx: i, alt: m[2].trim() });
+      if (m && !skippable(m[2])) headingSlots.push({ idx: i, alt: m[2].trim() });
     }
-    const placed = slots.slice(0, urls.length).map((s, i) => ({ ...s, url: urls[i] }));
+    const placed = headingSlots.map((s, i) => ({ ...s, url: bodyUrls[i] }));
     placed.sort((a, b) => b.idx - a.idx);
     for (const x of placed) lines.splice(x.idx + 1, 0, "", `![${this.alt(x.alt)}](${x.url})`);
+
+    // Featured image (urls[0]) at the very top — after the H1, or at the start.
+    const h1 = lines.findIndex((l) => /^#\s+/.test(l));
+    const featuredMd = `![${this.alt(title)}](${urls[0]})`;
+    if (h1 >= 0) lines.splice(h1 + 1, 0, "", featuredMd);
+    else lines.unshift(featuredMd, "");
     return lines.join("\n");
   }
 
@@ -680,7 +727,7 @@ export class ContentService {
     if (this.llm.configured) {
       const enriched = await this.llm
         .once(
-          "You write one vivid text-to-image prompt. Reply with ONLY the prompt, no quotes or preamble. Never request any text/words in the image.",
+          "You write one vivid, professional text-to-image prompt. Reply with ONLY the prompt, no quotes or preamble.",
           `Brand ${brand.name || project.domain} (${project.domain}).${brand.color ? ` Brand colour ${brand.color} — bias the palette toward it.` : ""} Turn this into a single professional, on-brand image prompt: "${hint}".`,
           [],
         )
@@ -820,6 +867,32 @@ export class ContentService {
         return true;
       })
       .join("\n\n");
+
+    // 3b) Structure hygiene — the model (esp. on continuation rounds) sometimes
+    //     re-emits the title, H1 or FAQ. Keep exactly ONE Meta title / description
+    //     and ONE H1, demote any stray extra H1s to H2, drop exact-duplicate title
+    //     lines, and collapse a doubled FAQ heading.
+    {
+      let mt = false, md = false, firstH1 = "";
+      text = text
+        .split("\n")
+        .map((line) => {
+          if (/^\s*meta title:/i.test(line)) { if (mt) return null; mt = true; return line; }
+          if (/^\s*meta description:/i.test(line)) { if (md) return null; md = true; return line; }
+          const h = line.match(/^#\s+(.+)$/);
+          if (h) {
+            const t = h[1].trim();
+            if (!firstH1) { firstH1 = t; return line; }
+            if (t.toLowerCase() === firstH1.toLowerCase()) return null; // duplicate title line
+            return line.replace(/^#\s+/, "## "); // a stray extra H1 → section heading
+          }
+          return line;
+        })
+        .filter((l): l is string => l !== null)
+        .join("\n");
+      // "## FAQ" immediately followed by "## Frequently Asked…" → keep the latter only.
+      text = text.replace(/^#{1,3}\s*faq\s*$\n+(?=#{1,3}\s*frequently asked)/gim, "");
+    }
 
     // 4) Tidy whitespace.
     return text.replace(/\n{3,}/g, "\n\n").trim();

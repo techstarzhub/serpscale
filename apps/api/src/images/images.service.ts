@@ -30,12 +30,14 @@ export class ImagesService {
 
   /** Generate → store in R2 → return a permanent public URL, or null on failure. */
   async create(projectId: string, prompt: string, opts: { aspectRatio?: string } = {}): Promise<{ url: string } | null> {
-    const bytes = await this.replicate.generate(prompt, opts);
-    if (!bytes) return null;
-    const file = `${randomBytes(12).toString("hex")}.webp`;
+    const img = await this.replicate.generate(prompt, opts);
+    if (!img) return null;
+    // Use the real format the model returned (Ideogram/Imagen may send png/jpg).
+    const ext = img.contentType.includes("png") ? "png" : /jpe?g/.test(img.contentType) ? "jpg" : img.contentType.includes("avif") ? "avif" : "webp";
+    const file = `${randomBytes(12).toString("hex")}.${ext}`;
     const key = this.storage.key(FOLDER, projectId, file);
     try {
-      await this.storage.put(key, bytes, "image/webp");
+      await this.storage.put(key, img.buffer, img.contentType);
     } catch {
       return null;
     }

@@ -20,8 +20,23 @@ export class ReplicateService {
     return Boolean(this.token);
   }
 
-  /** Generate one image and return its raw bytes (webp), or null on any failure. */
-  async generate(prompt: string, opts: { aspectRatio?: string } = {}): Promise<Buffer | null> {
+  /** Build the model-specific input. Flux takes webp/quality/num_outputs; other
+   *  families (Ideogram, Imagen, Recraft, gpt-image…) just take prompt + aspect
+   *  ratio and pick their own output format. */
+  private buildInput(model: string, prompt: string, aspectRatio: string): Record<string, unknown> {
+    if (model.startsWith("black-forest-labs/flux")) {
+      return { prompt, aspect_ratio: aspectRatio, output_format: "webp", output_quality: 90, num_outputs: 1 };
+    }
+    if (model.startsWith("ideogram-ai/")) {
+      // Ideogram renders text cleanly; "Auto" magic-prompt keeps our wording.
+      return { prompt, aspect_ratio: aspectRatio, magic_prompt_option: "Off" };
+    }
+    // Google Imagen, Recraft, gpt-image, etc. — a safe common subset.
+    return { prompt, aspect_ratio: aspectRatio };
+  }
+
+  /** Generate one image; returns its bytes + content type, or null on any failure. */
+  async generate(prompt: string, opts: { aspectRatio?: string } = {}): Promise<{ buffer: Buffer; contentType: string } | null> {
     if (!this.isEnabled()) return null;
     const clean = prompt.trim().slice(0, 1500);
     if (!clean) return null;
@@ -38,15 +53,7 @@ export class ReplicateService {
             "Content-Type": "application/json",
             Prefer: "wait", // block up to ~60s so most requests return already-done
           },
-          body: JSON.stringify({
-            input: {
-              prompt: clean,
-              aspect_ratio: opts.aspectRatio || "16:9",
-              output_format: "webp",
-              output_quality: 90,
-              num_outputs: 1,
-            },
-          }),
+          body: JSON.stringify({ input: this.buildInput(this.model, clean, opts.aspectRatio || "16:9") }),
         });
         if (created.ok) break;
         if (created.status === 429) {
@@ -82,7 +89,9 @@ export class ReplicateService {
       if (typeof url !== "string" || !url.startsWith("http")) return null;
       const img = await fetch(url);
       if (!img.ok) return null;
-      return Buffer.from(await img.arrayBuffer());
+      const ct = img.headers.get("content-type") || "";
+      const contentType = /^image\/(webp|png|jpe?g|avif)/.test(ct) ? ct.split(";")[0] : "image/webp";
+      return { buffer: Buffer.from(await img.arrayBuffer()), contentType };
     } catch (e) {
       this.logger.warn(`replicate error: ${String(e).slice(0, 120)}`);
       return null;

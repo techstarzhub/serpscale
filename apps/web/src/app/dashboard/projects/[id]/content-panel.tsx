@@ -34,7 +34,7 @@ export function ContentPanel({ project }: { project: Project }) {
   const [internalPages, setInternalPages] = useState<InternalPage[]>([]);
   const [title, setTitle] = useState("");
   const [tone, setTone] = useState("professional");
-  const [words, setWords] = useState(900);
+  const [words, setWords] = useState(1500);
   const [instructions, setInstructions] = useState("");
   const [loadingKw, setLoadingKw] = useState(true);
 
