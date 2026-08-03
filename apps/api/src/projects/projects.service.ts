@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PermissionsService } from "../auth/permissions.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../entitlements/entitlements.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { PERMISSIONS } from "../auth/permissions";
 import type { AuthUser } from "../auth/decorators/current-user.decorator";
 
@@ -52,6 +53,8 @@ export class ProjectsService {
     private readonly perms: PermissionsService,
     private readonly storage: StorageService,
     private readonly entitlements: EntitlementsService,
+    // NotificationsModule is @Global, so no explicit import is needed here.
+    private readonly notifications: NotificationsService,
   ) {}
 
   async list(user: AuthUser) {
@@ -169,12 +172,24 @@ export class ProjectsService {
     const member = await this.prisma.user.findFirst({ where: { id: memberId, orgId: project.orgId } });
     if (!member) throw new NotFoundException("Member not found in this organization");
     await this.prisma.project.update({ where: { id }, data: { members: { connect: { id: memberId } } } });
+    // Tell the member they've been given campaign access (matches the team-page
+    // bulk-assign notification, so both assignment paths behave the same).
+    void this.notifications.notify(memberId, "team", {
+      title: "You've been added to a campaign",
+      body: `You now have access to "${project.name}" (${project.domain}).`,
+      link: `/dashboard/projects/${id}`,
+    });
     return { ok: true };
   }
 
   async unassignMember(user: AuthUser, id: string, memberId: string) {
-    await this.get(user, id);
+    const project = await this.get(user, id);
     await this.prisma.project.update({ where: { id }, data: { members: { disconnect: { id: memberId } } } });
+    void this.notifications.notify(memberId, "team", {
+      title: "Your campaign access changed",
+      body: `You no longer have access to "${project.name}".`,
+      link: "/dashboard",
+    });
     return { ok: true };
   }
 
@@ -270,12 +285,34 @@ export class ProjectsService {
     const client = await this.prisma.client.findFirst({ where: { id: clientId, orgId } });
     if (!client) throw new NotFoundException("Client not found in this organization");
     await this.prisma.project.update({ where: { id }, data: { clients: { connect: { id: clientId } } } });
+    // Let the client's portal owner(s) know a new campaign is now visible to them.
+    const owners = await this.prisma.user
+      .findMany({ where: { clientId, isActive: true, clientOwner: true }, select: { id: true } })
+      .catch(() => [] as { id: string }[]);
+    if (owners.length) {
+      void this.notifications.notifyMany(owners.map((o) => o.id), "team", {
+        title: "A new campaign was shared with you",
+        body: `You can now view the "${project.name}" campaign in your reporting portal.`,
+        link: `/dashboard/projects/${id}`,
+      });
+    }
     return { ok: true };
   }
 
   async detachClient(user: AuthUser, id: string, clientId: string) {
-    await this.get(user, id);
+    const project = await this.get(user, id);
     await this.prisma.project.update({ where: { id }, data: { clients: { disconnect: { id: clientId } } } });
+    // Let the client's portal owner(s) know a campaign was removed from their portal.
+    const owners = await this.prisma.user
+      .findMany({ where: { clientId, isActive: true, clientOwner: true }, select: { id: true } })
+      .catch(() => [] as { id: string }[]);
+    if (owners.length) {
+      void this.notifications.notifyMany(owners.map((o) => o.id), "team", {
+        title: "A campaign was removed from your portal",
+        body: `The "${project.name}" campaign is no longer available in your reporting portal.`,
+        link: "/dashboard",
+      });
+    }
     return { ok: true };
   }
 
@@ -304,6 +341,8 @@ export class ProjectsService {
       : [];
     const googleAccountEmail = await this.resolveGoogleAccount(user, input.googleAccountEmail);
     const orgId = user.orgId ?? null;
+    const data = { name: input.name.trim(), domain, enabledTabs, googleAccountEmail, orgId, createdById: user.id };
+    let project: Project;
     if (orgId) {
       const ent = await this.entitlements.forOrg(orgId);
       // A lapsed org (a subscription exists but isn't in good standing — canceled /
@@ -318,18 +357,36 @@ export class ProjectsService {
       if (rawCap != null && Number.isFinite(cap) && cap >= 0) {
         // Count + create in ONE transaction under a per-org advisory lock so two
         // concurrent creates can't both pass the cap check (TOCTOU race).
-        return this.prisma.$transaction(async (tx) => {
+        project = await this.prisma.$transaction(async (tx) => {
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}))`;
           const count = await tx.project.count({ where: { orgId } });
           if (count >= cap) throw new ForbiddenException(`Your plan allows ${cap} project${cap === 1 ? "" : "s"}. Upgrade to add more.`);
-          return tx.project.create({
-            data: { name: input.name.trim(), domain, enabledTabs, googleAccountEmail, orgId, createdById: user.id },
-          });
+          return tx.project.create({ data });
         });
+      } else {
+        project = await this.prisma.project.create({ data });
       }
+    } else {
+      project = await this.prisma.project.create({ data });
     }
-    return this.prisma.project.create({
-      data: { name: input.name.trim(), domain, enabledTabs, googleAccountEmail, orgId, createdById: user.id },
+    // Keep the org's other admins in the loop when anyone (a member, or another
+    // admin) adds a campaign — otherwise a campaign can appear with no admin ever
+    // being told. Fire-and-forget so the create response isn't delayed.
+    void this.notifyProjectCreated(user, project);
+    return project;
+  }
+
+  /** Notify the org's OTHER active admins that a new campaign was created. */
+  private async notifyProjectCreated(user: AuthUser, project: Project) {
+    if (!project.orgId) return; // solo account — no admins to tell
+    const admins = await this.prisma.user
+      .findMany({ where: { orgId: project.orgId, role: "ADMIN", isActive: true, id: { not: user.id } }, select: { id: true } })
+      .catch(() => [] as { id: string }[]);
+    if (!admins.length) return;
+    await this.notifications.notifyMany(admins.map((a) => a.id), "team", {
+      title: "New campaign created",
+      body: `${user.name || user.email} created the campaign "${project.name}" (${project.domain}).`,
+      link: `/dashboard/projects/${project.id}`,
     });
   }
 

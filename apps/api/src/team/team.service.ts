@@ -150,6 +150,18 @@ export class TeamService {
       },
       select: { id: true, email: true, name: true },
     });
+    // Keep the org's OTHER active admins in the loop that a new member joined
+    // (exclude the actor and the freshly-created member, who gets their own welcome).
+    const admins = await this.prisma.user
+      .findMany({ where: { orgId, role: "ADMIN", isActive: true, id: { notIn: [user.id, created.id] } }, select: { id: true } })
+      .catch(() => [] as { id: string }[]);
+    if (admins.length) {
+      void this.notifications.notifyMany(admins.map((a) => a.id), "team", {
+        title: "New team member added",
+        body: `${user.name || user.email} added ${created.name || created.email} to the team.`,
+        link: "/dashboard/settings/team",
+      });
+    }
     return { ...created, tempPassword };
   }
 
