@@ -1,7 +1,9 @@
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Frag } from "@/components/Frag";
+import { JsonLd } from "@/components/JsonLd";
 import { HomePricing } from "@/components/HomePricing";
+import { breadcrumb } from "@/lib/schema";
 import { getPlans } from "@/lib/plans";
 
 const jsonLd = {
@@ -21,6 +23,7 @@ export default async function Home() {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <JsonLd data={breadcrumb([{ name: "Home", path: "/" }])} />
       <Header />
       <main>
         <Frag file="home-top.raw.html" />

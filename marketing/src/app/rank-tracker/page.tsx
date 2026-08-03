@@ -2,7 +2,7 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Frag } from "@/components/Frag";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb, faqPage, softwareApp } from "@/lib/schema";
+import { breadcrumb, faqPage, softwareApp, DEFAULT_OG_IMAGE } from "@/lib/schema";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -12,6 +12,7 @@ export const metadata: Metadata = {
   keywords: ["rank tracker","keyword rank tracker","SEO rank tracker","rank tracking tool","keyword tracker","google rank tracker","serp tracker","keyword position tracker","local rank tracker","enterprise rank tracker","mobile rank tracker","online rank tracker","free rank tracker","best rank tracker","rank tracker tool","rank tracker software","daily rank tracking","SERP tracking","share of voice","visibility index","google ranking checker","keyword ranking tool","track keyword rankings","bing rank tracker"],
   alternates: { canonical: "/rank-tracker" },
   openGraph: {
+    images: [DEFAULT_OG_IMAGE],
     title: "Rank Tracker — Daily Keyword & SEO Rank Tracking Tool | SerpScale",
     description:
       "Track keyword rankings daily on desktop and mobile with SerpScale's local and enterprise rank tracker — visibility index, share-of-voice and a 7-day free trial.",

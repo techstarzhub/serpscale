@@ -2,18 +2,18 @@ import type { Metadata } from "next";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb } from "@/lib/schema";
+import { breadcrumb, DEFAULT_OG_IMAGE } from "@/lib/schema";
 import { getPosts, getCategories } from "@/lib/blog";
 
 export const revalidate = 60;
 
 export const metadata: Metadata = {
-  title: "SEO Blog — Guides on Rank Tracking, Audits & Backlinks",
+  title: "SEO Blog — Guides on Rank Tracking & Audits",
   description:
-    "Actionable SEO guides from SerpScale: keyword rank tracking, technical site audits, backlink analysis, keyword research and white-label reporting for agencies.",
+    "Actionable SEO guides from SerpScale: rank tracking, technical audits, backlink analysis and keyword research for agencies.",
   keywords: ["SEO blog","SEO guides","SEO tips","rank tracking guide","keyword research guide","site audit guide","backlink analysis","technical SEO","SEO for agencies","white label SEO","SEO strategy","how to improve SEO","SEMrush alternative","SEO tutorials","content optimization","SEO best practices"],
   alternates: { canonical: "/blog" },
-  openGraph: { title: "SerpScale SEO Blog", description: "Actionable SEO guides & tips.", url: "/blog" },
+  openGraph: { images: [DEFAULT_OG_IMAGE], title: "SerpScale SEO Blog", description: "Actionable SEO guides & tips.", url: "/blog" },
 };
 
 function fmtDate(d: string | null) {
@@ -45,6 +45,11 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
 
         <section className="pp-pp-news-section-2 section-padding fix">
           <div className="container">
+            <p style={{ maxWidth: "760px", margin: "0 auto 36px", textAlign: "center", color: "#5a5f6e" }}>
+              Practical SEO guides from the team behind SerpScale — rank tracking playbooks, technical site
+              audit checklists, backlink strategy and keyword research workflows written for agencies who need
+              answers, not filler.
+            </p>
             {/* Category filter */}
             {categories.length > 0 && (
               <div className="pp-blog-cats" style={{ display: "flex", flexWrap: "wrap", gap: "10px", justifyContent: "center", marginBottom: "36px" }}>
@@ -58,9 +63,14 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
             )}
 
             {posts.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "60px 0", color: "#8a8f9c" }}>
-                <h3>No posts yet</h3>
-                <p>New articles are on the way — check back soon.</p>
+              <div style={{ textAlign: "center", padding: "60px 0", color: "#5b6270" }}>
+                <h3>New guides are on the way</h3>
+                <p style={{ maxWidth: "560px", margin: "12px auto 0" }}>
+                  We're putting together in-depth guides on rank tracking, technical site audits, backlink
+                  analysis and keyword research — the same playbooks our team uses with agency customers.
+                  Check back soon, or <a href="/contact">get in touch</a> if there's a topic you'd like us to
+                  cover first.
+                </p>
               </div>
             ) : (
               <div className="row g-4">
@@ -75,7 +85,7 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
                       <div className="pp-news-content">
                         <h3><a href={`/blog/${p.slug}`}>{p.title}</a></h3>
                         <ul className="news-post">
-                          <li><i className="fa-regular fa-user"></i> {p.author?.name || "SerpScale Team"}</li>
+                          <li itemProp="author"><i className="fa-regular fa-user"></i> {p.author?.name || "SerpScale Team"}</li>
                           <li className="pp-style-2"><i className="fa-regular fa-calendar-days"></i> {fmtDate(p.publishedAt)}</li>
                         </ul>
                       </div>

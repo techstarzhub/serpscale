@@ -2,7 +2,7 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { PricingTable } from "@/components/PricingTable";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb, productOffers, faqPage } from "@/lib/schema";
+import { breadcrumb, productOffers, faqPage, DEFAULT_OG_IMAGE } from "@/lib/schema";
 import { getPlans } from "@/lib/plans";
 import type { Metadata } from "next";
 
@@ -30,12 +30,13 @@ const faqs = [
 ];
 
 export const metadata: Metadata = {
-  title: "SEO Software Pricing — Affordable Plans from $5/mo | SerpScale",
+  title: "SEO Software Pricing — Plans from $5/mo",
   description:
-    "Simple, transparent SEO software pricing from $5/mo. Start with a free trial, then scale — the affordable SEMrush alternative pricing agencies love. No card to start.",
+    "Simple, transparent SEO software pricing from $5/mo. Start free, then scale — the affordable SEMrush alternative agencies love.",
   keywords: ["SEO software pricing","affordable SEO tools","cheap SEO tools","SEO reporting tool","white label SEO","SEO tools pricing","budget SEO software","SEO platform pricing","free SEO tool","SEO software plans","agency SEO tools","SEO tools for small business","rank tracker pricing","SEMrush alternative pricing","all-in-one SEO tool","SEO tool free trial","SEO tool for agencies","affordable SEO software","SEO subscription","value SEO tools"],
   alternates: { canonical: "/pricing" },
   openGraph: {
+    images: [DEFAULT_OG_IMAGE],
     title: "Pricing — Affordable SEO Software Plans",
     description:
       "Simple, transparent SEO tool pricing. Start free and scale with an affordable SEMrush & Ahrefs alternative built for agencies.",

@@ -51,10 +51,27 @@
 .pp-int-chip span{font-size:14px;white-space:nowrap;}
 
 
+/* Inline links inside body copy (e.g. terms/privacy paragraphs) rely on color
+   alone otherwise — too close to the surrounding text to pass WCAG 1.4.1, and
+   axe's link-in-text-block rule flags it. Underline distinguishes them without
+   touching nav/button links, which don't live inside <p>. */
+p a{text-decoration:underline;}
+
+/* Disclaimer text sitting on a dark (.section-bg-2) section — the default
+   --pp-text color is tuned for light backgrounds and fails contrast here. */
+.pp-disclaimer-dark{color:#9d9bac;}
+
+/* The WOW.js scroll-reveal fadeInUp animation animates opacity 0→1, so body
+   copy is transiently under WCAG contrast for the first fraction of a second
+   it's on screen (or indefinitely if the animation never fires, e.g. for a
+   crawler that doesn't scroll). Keep the slide-up motion but skip the opacity
+   dip on text specifically. */
+.pp-text.wow, .accordion-body.wow{opacity:1 !important;}
+
 /* Features page — real product screenshots instead of generic icon cards. */
 .pp-shot-card{height:100%;padding:20px 20px 30px;display:flex;flex-direction:column;}
 .pp-shot{display:block;border-radius:14px;overflow:hidden;border:1px solid #ece9f5;box-shadow:0 14px 34px -20px rgba(20,10,40,.35);background:#f4f5fa;line-height:0;}
-.pp-shot img{width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top center;display:block;transition:transform .5s ease;}
+.pp-shot img{width:100%;height:auto;aspect-ratio:16/10;object-fit:cover;object-position:top center;display:block;transition:transform .5s ease;}
 .pp-shot-card:hover{transform:translateY(-4px);}
 .pp-shot-card:hover .pp-shot img{transform:scale(1.04);}
 .pp-shot-card .pp-offer-content{padding:20px 10px 0;}

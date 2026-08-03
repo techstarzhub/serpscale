@@ -2,16 +2,17 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Frag } from "@/components/Frag";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb, faqPage } from "@/lib/schema";
+import { breadcrumb, faqPage, DEFAULT_OG_IMAGE } from "@/lib/schema";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "SEMrush Alternative — SerpScale vs SEMrush & Ahrefs",
+  title: "SEMrush Alternative — SerpScale vs SEMrush",
   description:
-    "Looking for the best SEMrush alternative? SerpScale gives you rank tracking, site audits, backlinks and keyword research in one platform from $5/mo. Start free.",
+    "Looking for a SEMrush alternative? SerpScale gives you rank tracking, site audits, backlinks and keyword research from $5/mo.",
   keywords: ["SEMrush alternative","SEMrush alternatives","Ahrefs alternative","free SEMrush alternative","cheap SEMrush alternative","best SEMrush alternative","alternative to SEMrush","cheaper alternative to SEMrush","affordable SEO tool","SEMrush competitors","SEO tool comparison","SEMrush vs SerpScale","Ahrefs vs SerpScale","all-in-one SEO platform","rank tracker","site audit tool","backlink checker","keyword research tool","white label SEO","SEO software for agencies","budget SEO tools","SEMrush pricing alternative"],
   alternates: { canonical: "/semrush-alternative" },
   openGraph: {
+    images: [DEFAULT_OG_IMAGE],
     title: "SEMrush Alternative — SerpScale vs SEMrush & Ahrefs",
     description:
       "SerpScale is the affordable SEMrush & Ahrefs alternative: rank tracker, site audit, backlink checker and keyword research in one platform. Start free.",

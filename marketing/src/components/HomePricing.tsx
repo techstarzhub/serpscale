@@ -79,6 +79,7 @@ export function HomePricing({ plans }: { plans: Plan[] }) {
 
               {tiers.length > 0 ? (
                 <select
+                  aria-label={`Tracked keywords for the ${p.name} plan`}
                   value={idx(p.slug)}
                   onChange={(e) => setSel((s) => ({ ...s, [p.slug]: Number(e.target.value) }))}
                   style={{ marginTop: 14, width: "100%", borderRadius: 10, border: "1px solid #d8d5e6", padding: "9px 10px", fontSize: 13, fontWeight: 600, color: "#0f1222", background: "#fbfaff", cursor: "pointer" }}
@@ -86,7 +87,7 @@ export function HomePricing({ plans }: { plans: Plan[] }) {
                   {tiers.map((t, i) => <option key={i} value={i}>{t.keywords.toLocaleString()} keywords</option>)}
                 </select>
               ) : trial ? (
-                <div style={{ marginTop: 14, textAlign: "center", background: "#ecfdf5", color: "#059669", fontWeight: 700, fontSize: 12.5, borderRadius: 10, padding: "9px 8px" }}>✔ {p.trialDays}-day free trial</div>
+                <div style={{ marginTop: 14, textAlign: "center", background: "#ecfdf5", color: "#047857", fontWeight: 700, fontSize: 12.5, borderRadius: 10, padding: "9px 8px" }}>✔ {p.trialDays}-day free trial</div>
               ) : (
                 <div style={{ marginTop: 14, height: 38 }} />
               )}

@@ -126,6 +126,7 @@ export function PricingTable({ plans }: { plans: Plan[] }) {
                     </div>
                     {tiers.length > 0 ? (
                       <select
+                        aria-label={`Tracked keywords for the ${p.name} plan`}
                         value={idxOf(p.slug)}
                         onChange={(e) => setIdx(p.slug, Number(e.target.value))}
                         style={{ marginTop: 10, width: "100%", borderRadius: 8, border: "1px solid #d1d5db", padding: "6px 8px", fontSize: 13, fontWeight: 500, color: "#111827", background: "#ffffff" }}
@@ -135,7 +136,7 @@ export function PricingTable({ plans }: { plans: Plan[] }) {
                         ))}
                       </select>
                     ) : (p.trialDays ?? 0) > 0 ? (
-                      <div style={{ marginTop: 10, height: 32, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 12, fontWeight: 700, color: "#059669", background: "#ecfdf5", borderRadius: 8 }}>
+                      <div style={{ marginTop: 10, height: 32, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 12, fontWeight: 700, color: "#047857", background: "#ecfdf5", borderRadius: 8 }}>
                         <span style={{ fontSize: 14 }}>&#10004;</span> {p.trialDays}-day free trial
                       </div>
                     ) : (

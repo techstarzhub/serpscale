@@ -3,18 +3,19 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Frag } from "@/components/Frag";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb } from "@/lib/schema";
+import { breadcrumb, DEFAULT_OG_IMAGE } from "@/lib/schema";
 
 export const metadata: Metadata = {
-  title: "About SerpScale — The All-in-One SEO Platform",
+  title: "About SerpScale — Our SEO Company Story",
   description:
-    "SerpScale is the all-in-one SEO platform for agencies — rank tracker, site audit, backlink checker and keyword research in one affordable SEMrush alternative.",
-  keywords: ["about SerpScale","SerpScale","all-in-one SEO platform","SEO tool company","affordable SEO software","SEMrush alternative","SEO platform for agencies","SEO software","rank tracker","site audit tool","backlink checker","keyword research tool","white label SEO","SEO reporting tool","SEO dashboard","SEO tools","Ahrefs alternative","SEO software company","professional SEO software","SEO tools for marketers","SEO analytics platform","keyword rank tracker","SEO audit tool"],
+    "SerpScale is the SEO company on a mission to make professional-grade optimization accessible for every agency — meet the team and read our story.",
+  keywords: ["about SerpScale","SerpScale team","SEO company","affordable SEO software","SEO company story","SEO software company","professional SEO software","SEO tools for marketers","SEO analytics platform"],
   alternates: { canonical: "/about" },
   openGraph: {
-    title: "About SerpScale — The All-in-One SEO Platform",
+    images: [DEFAULT_OG_IMAGE],
+    title: "About SerpScale — Our SEO Company Story",
     description:
-      "Our mission: make professional SEO affordable and unified. One platform replacing SEMrush, Ahrefs, a rank tracker and a reporting tool — built for agencies.",
+      "Meet the SEO company on a mission to make professional-grade optimization accessible for every agency. Our story, our team, our why.",
     url: "/about",
     type: "website",
   },

@@ -71,7 +71,12 @@ function walk(data: unknown, visit: (node: Node) => void): void {
 
 function offerComplete(offers: unknown): boolean {
   const list = Array.isArray(offers) ? offers : [offers];
-  return list.some((o) => isObj(o) && has(o, "price") && has(o, "priceCurrency"));
+  return list.some((o) => {
+    if (!isObj(o) || !has(o, "priceCurrency")) return false;
+    // Offer needs a flat price; AggregateOffer (a price range) needs lowPrice/highPrice instead.
+    if (typesOf(o).includes("AggregateOffer")) return has(o, "lowPrice") && has(o, "highPrice");
+    return has(o, "price");
+  });
 }
 
 // Validate parsed JSON-LD objects; returns one issue per type that is incomplete.

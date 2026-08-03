@@ -437,7 +437,9 @@ function parseHtml(
   const imageUrls: string[] = [];
   $("img").each((_, el) => {
     const alt = $(el).attr("alt");
-    if (alt === undefined || alt.trim() === "") imagesNoAlt++;
+    // alt="" is the correct WCAG pattern for a purely decorative image (it tells
+    // screen readers to skip it) — only a MISSING alt attribute is the real bug.
+    if (alt === undefined) imagesNoAlt++;
     // Collect real (non-data) image URLs so a post-crawl pass can find dead ones.
     const src = ($(el).attr("src") || "").trim();
     if (src && !src.startsWith("data:") && imageUrls.length < 100) {

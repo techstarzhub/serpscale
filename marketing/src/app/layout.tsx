@@ -10,20 +10,19 @@ export const viewport: Viewport = {
 
 const DEFAULT_TITLE = "SerpScale — The All-in-One SEO Tool & SEMrush Alternative";
 const DEFAULT_DESC =
-  "SerpScale is the all-in-one SEO platform: rank tracker, site audit, backlink checker and keyword research in one dashboard. A faster, affordable SEMrush & Ahrefs alternative built for agencies.";
+  "SerpScale is the all-in-one SEO platform — rank tracker, site audit, backlink checker & keyword research. An affordable SEMrush & Ahrefs alternative.";
 const DEFAULT_KEYWORDS = ["SEO tools","SEO tool","SEO software","SEO platform","all-in-one SEO tool","best SEO tools","SEO marketing tools","SEO optimization tools","free SEO tools","SEO tools for agencies","rank tracker","keyword rank tracker","backlink checker","check backlinks","site audit tool","website SEO checker","keyword research tool","SEO reporting tool","white label SEO","SEMrush alternative","Ahrefs alternative","SEO dashboard","competitor analysis tool","SEO audit tool","keyword tracking"];
 
-const CSS = [
-  "bootstrap.min.css",
-  "all.min.css",
-  "animate.css",
-  "magnific-popup.css",
-  "meanmenu.css",
-  "swiper-bundle.min.css",
-  "nice-select.css",
-  "main.css",
-  "serpscale.css",
-];
+// Loaded render-blocking: needed for correct layout/visibility of above-the-fold
+// content (grid, icons, WOW.js fade-in target visibility, brand styles).
+// local-fonts.css must come before main.css (which references these families).
+const CSS = ["local-fonts.css", "bootstrap.min.css", "all.min.css", "animate.css", "main.css", "serpscale.css"];
+
+// Loaded non-blocking (preload + swap to stylesheet on load): each backs an
+// isolated interactive widget (mobile menu, lightbox, custom <select>, carousel)
+// that isn't part of first paint — worst case before it loads is an unstyled-but
+// -functional widget, never invisible/missing content.
+const DEFERRED_CSS = ["meanmenu.css", "magnific-popup.css", "nice-select.css", "swiper-bundle.min.css"];
 
 // jQuery + all template plugins + main.js, concatenated in load order into one
 // ordered bundle (single script → guaranteed execution order across the stack).
@@ -38,7 +37,10 @@ export async function generateMetadata(): Promise<Metadata> {
   const keywords = seo.metaKeywords?.trim()
     ? seo.metaKeywords.split(",").map((k) => k.trim()).filter(Boolean)
     : DEFAULT_KEYWORDS;
-  const images = seo.ogImage?.trim() ? [seo.ogImage.trim()] : undefined;
+  // Falls back to the branded generated image (opengraph-image.tsx) on every
+  // route — otherwise only the homepage gets an og:image, since Next.js only
+  // auto-applies file-based OG images to the segment they're colocated in.
+  const images = [seo.ogImage?.trim() || "https://www.serpscale.com/opengraph-image"];
 
   // Non-Google verification tokens map to their standard <meta name> tags.
   const other: Record<string, string> = {};
@@ -52,9 +54,11 @@ export async function generateMetadata(): Promise<Metadata> {
     description,
     applicationName: "SerpScale",
     keywords,
+    // Site-wide authorship signal (E-E-A-T) — renders <meta name="author">.
+    authors: [{ name: "SerpScale Team", url: "https://www.serpscale.com/about" }],
     alternates: { canonical: "/" },
-    openGraph: { type: "website", siteName: "SerpScale", title, description, url: "/", ...(images ? { images } : {}) },
-    twitter: { card: "summary_large_image", title, description, ...(images ? { images } : {}) },
+    openGraph: { type: "website", siteName: "SerpScale", title, description, url: "/", images },
+    twitter: { card: "summary_large_image", title, description, images },
     robots: seo.robotsIndex === false ? { index: false, follow: false } : { index: true, follow: true },
     verification: {
       ...(seo.googleVerification?.trim() ? { google: seo.googleVerification.trim() } : {}),
@@ -93,13 +97,24 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang="en">
       <head>
-        {/* Preconnect to Google Fonts (main.css @imports DM Sans + Open Sans) — improves LCP. */}
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(orgJsonLd) }} />
         {CSS.map((f) => (
           <link key={f} rel="stylesheet" href={`/assets/css/${f}?v=5`} />
         ))}
+        {/* Load these off the render-blocking path via preload + swap-on-load. A
+            <link onload=...> literal isn't expressible through React's JSX props
+            (onLoad expects a real function, not a Server Component), so this uses
+            a small inline script instead — same effect, valid inside <head>. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(f){f.forEach(function(n){var l=document.createElement("link");l.rel="preload";l.as="style";l.href="/assets/css/"+n+"?v=5";l.onload=function(){l.onload=null;l.rel="stylesheet";};document.head.appendChild(l);});})(${JSON.stringify(DEFERRED_CSS)});`,
+          }}
+        />
+        <noscript>
+          {DEFERRED_CSS.map((f) => (
+            <link key={f} rel="stylesheet" href={`/assets/css/${f}?v=5`} />
+          ))}
+        </noscript>
         {/* Google Tag Manager (super-admin configured) */}
         {gtmId && (
           <Script id="gtm" strategy="afterInteractive" dangerouslySetInnerHTML={{ __html: `(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','${gtmId}');` }} />

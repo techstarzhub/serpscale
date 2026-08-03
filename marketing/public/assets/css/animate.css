@@ -1174,15 +1174,17 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 }
 
 @keyframes fadeInUp {
+  /* Opacity removed from this keyframe (stays at 1 throughout) — it's the only
+     fade-* animation used site-wide (wow fadeInUp, 300+ elements), and its 0→1
+     opacity sweep left text transiently under WCAG contrast for the animation's
+     duration. The slide-up motion is preserved. */
   0% {
-    opacity: 0;
     -webkit-transform: translateY(20px);
     -ms-transform: translateY(20px);
     transform: translateY(20px);
   }
 
   100% {
-    opacity: 1;
     -webkit-transform: translateY(0);
     -ms-transform: translateY(0);
     transform: translateY(0);

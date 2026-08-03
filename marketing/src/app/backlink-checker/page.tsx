@@ -2,16 +2,17 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Frag } from "@/components/Frag";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb, faqPage, softwareApp } from "@/lib/schema";
+import { breadcrumb, faqPage, softwareApp, DEFAULT_OG_IMAGE } from "@/lib/schema";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Backlink Checker — Check Backlinks & Referring Domains",
+  title: "Backlink Checker — Analyze Referring Domains",
   description:
     "Free backlink checker to analyze any backlink profile. Check backlinks, referring domains, anchor text and toxic links, and benchmark competitors.",
   keywords: ["backlink checker","check backlinks","free backlink checker","backlink checker tool","website backlink checker","ahrefs backlink checker","google backlink checker","competitor backlink checker","backlink analysis","referring domains","anchor text","toxic backlinks","dofollow backlinks","nofollow links","backlink profile","new and lost backlinks","link building","domain authority","backlink gap","spam score","referring IPs","backlink monitoring","check website backlinks","backlink audit"],
   alternates: { canonical: "/backlink-checker" },
   openGraph: {
+    images: [DEFAULT_OG_IMAGE],
     title: "Backlink Checker — Analyze Any Backlink Profile",
     description:
       "Check backlinks and referring domains for any site. Spot toxic links, track new & lost backlinks, and compare competitors with SerpScale.",

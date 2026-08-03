@@ -4,7 +4,9 @@ export const alt = "SerpScale — The All-in-One SEO Platform";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-// Branded Open Graph / social-share image, inherited by every route.
+// Branded Open Graph / social-share image for the homepage. Other routes don't
+// get this for free (Next only auto-applies file-based OG images to their own
+// segment) — layout.tsx's generateMetadata() falls back to this same URL.
 export default function OGImage() {
   return new ImageResponse(
     (

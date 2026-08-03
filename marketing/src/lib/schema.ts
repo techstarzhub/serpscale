@@ -3,6 +3,11 @@
 const BASE = "https://www.serpscale.com";
 const ORG = { "@id": `${BASE}/#organization` };
 
+// Branded fallback OG image (src/app/opengraph-image.tsx) for pages that
+// don't have their own image — Next.js doesn't inherit openGraph.images from
+// the root layout once a page declares its own openGraph object.
+export const DEFAULT_OG_IMAGE = `${BASE}/opengraph-image`;
+
 export function breadcrumb(items: { name: string; path: string }[]) {
   return {
     "@context": "https://schema.org",

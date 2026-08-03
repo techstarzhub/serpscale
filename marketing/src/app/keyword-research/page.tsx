@@ -2,16 +2,17 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Frag } from "@/components/Frag";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb, faqPage, softwareApp } from "@/lib/schema";
+import { breadcrumb, faqPage, softwareApp, DEFAULT_OG_IMAGE } from "@/lib/schema";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Keyword Research Tool — Free Keyword Finder for SEO",
+  title: "Keyword Research Tool — Free Keyword Finder",
   description:
-    "SerpScale is an affordable keyword research tool for SEO — find keyword ideas, real search volume, difficulty and search intent. Start free, no card required.",
+    "SerpScale is an affordable keyword research tool — find keyword ideas, real search volume, difficulty and intent. Start free.",
   keywords: ["keyword research tool","keyword research","keyword research for SEO","SEO keyword research","keyword tool","free keyword research tool","keyword finder","keyword generator","keyword ideas","long-tail keywords","keyword difficulty","search volume","keyword suggestions","search intent","related keywords","keyword gap analysis","keyword clustering","question keywords","keyword volume checker","keyword metrics","seed keyword","CPC data","topic clusters","keyword explorer","keyword research tools"],
   alternates: { canonical: "/keyword-research" },
   openGraph: {
+    images: [DEFAULT_OG_IMAGE],
     title: "Keyword Research Tool — Free Keyword Finder for SEO",
     description:
       "Find keyword ideas, search volume, difficulty and intent in one dashboard. An affordable SEO keyword research tool — start free.",

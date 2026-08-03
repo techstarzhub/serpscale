@@ -3,7 +3,7 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Frag } from "@/components/Frag";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb, faqPage } from "@/lib/schema";
+import { breadcrumb, faqPage, DEFAULT_OG_IMAGE } from "@/lib/schema";
 
 const FAQS = [
   { q: "What is SerpScale?", a: "SerpScale is an all-in-one SEO platform that combines a rank tracker, site audit, backlink checker and keyword research in a single dashboard. Instead of juggling separate tools, agencies and marketers get every core SEO workflow in one place. It is built to be fast, affordable and easy to use." },
@@ -15,12 +15,13 @@ const FAQS = [
 ];
 
 export const metadata: Metadata = {
-  title: "SerpScale FAQ — Common Questions About Our SEO Platform",
+  title: "SerpScale FAQ — SEO Platform Questions",
   description:
-    "Common questions about SerpScale — the all-in-one SEO platform and affordable SEMrush alternative with rank tracker, site audit, backlinks and keyword research.",
+    "Common questions about SerpScale — the all-in-one SEO platform with rank tracker, site audit, backlinks and keyword research.",
   keywords: ["SerpScale FAQ","SEO tool FAQ","SEO platform questions","SEMrush alternative","SEO software","rank tracker","site audit tool","backlink checker","keyword research tool","SEO tool pricing","free SEO tool","white label SEO","all-in-one SEO platform","SEO tools","Google Search Console integration","SEO reporting","Ahrefs alternative","how SerpScale works","free SEO trial","SEO audit tool","SEO rank tracker","SEO tool for agencies","GA4 integration"],
   alternates: { canonical: "/faq" },
   openGraph: {
+    images: [DEFAULT_OG_IMAGE],
     title: "SerpScale FAQ — Common Questions About Our SEO Platform",
     description:
       "Everything you need to know about SerpScale's rank tracker, site audit, backlink checker and keyword research — the affordable SEMrush and Ahrefs alternative for agencies.",

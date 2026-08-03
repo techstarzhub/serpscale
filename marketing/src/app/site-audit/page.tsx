@@ -2,16 +2,17 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Frag } from "@/components/Frag";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb, faqPage, softwareApp } from "@/lib/schema";
+import { breadcrumb, faqPage, softwareApp, DEFAULT_OG_IMAGE } from "@/lib/schema";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Website SEO Checker — Free SEO Site Audit Tool",
   description:
-    "SerpScale is a free site audit tool that crawls your website, scores site health, checks Core Web Vitals and delivers a prioritized technical SEO audit report.",
+    "SerpScale is a free site audit tool that crawls your site, scores health, checks Core Web Vitals and delivers a prioritized SEO report.",
   keywords: ["website SEO checker","site audit tool","SEO site audit","SEO audit tool","technical SEO audit","free SEO audit","free site audit","website audit tool","web site audit","site audit","on-page SEO checker","SEO checker","crawl website","core web vitals","broken link checker","site health score","duplicate content checker","meta tag checker","redirect chains","indexability","structured data check","page speed","SEO issues","website crawler","SEO audit report"],
   alternates: { canonical: "/site-audit" },
   openGraph: {
+    images: [DEFAULT_OG_IMAGE],
     title: "Website SEO Checker — Free SEO Site Audit Tool | SerpScale",
     description:
       "Crawl your website, get a site health score, check Core Web Vitals and fix technical SEO issues with SerpScale's free site audit tool.",

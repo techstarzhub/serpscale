@@ -2,7 +2,7 @@ import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { Frag } from "@/components/Frag";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb } from "@/lib/schema";
+import { breadcrumb, DEFAULT_OG_IMAGE } from "@/lib/schema";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -11,6 +11,7 @@ export const metadata: Metadata = {
     "How SerpScale collects, uses and protects your data on our all-in-one SEO platform — integrations, cookies, retention and your privacy rights.",
   alternates: { canonical: "/privacy" },
   openGraph: {
+    images: [DEFAULT_OG_IMAGE],
     title: "Privacy Policy — SerpScale",
     description:
       "How SerpScale collects, uses and protects your data — integrations, cookies, retention and your privacy rights.",

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 import { JsonLd } from "@/components/JsonLd";
-import { breadcrumb, blogPosting } from "@/lib/schema";
+import { breadcrumb, blogPosting, DEFAULT_OG_IMAGE } from "@/lib/schema";
 import { getPost } from "@/lib/blog";
 
 export const revalidate = 60;
@@ -28,7 +28,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
       description,
       url: `/blog/${post.slug}`,
       type: "article",
-      images: post.coverUrl ? [{ url: post.coverUrl }] : undefined,
+      images: [post.coverUrl || DEFAULT_OG_IMAGE],
     },
   };
 }
@@ -87,7 +87,7 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
                     </div>
                   )}
                   <ul className="news-post" style={{ display: "flex", gap: "20px", listStyle: "none", padding: 0, margin: "18px 0" }}>
-                    <li><i className="fa-regular fa-user"></i> {post.author?.name || "SerpScale Team"}</li>
+                    <li itemProp="author"><i className="fa-regular fa-user"></i> {post.author?.name || "SerpScale Team"}</li>
                     <li><i className="fa-regular fa-calendar-days"></i> {fmtDate(post.publishedAt)}</li>
                     {post.categories[0] && <li><i className="fa-regular fa-folder"></i> {post.categories[0].name}</li>}
                   </ul>
