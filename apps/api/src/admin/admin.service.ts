@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { withFeatureLabels } from "../entitlements/entitlements.catalog";
 
 const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -7,7 +8,20 @@ const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-"
 /** Platform-owner (super admin) operations — spans every tenant. */
 @Injectable()
 export class AdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  // NotificationsModule is @Global — no explicit import needed.
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
+
+  /** Notify an org's active admins about a platform-owner action on their account. */
+  private async notifyOrgAdmins(orgId: string, payload: { title: string; body: string; link: string }) {
+    const admins = await this.prisma.user
+      .findMany({ where: { orgId, role: "ADMIN", isActive: true }, select: { id: true } })
+      .catch(() => [] as { id: string }[]);
+    if (!admins.length) return;
+    await this.notifications.notifyMany(admins.map((a) => a.id), "billing", payload);
+  }
 
   // ---- Platform overview ----
   async overview() {
@@ -157,11 +171,24 @@ export class AdminService {
   ) {
     if (typeof dto.isActive === "boolean") {
       await this.prisma.organization.update({ where: { id }, data: { isActive: dto.isActive } });
+      // Tell the org's admins their workspace access was paused / restored.
+      void this.notifyOrgAdmins(id, {
+        title: dto.isActive ? "Your workspace access was restored" : "Your workspace access was paused",
+        body: dto.isActive
+          ? "Your workspace has been reactivated. You and your team can sign in and use the platform again."
+          : "Your workspace has been paused by the platform administrator. Please contact support if you think this is a mistake.",
+        link: "/dashboard/settings/billing",
+      });
     }
     if (dto.planId !== undefined) {
       if (!dto.planId) {
         // Clear any subscription (back to no plan).
         await this.prisma.subscription.deleteMany({ where: { orgId: id } });
+        void this.notifyOrgAdmins(id, {
+          title: "Your subscription was removed",
+          body: "Your plan was removed by the platform administrator. Some features may no longer be available. Contact support to restore access.",
+          link: "/dashboard/settings/billing",
+        });
       } else {
         const plan = await this.prisma.plan.findUnique({ where: { id: dto.planId } });
         if (!plan) throw new BadRequestException("Unknown plan");
@@ -178,6 +205,12 @@ export class AdminService {
         if (existing?.planId !== plan.id) {
           await this.prisma.transaction.create({
             data: { orgId: id, planId: plan.id, amountCents: plan.priceCents, currency: plan.currency, status: "succeeded", gateway: "manual" },
+          });
+          // Only announce a genuine plan change (not a no-op re-save).
+          void this.notifyOrgAdmins(id, {
+            title: "Your plan was updated",
+            body: `Your workspace is now on the ${plan.name} plan.`,
+            link: "/dashboard/settings/billing",
           });
         }
       }

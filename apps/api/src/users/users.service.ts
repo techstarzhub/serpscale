@@ -7,6 +7,7 @@ import {
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { normalizeEmail } from "../common/email.util";
 
 @Injectable()
@@ -14,6 +15,8 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    // NotificationsModule is @Global — no explicit import needed.
+    private readonly notifications: NotificationsService,
   ) {}
 
   // Every user across all tenants (super admin view).
@@ -68,6 +71,18 @@ export class UsersService {
     });
     // Invalidate all existing sessions after a password change.
     await this.prisma.refreshToken.deleteMany({ where: { userId } }).catch(() => {});
+    // Security confirmation — force BOTH channels (an "it wasn't me" alert must
+    // reach the user regardless of their notification preferences).
+    void this.notifications.notify(
+      userId,
+      "system",
+      {
+        title: "Your password was changed",
+        body: "Your account password was just changed. If this wasn't you, reset your password immediately and contact support.",
+        link: "/dashboard/settings/security",
+      },
+      { inApp: true, email: true },
+    );
     return { ok: true };
   }
 

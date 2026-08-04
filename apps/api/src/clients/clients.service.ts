@@ -153,8 +153,23 @@ export class ClientsService {
       body: "Sign in to view your SEO reports and campaigns.",
       link: "/dashboard",
     });
+    // Keep the org's OTHER active admins in the loop that a new client was added.
+    void this.notifyAdmins(user, orgId, {
+      title: "New client added",
+      body: `${user.name || user.email} added the client "${client.name}".`,
+      link: "/dashboard/clients",
+    });
 
     return client;
+  }
+
+  /** Notify the org's other active admins about an org-level event (fire-and-forget). */
+  private async notifyAdmins(actor: AuthUser, orgId: string, payload: { title: string; body: string; link: string }) {
+    const admins = await this.prisma.user
+      .findMany({ where: { orgId, role: "ADMIN", isActive: true, id: { not: actor.id } }, select: { id: true } })
+      .catch(() => [] as { id: string }[]);
+    if (!admins.length) return;
+    await this.notifications.notifyMany(admins.map((a) => a.id), "team", payload);
   }
 
   private async owned(user: AuthUser, id: string) {
@@ -199,6 +214,17 @@ export class ClientsService {
       where: { id },
       data: { projects: { set: valid.map((v) => ({ id: v.id })) } },
     });
+    // Let the client's portal owner(s) know which campaigns they can now see.
+    const owners = await this.prisma.user
+      .findMany({ where: { clientId: id, isActive: true, clientOwner: true }, select: { id: true } })
+      .catch(() => [] as { id: string }[]);
+    if (owners.length) {
+      void this.notifications.notifyMany(owners.map((o) => o.id), "team", {
+        title: "Your campaign access was updated",
+        body: `You now have access to ${valid.length} campaign${valid.length === 1 ? "" : "s"} in your reporting portal.`,
+        link: "/dashboard",
+      });
+    }
     return { count: valid.length };
   }
 
@@ -523,6 +549,14 @@ export class ClientsService {
         clientAllCampaigns: allCampaigns,
         assignedProjects: { set: assign.map((id) => ({ id })) },
       },
+    });
+    // Tell the portal member their campaign access changed.
+    void this.notifications.notify(userId, "team", {
+      title: "Your campaign access was updated",
+      body: allCampaigns
+        ? "You now have access to all campaigns in your reporting portal."
+        : `You now have access to ${assign.length} campaign${assign.length === 1 ? "" : "s"} in your reporting portal.`,
+      link: "/dashboard",
     });
     return { ok: true, allCampaigns, assignedIds: assign };
   }

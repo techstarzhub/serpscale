@@ -60,7 +60,16 @@ export class BillingService {
 
   /** Cancel a scheduled (pending) plan change — stay on the current plan. */
   async cancelScheduledChange(orgId: string) {
+    const sub = await this.prisma.subscription.findUnique({ where: { orgId }, select: { pendingPlanId: true } }).catch(() => null);
     await this.prisma.subscription.update({ where: { orgId }, data: { pendingPlanId: null, pendingKeywords: null } }).catch(() => {});
+    // Mirror scheduleChange — only announce if there actually was a pending change.
+    if (sub?.pendingPlanId) {
+      await this.notifyOrgAdmins(orgId, {
+        title: "Scheduled plan change canceled",
+        body: "Your scheduled plan change was canceled — you'll stay on your current plan.",
+        link: "/dashboard/settings/billing",
+      });
+    }
     return { ok: true };
   }
 
