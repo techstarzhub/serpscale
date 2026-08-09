@@ -4,6 +4,7 @@ import { ProjectsProvider } from "@/components/providers/projects-provider";
 import { AuthGuard } from "@/components/providers/auth-guard";
 import { AppShell } from "@/components/layout/app-shell";
 import { CopilotWidget } from "@/components/copilot/copilot-widget";
+import { SupportDock } from "@/components/support/support-dock";
 import { ThemeSync } from "@/components/theme/theme-sync";
 import { OnboardingGate } from "@/components/onboarding/onboarding-gate";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
@@ -22,6 +23,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <ProjectsProvider>
               <AppShell initialCollapsed={collapsed}>{children}</AppShell>
               <CopilotWidget />
+              <SupportDock />
               <ImpersonationBanner />
             </ProjectsProvider>
           </OnboardingGate>

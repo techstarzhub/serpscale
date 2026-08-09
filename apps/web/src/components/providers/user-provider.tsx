@@ -22,6 +22,9 @@ export interface CurrentUser {
   // follows the user across devices. Hydrated into ThemeProvider on load.
   themeOverrides?: { overrides?: Record<string, string>; mode?: "light" | "dark" } | null;
   permissions?: string[];
+  // True for platform staff the super admin added — they reach the super-admin
+  // dashboard, gated to the sections their permissions allow.
+  isSuperAdminTeam?: boolean;
   // Client-portal users: which client they belong to, and if they can manage its members.
   clientId?: string | null;
   clientOwner?: boolean;

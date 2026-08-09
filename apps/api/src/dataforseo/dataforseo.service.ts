@@ -2,6 +2,20 @@ import { Injectable, Logger } from "@nestjs/common";
 import { createHash } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 
+/** A searchable location (country / state / city) from DataForSEO's database. */
+type LocationRow = { code: number; name: string; type: string; iso: string | null };
+
+// Tiny territories with a negligible search population. Google Trends reports
+// RELATIVE interest (0–100), so a handful of searches in these places spikes them
+// to 100 — pure noise, not real demand. We drop them from the world-level ranking.
+const MICRO_TERRITORY_ISO = new Set([
+  "SH", "FK", "GS", "BV", "HM", "TF", "IO", "PN", "NU", "TK", "WF", "NF", "CX", "CC",
+  "VA", "PM", "MS", "AI", "VG", "BL", "MF", "SX", "TC", "CK", "NR", "TV", "FM", "MH",
+  "PW", "KI", "AS", "MP", "GU", "VI", "AX", "GI", "FO", "GL", "AD", "LI", "MC", "SM",
+  "KY", "BM", "AW", "CW", "BQ", "GP", "MQ", "YT", "NC", "PF", "GF", "EH", "SC", "VU",
+  "SB", "TO", "WS",
+]);
+
 /** ISO-2 country → DataForSEO location_code (shared across Labs/Backlinks calls). */
 const LOCATION_CODES: Record<string, number> = {
   US: 2840, GB: 2826, IN: 2356, CA: 2124, AU: 2036, DE: 2276, FR: 2250, ES: 2724,
@@ -101,6 +115,40 @@ export class DataForSeoService {
     }
   }
 
+  /** Like post(), but returns the WHOLE `result` array (not just result[0]).
+   *  Needed for endpoints whose result is a flat list of rows — e.g. Google Ads
+   *  keywords_for_keywords returns result = [{keyword,...}, ...], not {items}. */
+  private async postAll(path: string, body: unknown): Promise<any[] | null> {
+    const auth = this.auth();
+    if (!auth) return null;
+    const spent = await this.spentToday();
+    if (spent >= this.budgetCap()) {
+      this.logger.warn(`dataforseo: daily budget ($${this.budgetCap()}) reached — skipping ${path} (spent ~$${spent.toFixed(3)})`);
+      return null;
+    }
+    try {
+      const res = await fetch(`https://api.dataforseo.com${path}`, {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(45000),
+      });
+      const data: any = await res.json();
+      if (typeof data?.cost === "number" && data.cost > 0) {
+        await this.addSpend(data.cost);
+        this.logger.log(`dataforseo ${path}: cost $${data.cost.toFixed(4)}`);
+      }
+      if (data?.status_code !== 20000) {
+        this.logger.warn(`dataforseo ${path}: ${data?.status_code} ${data?.status_message}`);
+        return null;
+      }
+      return data.tasks?.[0]?.result ?? null;
+    } catch (e) {
+      this.logger.warn(`dataforseo ${path} failed: ${String(e).slice(0, 80)}`);
+      return null;
+    }
+  }
+
   /** Stale-while-revalidate cache over the shared DataCache table.
    *  `fresh`      = user hit Refresh → bypass the cache and re-fetch live.
    *  `cachedOnly` = only serve what's already cached; NEVER make a paid call.
@@ -190,26 +238,187 @@ export class DataForSeoService {
   }
 
   /**
-   * Keyword ideas for a seed term (DataForSEO Labs). Uses `keyword_suggestions`
-   * (full-text: every result CONTAINS the seed phrase) rather than `keyword_ideas`
-   * (category-based, which drifts — "white label seo in india" would otherwise
-   * return generic "times of india" noise). Database-backed and cheap; volumes
-   * update ~monthly, hence a 7-day cache.
+   * Keyword ideas for a seed term — Google Ads Keyword Planner
+   * (`keywords_for_keywords`). This is the same source the big keyword tools use:
+   * it returns real search volume, a 0–100 competition index and a 12-month trend,
+   * and CRITICALLY it works at every geo level — country, state AND city — unlike
+   * DataForSEO Labs `keyword_suggestions`, which only accepts country codes (a
+   * city/state code there returns "Invalid location_code" and zero ideas). So when
+   * a user picks "Punjab, India" or "Chandigarh" we now get that location's real
+   * volumes instead of nothing. Database-backed; volumes update ~monthly (7-day+ cache).
    */
-  async keywordIdeas(seed: string, country?: string, language = "en", fresh = false) {
-    const key = `kwsug:${country ?? "US"}:${language}:${seed.toLowerCase().trim()}`;
+  async keywordIdeas(seed: string, country?: string, language = "en", fresh = false, locationCodeOverride?: number) {
+    // An explicit location_code (a city/state picked in the UI) wins; otherwise
+    // fall back to the country's code. Keyed by the resolved code so a city's
+    // results never collide with its country's. (v2 = Google Ads source; bumped
+    // so old country-only Labs entries don't shadow the richer data.)
+    const loc = locationCodeOverride ?? locationCode(country);
+    const key = `kwsug:v2:${loc ?? "WW"}:${language}:${seed.toLowerCase().trim()}`;
     if (fresh) await this.prisma.dataCache.deleteMany({ where: { key } }).catch(() => {});
     return this.cached(key, 30 * 24 * 3600_000, async () => {
       if (!this.auth()) return { connected: false, keywords: [] };
-      const res = await this.post("/v3/dataforseo_labs/google/keyword_suggestions/live", [
-        compact({ keyword: seed, location_code: locationCode(country), language_code: language, limit: 100, include_seed_keyword: true, order_by: ["keyword_info.search_volume,desc"] }),
+      const result = await this.postAll("/v3/keywords_data/google_ads/keywords_for_keywords/live", [
+        compact({ keywords: [seed], location_code: loc, language_code: language, sort_by: "search_volume" }),
       ]);
-      if (!res) return { connected: false, keywords: [] };
+      if (!result) return { connected: false, keywords: [] };
       const seen = new Set<string>();
-      const keywords = (res.items ?? [])
-        .map((it: any) => normalizeKeyword(it.keyword, it.keyword_info, it.keyword_properties))
-        .filter((k: any) => k.keyword && !seen.has(k.keyword) && seen.add(k.keyword));
+      const keywords = result
+        .map((it: any) => ({
+          keyword: it.keyword ?? "",
+          volume: it.search_volume ?? 0,
+          cpc: it.cpc ?? null,
+          // competition_index is Google's 0–100 competitiveness (the "CI" column
+          // competitors show). Expose it as both the 0–1 competition and difficulty.
+          competition: typeof it.competition_index === "number" ? it.competition_index / 100 : null,
+          competitionLevel: it.competition ?? null, // "LOW" | "MEDIUM" | "HIGH"
+          difficulty: it.competition_index ?? null,
+          trend: (it.monthly_searches ?? []).slice(0, 12).map((m: any) => m.search_volume ?? 0).reverse(),
+        }))
+        .filter((k: any) => k.keyword && !seen.has(k.keyword) && seen.add(k.keyword))
+        .sort((a: any, b: any) => (b.volume ?? 0) - (a.volume ?? 0));
       return { connected: true, seed, keywords };
+    });
+  }
+
+  // ---- Locations (country / state / city) for keyword research --------------
+  // DataForSEO's Google-Ads locations list (~260k entries) is fetched ONCE (free),
+  // filtered to the useful admin levels, cached in-process + in the DB, then
+  // searched locally so the picker is instant and never re-hits the API.
+  private static LOCATIONS: LocationRow[] | null = null;
+  private static LOCATIONS_PROMISE: Promise<LocationRow[]> | null = null;
+  // O(1) lookup indexes so geo resolution never scans the whole 90k list.
+  private static BY_ISO = new Map<string, LocationRow>();  // ISO2 → its Country row
+  private static BY_CODE = new Map<number, LocationRow>();  // location_code → row
+  private static BY_NAME = new Map<string, LocationRow[]>(); // lowercased first name-part → rows
+  private static readonly LOCATIONS_KEY = "__dataforseo_locations_v1__";
+  private static readonly LOCATION_TYPES = new Set([
+    "Country", "State", "Region", "Province", "Territory", "Autonomous Community",
+    "Union Territory", "County", "City", "Municipality", "Governorate", "Prefecture",
+    "Department", "Canton", "Borough",
+  ]);
+
+  // Store the list AND build the lookup indexes in one pass.
+  private setLocations(rows: LocationRow[]): LocationRow[] {
+    DataForSeoService.LOCATIONS = rows;
+    const byIso = new Map<string, LocationRow>();
+    const byCode = new Map<number, LocationRow>();
+    const byName = new Map<string, LocationRow[]>();
+    for (const r of rows) {
+      byCode.set(r.code, r);
+      if (r.type === "Country" && r.iso) byIso.set(r.iso.toUpperCase(), r);
+      const nm = r.name.split(",")[0].trim().toLowerCase();
+      const arr = byName.get(nm);
+      if (arr) arr.push(r); else byName.set(nm, [r]);
+    }
+    DataForSeoService.BY_ISO = byIso;
+    DataForSeoService.BY_CODE = byCode;
+    DataForSeoService.BY_NAME = byName;
+    return rows;
+  }
+
+  private async loadLocations(): Promise<LocationRow[]> {
+    if (DataForSeoService.LOCATIONS) return DataForSeoService.LOCATIONS;
+    if (DataForSeoService.LOCATIONS_PROMISE) return DataForSeoService.LOCATIONS_PROMISE;
+    DataForSeoService.LOCATIONS_PROMISE = (async () => {
+      try {
+        // Warm start from the DB cache first (persists across restarts).
+        try {
+          const row = await this.prisma.dataCache.findUnique({ where: { key: DataForSeoService.LOCATIONS_KEY } });
+          const p = row?.payload as unknown as LocationRow[] | undefined;
+          if (Array.isArray(p) && p.length) return this.setLocations(p);
+        } catch { /* fall through to live fetch */ }
+        const auth = this.auth();
+        if (!auth) return this.setLocations([]);
+        try {
+          const res = await fetch("https://api.dataforseo.com/v3/keywords_data/google_ads/locations", {
+            headers: { Authorization: `Basic ${auth}` },
+            signal: AbortSignal.timeout(60_000),
+          });
+          const data: any = await res.json();
+          const rows: any[] = data?.tasks?.[0]?.result ?? [];
+          const filtered: LocationRow[] = rows
+            .filter((r) => DataForSeoService.LOCATION_TYPES.has(r.location_type))
+            .map((r) => ({ code: r.location_code, name: r.location_name, type: r.location_type, iso: r.country_iso_code ?? null }));
+          await this.prisma.dataCache.upsert({
+            where: { key: DataForSeoService.LOCATIONS_KEY },
+            create: { key: DataForSeoService.LOCATIONS_KEY, payload: filtered as any },
+            update: { payload: filtered as any },
+          }).catch(() => {});
+          this.logger.log(`dataforseo locations cached: ${filtered.length}`);
+          return this.setLocations(filtered);
+        } catch (e) {
+          this.logger.warn(`dataforseo locations fetch failed: ${String(e).slice(0, 80)}`);
+          return this.setLocations([]);
+        }
+      } finally {
+        DataForSeoService.LOCATIONS_PROMISE = null;
+      }
+    })();
+    return DataForSeoService.LOCATIONS_PROMISE;
+  }
+
+  /** Search countries/states/cities by name. Empty query → the country list. */
+  async searchLocations(q: string, limit = 40): Promise<LocationRow[]> {
+    const all = await this.loadLocations();
+    const needle = (q || "").trim().toLowerCase();
+    const rank = (t: string) => (t === "Country" ? 0 : t === "State" || t === "Region" || t === "Province" ? 1 : 2);
+    if (!needle) {
+      return all.filter((r) => r.type === "Country").sort((a, b) => a.name.localeCompare(b.name)).slice(0, limit);
+    }
+    const scored: { r: LocationRow; s: number; len: number }[] = [];
+    for (const r of all) {
+      const name = r.name.toLowerCase();
+      if (!name.includes(needle)) continue;
+      scored.push({ r, s: (name.startsWith(needle) ? 0 : 10) + rank(r.type), len: r.name.length });
+      if (scored.length >= 4000) break; // cap the scan on very broad queries
+    }
+    scored.sort((a, b) => a.s - b.s || a.len - b.len);
+    return scored.slice(0, limit).map((x) => x.r);
+  }
+
+  // Resolve a Google-Trends geo entry to a DataForSEO location_code so the UI can
+  // drill deeper. World entries carry an ISO-2 geo_id → the Country row; deeper
+  // entries are matched by name within the parent country.
+  private resolveGeoCode(name: string, geoId: string, parentCode?: number): number | null {
+    // World level: geo_id is an ISO-2 country code → the Country row (O(1)).
+    if (!parentCode) return DataForSeoService.BY_ISO.get((geoId || "").toUpperCase())?.code ?? null;
+    // Deeper: match by name within the parent country (indexed by name → O(1)).
+    const iso = DataForSeoService.BY_CODE.get(parentCode)?.iso ?? null;
+    const rows = DataForSeoService.BY_NAME.get(name.trim().toLowerCase());
+    if (!rows) return null;
+    const order = (t: string) => (t === "State" || t === "Region" || t === "Province" || t === "Union Territory" ? 0 : t === "City" || t === "Municipality" ? 1 : 2);
+    const matches = rows.filter((r) => (iso ? r.iso === iso : true) && r.code !== parentCode).sort((a, b) => order(a.type) - order(b.type));
+    return matches[0]?.code ?? null;
+  }
+
+  /**
+   * Where a keyword is in demand — Google Trends "interest by region" (0–100).
+   * No location_code → by COUNTRY (world); a country code → its states/regions; a
+   * state code → its cities. Each item carries a drill-down code when resolvable.
+   */
+  async keywordGeo(keyword: string, locationCode?: number, language = "en") {
+    const kw = (keyword || "").trim();
+    if (!kw) return { items: [] as { name: string; value: number; code: number | null }[] };
+    const key = `kwgeo:${locationCode ?? "WW"}:${language}:${kw.toLowerCase()}`;
+    return this.cached(key, 7 * 24 * 3600_000, async () => {
+      if (!this.auth()) return { items: [] };
+      const res = await this.post("/v3/keywords_data/google_trends/explore/live", [
+        compact({ keywords: [kw], type: "web", location_code: locationCode, language_code: language, item_types: ["google_trends_map"] }),
+      ]);
+      const map = (res?.items ?? []).find((it: any) => it.type === "google_trends_map");
+      await this.loadLocations(); // ensures the O(1) lookup indexes are built
+      const isWorld = !locationCode;
+      const raw = (map?.data ?? [])
+        .filter((g: any) => Array.isArray(g.values) && typeof g.values[0] === "number" && g.values[0] > 0)
+        // Drop tiny-population territories at world level — they spike to a fake 100.
+        .filter((g: any) => !(isWorld && MICRO_TERRITORY_ISO.has(String(g.geo_id ?? "").toUpperCase())))
+        .map((g: any) => ({ name: g.geo_name as string, value: g.values[0] as number, code: this.resolveGeoCode(g.geo_name, g.geo_id ?? "", locationCode) }))
+        .sort((a: any, b: any) => b.value - a.value);
+      // Re-normalise to the top REAL market = 100 (the raw 100 was the noise we
+      // removed), so the scores read as an intuitive 0–100 relative to #1.
+      const top = raw[0]?.value ?? 0;
+      const items = top > 0 ? raw.map((it: any) => ({ ...it, value: Math.max(1, Math.round((it.value / top) * 100)) })) : raw;
+      return { items };
     });
   }
 
@@ -422,26 +631,37 @@ export class DataForSeoService {
   // Keyword Data (Google Ads exact search volume) — cached 30 days, pricey ($0.09)
   // ==========================================================================
 
-  async searchVolume(keywords: string[], country?: string, language = "en") {
+  /**
+   * Exact Google Ads search volume for a GIVEN list of keywords (bulk analysis /
+   * file import). Works at country, state AND city level via locationCodeOverride.
+   * Returns the same rich shape as keywordIdeas (volume, competition index 0–100,
+   * 12-month trend) so imported keywords render in the same table.
+   */
+  async searchVolume(keywords: string[], country?: string, language = "en", locationCodeOverride?: number) {
     const list = [...new Set(keywords.map((k) => k.toLowerCase().trim()).filter(Boolean))].slice(0, 700);
     if (list.length === 0) return { connected: true, keywords: [] };
-    const key = `adsvol:${country ?? "US"}:${language}:${sha(list.join("|"))}`;
+    const loc = locationCodeOverride ?? locationCode(country);
+    const key = `adsvol:v2:${loc ?? "WW"}:${language}:${sha(list.join("|"))}`;
     return this.cached(key, 30 * 24 * 3600_000, async () => {
       if (!this.auth()) return { connected: false, keywords: [] };
       const res = await this.postTasks("/v3/keywords_data/google_ads/search_volume/live", [
-        compact({ keywords: list, location_code: locationCode(country), language_code: language }),
+        compact({ keywords: list, location_code: loc, language_code: language }),
       ]);
       if (!res) return { connected: false, keywords: [] };
-      return {
-        connected: true,
-        keywords: res.map((it: any) => ({
-          keyword: it.keyword,
+      const seen = new Set<string>();
+      const out = res
+        .map((it: any) => ({
+          keyword: it.keyword ?? "",
           volume: it.search_volume ?? 0,
           cpc: it.cpc ?? null,
-          competition: it.competition_index ?? null,
-          competitionLevel: it.competition ?? null,
-        })),
-      };
+          competition: typeof it.competition_index === "number" ? it.competition_index / 100 : null,
+          competitionLevel: it.competition ?? null, // "LOW" | "MEDIUM" | "HIGH"
+          difficulty: it.competition_index ?? null,
+          trend: (it.monthly_searches ?? []).slice(0, 12).map((m: any) => m.search_volume ?? 0).reverse(),
+        }))
+        .filter((k: any) => k.keyword && !seen.has(k.keyword) && seen.add(k.keyword))
+        .sort((a: any, b: any) => (b.volume ?? 0) - (a.volume ?? 0));
+      return { connected: true, keywords: out };
     });
   }
 

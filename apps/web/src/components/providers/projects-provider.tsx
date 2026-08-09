@@ -12,6 +12,13 @@ export interface Project {
   createdById: string | null;
   // Dashboards (project detail tabs) active for this campaign. Empty = all tabs.
   enabledTabs?: string[];
+  // Default connected Google account (email) this campaign sources Google data from.
+  // null/absent = auto-detect by domain across every connected account.
+  googleAccountEmail?: string | null;
+  // Per-service overrides of the default account. null/absent = use the default.
+  gscAccountEmail?: string | null;
+  gaAccountEmail?: string | null;
+  gmbAccountEmail?: string | null;
   // ISO timestamp when the campaign was archived, or null when active.
   archivedAt?: string | null;
   // Readable URL slug derived from the name (e.g. "Tech Starz Hub" -> "tech-starz-hub").
@@ -48,12 +55,21 @@ function withSlugs(list: Omit<Project, "slug">[]): Project[] {
   });
 }
 
+// Default Google account + per-service overrides accepted by create/update.
+// "" clears a field (auto-detect / use default); absent leaves it unchanged.
+type GoogleAccountInput = {
+  googleAccountEmail?: string;
+  gscAccountEmail?: string;
+  gaAccountEmail?: string;
+  gmbAccountEmail?: string;
+};
+
 interface ProjectsContextValue {
   projects: Project[];
   loading: boolean;
-  addProject: (input: { name: string; domain: string; enabledTabs?: string[]; googleAccountEmail?: string }) => Promise<Project>;
-  // Edit an existing campaign (name / domain / dashboards). Re-slugs the list.
-  updateProject: (id: string, input: { name?: string; domain?: string; enabledTabs?: string[]; googleAccountEmail?: string }) => Promise<Project>;
+  addProject: (input: { name: string; domain: string; enabledTabs?: string[] } & GoogleAccountInput) => Promise<Project>;
+  // Edit an existing campaign (name / domain / dashboards / data sources). Re-slugs the list.
+  updateProject: (id: string, input: { name?: string; domain?: string; enabledTabs?: string[] } & GoogleAccountInput) => Promise<Project>;
   removeProject: (id: string) => Promise<void>;
   // Generate (once) or revoke the campaign's public read-only view key.
   generateShareKey: (id: string) => Promise<string>;
@@ -83,7 +99,7 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
     refresh().finally(() => setLoading(false));
   }, [refresh]);
 
-  const addProject = useCallback(async (input: { name: string; domain: string; enabledTabs?: string[]; googleAccountEmail?: string }) => {
+  const addProject = useCallback(async (input: { name: string; domain: string; enabledTabs?: string[] } & GoogleAccountInput) => {
     const created = await api.post<Omit<Project, "slug">>("/projects", input);
     let withSlug!: Project;
     setProjects((prev) => {
@@ -95,7 +111,7 @@ export function ProjectsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const updateProject = useCallback(
-    async (id: string, input: { name?: string; domain?: string; enabledTabs?: string[] }) => {
+    async (id: string, input: { name?: string; domain?: string; enabledTabs?: string[] } & GoogleAccountInput) => {
       const updated = await api.patch<Omit<Project, "slug">>(`/projects/${id}`, input);
       let withSlug!: Project;
       setProjects((prev) => {

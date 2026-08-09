@@ -7,6 +7,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   Plus,
+  Unlink,
+  RotateCw,
 } from "lucide-react";
 import { SiGooglesearchconsole, SiGoogleanalytics, SiGooglemaps } from "react-icons/si";
 import { FcGoogle } from "react-icons/fc";
@@ -76,6 +78,10 @@ export default function IntegrationsPage() {
   const accounts = status?.googleAccounts ?? [];
   const configured = status?.googleConfigured;
   const connected = accounts.length > 0;
+  // A revoked/expired Google token needs a one-time reconnect. Services are only
+  // truly "Active" while at least one account still has a live token.
+  const isExpired = (s?: string) => !!s && s !== "connected";
+  const hasLive = accounts.some((a) => !isExpired(a.status));
 
   return (
     <div className="space-y-5">
@@ -119,17 +125,40 @@ export default function IntegrationsPage() {
 
             {(connected || !configured) && (
               <CardContent className="space-y-2">
-                {accounts.map((a) => (
-                  <div key={a.id} className="flex items-center justify-between rounded-lg border border-border p-3">
-                    <div className="flex items-center gap-2.5">
-                      <span className="grid h-8 w-8 place-items-center rounded-full bg-chart-2/12 text-chart-2"><CheckCircle2 className="h-4 w-4" /></span>
-                      <span className="text-sm font-medium">{a.accountEmail ?? "Connected account"}</span>
+                {accounts.map((a) => {
+                  const expired = isExpired(a.status);
+                  return (
+                    <div key={a.id} className={cn("flex items-center justify-between gap-3 rounded-lg border p-3", expired ? "border-destructive/30 bg-destructive/[0.04]" : "border-border")}>
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-full", expired ? "bg-destructive/12 text-destructive" : "bg-chart-2/12 text-chart-2")}>
+                          {expired ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{a.accountEmail ?? "Connected account"}</p>
+                          <span className={cn("mt-0.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", expired ? "bg-destructive/12 text-destructive" : "bg-chart-2/12 text-chart-2")}>
+                            {expired ? "Expired · reconnect" : "Active"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {expired && (
+                          <Button size="sm" className="gap-1.5" onClick={connectGoogle}>
+                            <RotateCw className="h-3.5 w-3.5" /> Reconnect
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy === a.id}
+                          onClick={() => disconnect(a.id)}
+                          className="gap-1.5 border-destructive/30 text-destructive hover:border-destructive hover:bg-destructive hover:text-destructive-foreground"
+                        >
+                          {busy === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Unlink className="h-3.5 w-3.5" /> Disconnect</>}
+                        </Button>
+                      </div>
                     </div>
-                    <Button variant="ghost" size="sm" disabled={busy === a.id} onClick={() => disconnect(a.id)}>
-                      {busy === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Disconnect"}
-                    </Button>
-                  </div>
-                ))}
+                  );
+                })}
                 {!configured && (
                   <div className="flex items-start gap-2 rounded-lg border border-chart-3/30 bg-chart-3/10 p-3 text-sm">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-chart-3" />
@@ -148,8 +177,8 @@ export default function IntegrationsPage() {
                   <CardContent className="space-y-3 p-4">
                     <div className="flex items-center justify-between">
                       <span className="grid h-10 w-10 place-items-center rounded-lg border border-border bg-card"><Icon className="h-5 w-5" style={{ color: s.color }} /></span>
-                      <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", connected ? "bg-chart-2/12 text-chart-2" : "bg-secondary text-muted-foreground")}>
-                        {connected ? "Active" : "Not connected"}
+                      <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", hasLive ? "bg-chart-2/12 text-chart-2" : connected ? "bg-destructive/12 text-destructive" : "bg-secondary text-muted-foreground")}>
+                        {hasLive ? "Active" : connected ? "Reconnect needed" : "Not connected"}
                       </span>
                     </div>
                     <div>

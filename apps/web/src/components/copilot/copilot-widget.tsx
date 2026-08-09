@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, X, Send, Sparkles, User, Loader2, ChevronLeft, Globe, Search } from "lucide-react";
+import { Bot, X, Send, Sparkles, User, Loader2, ChevronLeft, Globe, Search, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { useWidgetPrefs } from "@/lib/widget-prefs";
+import { useDraggable } from "@/lib/use-draggable";
 import { useProjects, type Project } from "@/components/providers/projects-provider";
 import { useCurrentUser, useCan } from "@/components/providers/user-provider";
 import { ActionChip, RichText, streamCopilot, type ChatAction, type Message } from "./copilot-core";
@@ -24,80 +26,9 @@ function Favicon({ domain }: { domain: string }) {
   );
 }
 
-type Pos = { x: number; y: number };
-
-/**
- * Makes an element free-draggable and remembers where the user parked it
- * (localStorage). The drag "handle" and the positioned element can differ —
- * attach `targetRef` to the box being moved and `handleProps` to the grabbable
- * area (e.g. a header). Movement is clamped to the viewport, a tiny threshold
- * separates a click from a drag, and positions re-clamp on window resize.
- */
-function useDraggable(storageKey: string, computeDefault: () => Pos) {
-  const [pos, setPos] = useState<Pos | null>(null);
-  const posRef = useRef<Pos | null>(null);
-  const targetRef = useRef<HTMLElement | null>(null);
-  const drag = useRef({ active: false, moved: false, px: 0, py: 0, ox: 0, oy: 0, w: 0, h: 0 });
-
-  const apply = useCallback((p: Pos) => { posRef.current = p; setPos(p); }, []);
-  const clamp = (x: number, y: number, w: number, h: number): Pos => ({
-    x: Math.min(Math.max(0, x), Math.max(0, window.innerWidth - w)),
-    y: Math.min(Math.max(0, y), Math.max(0, window.innerHeight - h)),
-  });
-
-  useEffect(() => {
-    let initial: Pos | null = null;
-    try { const s = localStorage.getItem(storageKey); if (s) initial = JSON.parse(s); } catch {}
-    apply(initial ?? computeDefault());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const onResize = () => {
-      const p = posRef.current, d = drag.current;
-      if (!p || !d.w) return;
-      apply(clamp(p.x, p.y, d.w, d.h));
-    };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    // Let real controls inside the handle (buttons) work without starting a drag.
-    if ((e.target as HTMLElement).closest("[data-no-drag]")) return;
-    const box = targetRef.current ?? (e.currentTarget as HTMLElement);
-    const r = box.getBoundingClientRect();
-    drag.current = { active: true, moved: false, px: e.clientX, py: e.clientY, ox: r.left, oy: r.top, w: r.width, h: r.height };
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-  };
-  const onPointerMove = (e: React.PointerEvent) => {
-    const d = drag.current;
-    if (!d.active) return;
-    const dx = e.clientX - d.px, dy = e.clientY - d.py;
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) d.moved = true;
-    apply(clamp(d.ox + dx, d.oy + dy, d.w, d.h));
-  };
-  const onPointerUp = (e: React.PointerEvent) => {
-    const d = drag.current;
-    if (!d.active) return;
-    d.active = false;
-    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
-    if (d.moved && posRef.current) {
-      try { localStorage.setItem(storageKey, JSON.stringify(posRef.current)); } catch {}
-    }
-  };
-
-  return {
-    pos,
-    targetRef,
-    justDragged: () => drag.current.moved,
-    handleProps: { onPointerDown, onPointerMove, onPointerUp },
-  };
-}
-
 export function CopilotWidget() {
   const { user } = useCurrentUser();
+  const { prefs, setVisible } = useWidgetPrefs();
   const { projects } = useProjects();
   const can = useCan();
   const router = useRouter();
@@ -229,7 +160,7 @@ export function CopilotWidget() {
     }
   }
 
-  if (hidden) return null;
+  if (hidden || !prefs.copilot) return null; // hidden via Profile settings / the widget
 
   const filtered = projects.filter(
     (p) => p.name.toLowerCase().includes(query.toLowerCase()) || p.domain.toLowerCase().includes(query.toLowerCase()),
@@ -254,6 +185,20 @@ export function CopilotWidget() {
         {/* live indicator */}
         <span className="absolute -right-0.5 -top-0.5 grid h-4 w-4 place-items-center rounded-full bg-card">
           <span className="h-2.5 w-2.5 rounded-full bg-chart-2" />
+        </span>
+        {/* Hover to hide (re-enable in Profile settings). A span (not a button) so
+            it isn't nested; data-no-drag keeps the drag handler from firing. */}
+        <span
+          role="button"
+          tabIndex={0}
+          data-no-drag
+          onClick={(e) => { e.stopPropagation(); setVisible("copilot", false); }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          title="Hide the Copilot (re-enable in Profile settings)"
+          className="absolute -left-1.5 -top-1.5 hidden h-5 w-5 cursor-pointer place-items-center rounded-full border border-border bg-card text-muted-foreground shadow transition-colors hover:text-destructive group-hover:grid"
+        >
+          <X className="h-3 w-3" />
         </span>
       </button>
 
@@ -286,6 +231,14 @@ export function CopilotWidget() {
                 {active ? active.domain : "Pick a project to chat about"}
               </div>
             </div>
+            <button
+              data-no-drag
+              onClick={() => { setVisible("copilot", false); setOpen(false); }}
+              title="Hide the Copilot (re-enable in Profile settings)"
+              className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              <EyeOff className="h-4 w-4" />
+            </button>
             <button
               data-no-drag
               onClick={() => setOpen(false)}

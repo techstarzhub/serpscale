@@ -10,9 +10,12 @@ import {
   Post,
   Query,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
 import type { Response } from "express";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { Throttle } from "@nestjs/throttler";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PermissionsGuard } from "../auth/guards/permissions.guard";
@@ -32,9 +35,12 @@ import { EmailService } from "../email/email.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { AuditService } from "../auth/audit.service";
 import { CreateProjectDto, UpdateProjectDto } from "./dto/project.dto";
+import { extractKeywordsFromFile, extractKeywordsFromText } from "./keyword-file.util";
 
 // "?fresh=1" / "?fresh=true" → bypass cache and re-fetch live (Refresh button).
 const isFresh = (v?: string) => v === "1" || v === "true";
+// Only accept a clean YYYY-MM-DD so a custom range can't poison the cache key.
+const isYmd = (v?: string): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 @UseGuards(JwtAuthGuard, PermissionsGuard, FeaturesGuard)
 @Controller("projects")
@@ -141,6 +147,15 @@ export class ProjectsController {
   @Get(":id/meta")
   meta(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.projects.meta(user, id);
+  }
+
+  // Which connected Google account each service (GSC/GA/GMB) actually resolves to
+  // for this campaign's domain — powers the "auto-detect → account" hint in the
+  // edit form. Gated by project access only (not per-service features).
+  @Get(":id/google-source")
+  async googleSource(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    const project = await this.projects.get(user, id);
+    return this.google.sourcesForProject(project);
   }
 
   @Patch(":id")
@@ -324,15 +339,20 @@ export class ProjectsController {
     @Param("id") id: string,
     @Query("days") days?: string,
     @Query("fresh") fresh?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
   ) {
     const project = await this.projects.get(user, id);
-    const d = Math.min(90, Math.max(7, Number(days) || 28));
+    // A valid from/to custom range wins and is cached under its own key; otherwise
+    // fall back to the day count (1–90). Each distinct range is persisted separately.
+    const range = isYmd(from) && isYmd(to) ? { from, to } : undefined;
+    const d = Math.min(90, Math.max(1, Number(days) || 28));
     // Cache even a "not matched" result (30m) so an unmatched domain doesn't
     // re-run Google's expensive property/site scan on every page load. Matched
     // data caches for 3h. Refresh button (?fresh=1) always bypasses.
-    const key = `gsc:${id}:${d}`;
+    const key = range ? `gsc:${id}:${range.from}_${range.to}` : `gsc:${id}:${d}`;
     const matched = (await this.google.peek<any>(key))?.matched === true;
-    return this.google.cached(key, matched ? 3 * 3600_000 : 30 * 60_000, () => this.google.gscForProject(project, d), isFresh(fresh), true);
+    return this.google.cached(key, matched ? 3 * 3600_000 : 30 * 60_000, () => this.google.gscForProject(project, d, range), isFresh(fresh), true);
   }
 
   // ---- Google Analytics 4 traffic (auto-matched to the project domain) ----
@@ -345,14 +365,17 @@ export class ProjectsController {
     @Param("id") id: string,
     @Query("days") days?: string,
     @Query("fresh") fresh?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
   ) {
     const project = await this.projects.get(user, id);
-    const d = Math.min(90, Math.max(7, Number(days) || 28));
+    const range = isYmd(from) && isYmd(to) ? { from, to } : undefined;
+    const d = Math.min(90, Math.max(1, Number(days) || 28));
     // Same as GSC: cache the "not matched" result (30m) so an unmatched domain
     // doesn't rescan every GA4 property (with its stream URIs) on every load.
-    const key = `ga:${id}:${d}`;
+    const key = range ? `ga:${id}:${range.from}_${range.to}` : `ga:${id}:${d}`;
     const matched = (await this.google.peek<any>(key))?.matched === true;
-    return this.google.cached(key, matched ? 3 * 3600_000 : 30 * 60_000, () => this.google.gaForProject(project, d), isFresh(fresh), true);
+    return this.google.cached(key, matched ? 3 * 3600_000 : 30 * 60_000, () => this.google.gaForProject(project, d, range), isFresh(fresh), true);
   }
 
   // ---- Google Business Profile (GMB): rating + reviews, matched by domain ----
@@ -391,10 +414,66 @@ export class ProjectsController {
     @Query("country") country?: string,
     @Query("language") language?: string,
     @Query("fresh") fresh?: string,
+    @Query("location") location?: string,
   ) {
     await this.projects.get(user, id); // access check
     if (!seed || !seed.trim()) return { connected: true, keywords: [] };
-    return this.dataforseo.keywordIdeas(seed.trim(), country, language || "en", isFresh(fresh));
+    // Optional explicit location_code (a state/city picked in the UI) wins over country.
+    const loc = location && /^\d+$/.test(location) ? Number(location) : undefined;
+    return this.dataforseo.keywordIdeas(seed.trim(), country, language || "en", isFresh(fresh), loc);
+  }
+
+  // Searchable country/state/city list (DataForSEO locations) for the keyword
+  // research picker. Access-gated by keyword research; the list itself is cached.
+  @Get(":id/keywords/locations")
+  @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("keywords")
+  async keywordLocations(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("q") q?: string) {
+    await this.projects.get(user, id); // access check
+    return this.dataforseo.searchLocations((q || "").trim(), 40);
+  }
+
+  // "Where is this keyword in demand" — Google Trends interest by geo. No location
+  // = by country (world); a country/state code drills into its regions/cities.
+  @Get(":id/keywords/geo")
+  @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("keywords")
+  async keywordGeo(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("keyword") keyword?: string, @Query("location") location?: string) {
+    await this.projects.get(user, id); // access check
+    if (!keyword || !keyword.trim()) return { items: [] };
+    const loc = location && /^\d+$/.test(location) ? Number(location) : undefined;
+    return this.dataforseo.keywordGeo(keyword.trim(), loc);
+  }
+
+  // Bulk import: extract keywords from an uploaded file (CSV / Excel / Word / PDF)
+  // or a pasted list, then fetch real volume + competition + trend for each in one
+  // shot — scoped to the selected country / state / city. Returns the same shape as
+  // keyword ideas so the client renders them in the same table.
+  @Post(":id/keywords/import")
+  @RequirePermissions(P.KEYWORDS_RESEARCH)
+  @RequireFeature("keywords")
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 8 * 1024 * 1024 } })) // 8MB
+  async keywordImport(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() body: { text?: string; country?: string; language?: string; location?: string },
+  ) {
+    await this.projects.get(user, id); // access check
+    let list: string[] = [];
+    if (file?.buffer?.length) {
+      try {
+        list = await extractKeywordsFromFile(file);
+      } catch {
+        throw new BadRequestException("Couldn't read that file. Use CSV, Excel (.xlsx), Word (.docx) or PDF.");
+      }
+    } else if (body?.text?.trim()) {
+      list = extractKeywordsFromText(body.text);
+    }
+    if (!list.length) throw new BadRequestException("No keywords found — check the file/text and try again.");
+    const loc = body?.location && /^\d+$/.test(body.location) ? Number(body.location) : undefined;
+    const res = await this.dataforseo.searchVolume(list, body?.country, body?.language || "en", loc);
+    return { ...res, requested: list.length };
   }
 
   @Get(":id/ranked-keywords")

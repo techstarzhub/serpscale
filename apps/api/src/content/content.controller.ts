@@ -139,7 +139,7 @@ export class ContentController {
   async generate(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
-    @Body() dto: { keywords?: string[]; title?: string; tone?: string; wordCount?: number; instructions?: string; images?: boolean; imageCount?: number; keepImages?: string[] },
+    @Body() dto: { keywords?: string[]; title?: string; tone?: string; wordCount?: number; instructions?: string; referenceLinks?: string[]; images?: boolean; imageCount?: number; keepImages?: string[] },
     @Res() res: Response,
   ) {
     if (!Array.isArray(dto?.keywords) || dto.keywords.length === 0) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Sparkles, Star, X, FileText, Copy, Download, Check, PenLine, Trash2, Search, TrendingUp, RefreshCw, Image as ImageIcon } from "lucide-react";
+import { Loader2, Sparkles, Star, X, FileText, Copy, Download, Check, PenLine, Trash2, Search, TrendingUp, RefreshCw, Image as ImageIcon, Link2, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,9 @@ export function ContentPanel({ project }: { project: Project }) {
   const [tone, setTone] = useState("professional");
   const [words, setWords] = useState(1500);
   const [instructions, setInstructions] = useState("");
+  // External reference links the writer wants cited in the post.
+  const [refLinks, setRefLinks] = useState<string[]>([]);
+  const [refInput, setRefInput] = useState("");
   const [loadingKw, setLoadingKw] = useState(true);
 
   const [blog, setBlog] = useState<string>("");
@@ -123,13 +126,23 @@ export function ContentPanel({ project }: { project: Project }) {
     loadKeywords();
   }
 
+  // Add a reference URL (auto-prefixes https:// and validates).
+  function addRefLink(raw?: string) {
+    const v = (raw ?? refInput).trim();
+    if (!v) return;
+    const url = /^https?:\/\//i.test(v) ? v : `https://${v}`;
+    try { new URL(url); } catch { return; }
+    setRefLinks((prev) => (prev.includes(url) ? prev : [...prev, url].slice(0, 12)));
+    setRefInput("");
+  }
+
   async function generate(useImages: boolean = withImages) {
     const kws = allKeywords();
     if (!kws.length) return;
     setGenerating(true); setBlog(""); setSaved(false); setImgStatus("");
     await streamAuditFix(
       `/projects/${project.id}/blog/generate`,
-      { keywords: kws, title: title.trim() || undefined, tone, wordCount: words, instructions: instructions.trim() || undefined, images: useImages, imageCount },
+      { keywords: kws, title: title.trim() || undefined, tone, wordCount: words, instructions: instructions.trim() || undefined, referenceLinks: refLinks, images: useImages, imageCount },
       {
         onToken: (t) => setBlog(t),
         onStatus: (m) => setImgStatus(m),
@@ -153,7 +166,7 @@ export function ContentPanel({ project }: { project: Project }) {
     setGenerating(true); setBlog(""); setSaved(false); setImgStatus("");
     await streamAuditFix(
       `/projects/${project.id}/blog/generate`,
-      { keywords: kws, title: title.trim() || undefined, tone, wordCount: words, instructions: instructions.trim() || undefined, images: false, keepImages },
+      { keywords: kws, title: title.trim() || undefined, tone, wordCount: words, instructions: instructions.trim() || undefined, referenceLinks: refLinks, images: false, keepImages },
       {
         onToken: (t) => setBlog(t),
         onStatus: (m) => setImgStatus(m),
@@ -357,6 +370,40 @@ export function ContentPanel({ project }: { project: Project }) {
               onChange={(e) => setInstructions(e.target.value)}
               maxLength={1500}
             />
+          </div>
+
+          {/* Reference links — external URLs the AI should cite in the post. */}
+          <div className="space-y-2">
+            <div className="relative">
+              <Link2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="h-9 pl-8 pr-16"
+                placeholder="Reference link (optional) — paste a URL to cite, then Enter"
+                value={refInput}
+                onChange={(e) => setRefInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRefLink(); } }}
+              />
+              <button
+                type="button"
+                onClick={() => addRefLink()}
+                disabled={!refInput.trim()}
+                className="absolute right-1.5 top-1/2 flex h-6 -translate-y-1/2 items-center gap-1 rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
+              >
+                <Plus className="h-3 w-3" /> Add
+              </button>
+            </div>
+            {refLinks.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {refLinks.map((u) => (
+                  <span key={u} className="flex max-w-full items-center gap-1 rounded-full border border-border bg-secondary/50 px-2 py-0.5 text-xs">
+                    <Link2 className="h-3 w-3 shrink-0 text-primary" />
+                    <span className="max-w-[220px] truncate">{u.replace(/^https?:\/\//, "")}</span>
+                    <button onClick={() => setRefLinks((prev) => prev.filter((x) => x !== u))} className="shrink-0 text-muted-foreground hover:text-destructive"><X className="h-3 w-3" /></button>
+                  </span>
+                ))}
+                <span className="self-center text-[11px] text-muted-foreground">The blog will cite these &amp; add a References section.</span>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

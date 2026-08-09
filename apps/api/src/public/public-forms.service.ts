@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { CaptchaService } from "./captcha.service";
-import { ContactDto, SubscribeDto } from "./dto/public-forms.dto";
+import { ContactDto, SubscribeDto, SupportDto } from "./dto/public-forms.dto";
 
 const esc = (s: string) =>
   String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
@@ -88,6 +88,67 @@ export class PublicFormsService {
       .catch((e) => this.logger.warn(`contact confirm email failed: ${e}`));
 
     this.logger.log(`contact message stored (${msg.id}) from ${dto.email}`);
+    return { ok: true };
+  }
+
+  /** In-app support request from an authenticated user. Reuses the ContactMessage
+   *  store + admin notification, but skips captcha/honeypot (the session is
+   *  trusted) and prefills identity from the user. */
+  async support(
+    user: { id: string; email: string; name: string | null; role?: string; orgId: string | null },
+    dto: SupportDto,
+    ip?: string,
+    userAgent?: string,
+  ): Promise<{ ok: true }> {
+    const name = (user.name || user.email).replace(/[\r\n]+/g, " ").trim().slice(0, 120);
+    const subject = (dto.subject?.replace(/[\r\n]+/g, " ").trim() || "Support request").slice(0, 160);
+    const orgName = user.orgId
+      ? (await this.prisma.organization.findUnique({ where: { id: user.orgId }, select: { name: true } }).catch(() => null))?.name ?? null
+      : null;
+
+    const msg = await this.prisma.contactMessage.create({
+      data: {
+        name,
+        email: user.email.trim().toLowerCase(),
+        company: orgName,
+        // Keep the subject inside the stored message so the admin inbox (which has
+        // no subject column) still shows it.
+        message: `[${subject}]\n\n${dto.message.trim()}`,
+        ip: ip || null,
+        userAgent: userAgent?.slice(0, 300) || null,
+      },
+    });
+
+    const admins = await this.adminEmails();
+    const adminBody = `
+      <p style="margin:0 0 14px">A logged-in user has submitted a support request from inside the app.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:14px">
+        <tr><td style="padding:6px 0;color:#6b7280;width:90px">Name</td><td style="padding:6px 0;font-weight:600">${esc(name)}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280">Email</td><td style="padding:6px 0"><a href="mailto:${esc(user.email)}">${esc(user.email)}</a></td></tr>
+        ${orgName ? `<tr><td style="padding:6px 0;color:#6b7280">Organization</td><td style="padding:6px 0">${esc(orgName)}</td></tr>` : ""}
+        ${user.role ? `<tr><td style="padding:6px 0;color:#6b7280">Role</td><td style="padding:6px 0">${esc(user.role)}</td></tr>` : ""}
+        <tr><td style="padding:6px 0;color:#6b7280">Subject</td><td style="padding:6px 0;font-weight:600">${esc(subject)}</td></tr>
+      </table>
+      <div style="margin:16px 0 4px;color:#6b7280;font-size:13px">Message</div>
+      <div style="white-space:pre-wrap;background:#f8f9fc;border:1px solid #eef0f4;border-radius:10px;padding:14px;font-size:14px;line-height:1.6">${esc(dto.message)}</div>`;
+    await Promise.all(
+      admins.map((to) =>
+        this.email
+          .sendBranded(to, `Support: ${subject} — ${name}`, "New in-app support request", adminBody, { label: `Reply to ${name}`, url: `mailto:${user.email}` }, null)
+          .catch((e) => this.logger.warn(`support admin email failed (${to}): ${e}`)),
+      ),
+    );
+
+    const userBody = `
+      <p style="margin:0 0 12px">Hi ${esc(name)},</p>
+      <p style="margin:0 0 12px">Thanks for reaching out — we've received your support request and a member of our team will get back to you within one business day.</p>
+      <p style="margin:0 0 4px;color:#6b7280;font-size:13px">Your message</p>
+      <div style="white-space:pre-wrap;background:#f8f9fc;border:1px solid #eef0f4;border-radius:10px;padding:14px;font-size:14px;line-height:1.6">${esc(dto.message)}</div>`;
+    await this.email
+      .sendBranded(user.email, "We've received your request — SerpScale", "Thanks for contacting support", userBody, undefined, null)
+      .catch((e) => this.logger.warn(`support confirm email failed: ${e}`));
+
+    this.logger.log(`support message stored (${msg.id}) from ${user.email}`);
     return { ok: true };
   }
 

@@ -45,7 +45,10 @@ export const PERMISSIONS = {
   SETTINGS_MANAGE: "settings.manage",
   INTEGRATIONS_MANAGE: "integrations.manage",
 
-  // Platform level (SUPER ADMIN only)
+  // Platform level (SUPER ADMIN + platform-team staff they add)
+  PLATFORM_SUPPORT: "platform.support", // handle customer support tickets (agent)
+  PLATFORM_SUPPORT_ALL: "platform.support.all", // see ALL tickets, not just assigned
+  PLATFORM_STAFF_MANAGE: "platform.staff.manage", // manage the platform team + their access
   PLATFORM_ORGS_VIEW: "platform.orgs.view",
   PLATFORM_PLANS_MANAGE: "platform.plans.manage",
   PLATFORM_AUDIT_VIEW: "platform.audit.view",
@@ -108,6 +111,31 @@ export const PERMISSION_GROUPS: { group: string; items: { key: Permission; label
       { key: PERMISSIONS.BILLING_MANAGE, label: "Manage billing & plan" },
       { key: PERMISSIONS.INTEGRATIONS_MANAGE, label: "Manage integrations" },
       { key: PERMISSIONS.SETTINGS_MANAGE, label: "Manage settings" },
+    ],
+  },
+];
+
+/** Permission catalog for the SUPER ADMIN's platform-team picker. Kept separate
+ *  from PERMISSION_GROUPS (the org role builder) so org admins can never see or
+ *  grant platform powers — only a super admin assigns these to their staff. */
+export const PLATFORM_PERMISSION_GROUPS: { group: string; items: { key: Permission; label: string; description?: string }[] }[] = [
+  {
+    group: "Support",
+    items: [
+      { key: PERMISSIONS.PLATFORM_SUPPORT, label: "Handle support tickets", description: "Reply to customer conversations" },
+      { key: PERMISSIONS.PLATFORM_SUPPORT_ALL, label: "See all tickets", description: "Otherwise only tickets assigned to them" },
+    ],
+  },
+  {
+    group: "Platform",
+    items: [
+      { key: PERMISSIONS.PLATFORM_ORGS_VIEW, label: "View organizations & users" },
+      { key: PERMISSIONS.PLATFORM_PLANS_MANAGE, label: "Manage plans" },
+      { key: PERMISSIONS.PLATFORM_TRANSACTIONS_VIEW, label: "View payments" },
+      { key: PERMISSIONS.PLATFORM_GATEWAYS_MANAGE, label: "Manage payment keys" },
+      { key: PERMISSIONS.PLATFORM_AUDIT_VIEW, label: "View audit log" },
+      { key: PERMISSIONS.PLATFORM_SETTINGS_MANAGE, label: "Manage platform settings" },
+      { key: PERMISSIONS.PLATFORM_STAFF_MANAGE, label: "Manage the platform team" },
     ],
   },
 ];

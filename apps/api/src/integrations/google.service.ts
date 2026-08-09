@@ -67,6 +67,16 @@ export class GoogleService {
       return integ.accessToken;
     }
     if (!integ.refreshToken) return integ.accessToken;
+    return this.refreshIntegration(integ);
+  }
+
+  // Exchange the stored refresh token for a fresh access token, persisting it. On
+  // success the connection is (re)marked "connected". A revoked/expired refresh
+  // token (invalid_grant) is fatal — NO code can recover it, so we flag the
+  // integration "expired" and the UI can prompt a one-time reconnect instead of
+  // silently serving stale data forever. Transient errors keep the old token.
+  async refreshIntegration(integ: Integration): Promise<string | null> {
+    if (!integ.refreshToken) return integ.accessToken ?? null;
     try {
       const res = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
@@ -78,17 +88,43 @@ export class GoogleService {
           grant_type: "refresh_token",
         }),
       });
-      if (!res.ok) return integ.accessToken;
-      const d: any = await res.json();
+      const d: any = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 400 && d?.error === "invalid_grant") {
+          if (integ.status !== "expired") {
+            await this.prisma.integration.update({ where: { id: integ.id }, data: { status: "expired" } }).catch(() => {});
+            this.logger.warn(`Google connection ${integ.accountEmail} revoked (invalid_grant) — reconnect required`);
+          }
+          return null;
+        }
+        return integ.accessToken ?? null; // transient (5xx / network) — keep the old token
+      }
       const expiresAt = new Date(Date.now() + (d.expires_in || 3600) * 1000);
       await this.prisma.integration.update({
         where: { id: integ.id },
-        data: { accessToken: d.access_token, expiresAt },
+        // access_token always rotates; refresh_token usually isn't re-sent, so keep the old one.
+        data: { accessToken: d.access_token, expiresAt, status: "connected", ...(d.refresh_token ? { refreshToken: d.refresh_token } : {}) },
       });
       return d.access_token;
     } catch {
-      return integ.accessToken;
+      return integ.accessToken ?? null;
     }
+  }
+
+  // Proactively refresh Google tokens that are expired or about to expire, so a
+  // dashboard never blocks on a token exchange and a dead refresh token is flagged
+  // early (not on the user's next page load). Driven by GoogleTokenScheduler.
+  async refreshDueTokens(): Promise<{ refreshed: number; needsReconnect: number }> {
+    const soon = new Date(Date.now() + 2 * 3600_000); // within the next 2 hours
+    const due = await this.prisma.integration.findMany({
+      where: { provider: "google", status: "connected", refreshToken: { not: null }, OR: [{ expiresAt: null }, { expiresAt: { lt: soon } }] },
+    }).catch(() => [] as Integration[]);
+    let refreshed = 0, needsReconnect = 0;
+    for (const integ of due) {
+      const tok = await this.refreshIntegration(integ);
+      if (tok) refreshed++; else needsReconnect++;
+    }
+    return { refreshed, needsReconnect };
   }
 
   // The connected Google integrations for an owner. When accountEmail is given,
@@ -176,9 +212,10 @@ export class GoogleService {
   }
 
   // Search Console overview for a project (auto-matched by domain).
-  async gscForProject(project: { orgId: string | null; createdById: string | null; domain: string; googleAccountEmail?: string | null }, days = 28, range?: { from?: string; to?: string }) {
+  async gscForProject(project: { orgId: string | null; createdById: string | null; domain: string; googleAccountEmail?: string | null; gscAccountEmail?: string | null }, days = 28, range?: { from?: string; to?: string }) {
     const ownerKey = this.ownerKeyForProject(project);
-    const sites = await this.listSites(ownerKey, project.googleAccountEmail);
+    // Per-service override wins; otherwise the campaign's default account.
+    const sites = await this.listSites(ownerKey, project.gscAccountEmail ?? project.googleAccountEmail);
     if (sites.length === 0) return { connected: false, matched: false, sites: [] as string[] };
     const match = this.matchSite(sites, project.domain);
     if (!match) return { connected: true, matched: false, sites: sites.map((s) => s.siteUrl) };
@@ -324,9 +361,10 @@ export class GoogleService {
   }
 
   // GA4 traffic overview for a project (auto-matched by domain).
-  async gaForProject(project: { orgId: string | null; createdById: string | null; domain: string; googleAccountEmail?: string | null }, days = 28, range?: { from?: string; to?: string }) {
+  async gaForProject(project: { orgId: string | null; createdById: string | null; domain: string; googleAccountEmail?: string | null; gaAccountEmail?: string | null }, days = 28, range?: { from?: string; to?: string }) {
     const ownerKey = this.ownerKeyForProject(project);
-    const props = await this.listGaProperties(ownerKey, project.googleAccountEmail);
+    // Per-service override wins; otherwise the campaign's default account.
+    const props = await this.listGaProperties(ownerKey, project.gaAccountEmail ?? project.googleAccountEmail);
     if (props.length === 0) return { connected: false, matched: false, properties: [] as string[] };
     const match = this.matchProperty(props, project.domain);
     if (!match) return { connected: true, matched: false, properties: props.map((p) => p.displayName) };
@@ -511,9 +549,10 @@ export class GoogleService {
   // project's domain, then returns its rating + reviews + profile. Activates once
   // Google approves the project's Business Profile API access (until then the
   // accounts call returns 403 and we degrade to { connected:true, matched:false }).
-  async gmbForProject(project: { orgId: string | null; createdById: string | null; domain: string; googleAccountEmail?: string | null }) {
+  async gmbForProject(project: { orgId: string | null; createdById: string | null; domain: string; googleAccountEmail?: string | null; gmbAccountEmail?: string | null }) {
     const ownerKey = this.ownerKeyForProject(project);
-    const integs = await this.googleIntegs(ownerKey, project.googleAccountEmail);
+    // Per-service override wins; otherwise the campaign's default account.
+    const integs = await this.googleIntegs(ownerKey, project.gmbAccountEmail ?? project.googleAccountEmail);
     if (integs.length === 0) return { connected: false, matched: false };
     const domain = project.domain.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").toLowerCase();
     const sameHost = (uri?: string) => {
@@ -576,5 +615,37 @@ export class GoogleService {
       } catch { /* try the next account */ }
     }
     return { connected: true, matched: false };
+  }
+
+  // Which connected Google account actually provides each service's data for this
+  // campaign — so "auto-detect by domain" isn't a black box in the campaign form.
+  // Reuses the dashboard cache keys, so it shares/warms them instead of re-fetching.
+  async sourcesForProject(project: {
+    id: string; orgId: string | null; createdById: string | null; domain: string;
+    googleAccountEmail?: string | null; gscAccountEmail?: string | null; gaAccountEmail?: string | null; gmbAccountEmail?: string | null;
+  }): Promise<Record<"gsc" | "ga" | "gmb", { connected: boolean; matched: boolean; account: string | null; detail: string | null }>> {
+    // Read-only: reflect the SAME data the dashboards already resolved, rather than
+    // firing a fresh fetch (which, on an expired token, would resolve to "no data"
+    // and poison the cache). The matched account/site is day-window-independent, so
+    // pick the best (matched) cached entry across every gsc:<id>:* / ga:<id>:* key.
+    const pick = (p: any, detailKey: string) => ({
+      connected: !!p?.connected,
+      matched: !!p?.matched,
+      account: (p?.accountEmail as string | null) ?? null,
+      detail: (p?.[detailKey] as string | null) ?? null,
+    });
+    const best = async (prefix: string, detailKey: string) => {
+      const rows = await this.prisma.dataCache.findMany({ where: { key: { startsWith: prefix } } }).catch(() => []);
+      // Prefer a matched entry (real source); else any connected one; else empty.
+      const payloads = rows.map((r) => r.payload as any);
+      const chosen = payloads.find((p) => p?.matched && p?.accountEmail) ?? payloads.find((p) => p?.connected) ?? null;
+      return pick(chosen, detailKey);
+    };
+    const [gsc, ga, gmbRow] = await Promise.all([
+      best(`gsc:${project.id}:`, "siteUrl"),
+      best(`ga:${project.id}:`, "propertyName"),
+      this.prisma.dataCache.findUnique({ where: { key: `gmb:${project.id}` } }).catch(() => null),
+    ]);
+    return { gsc, ga, gmb: pick(gmbRow?.payload as any, "title") };
   }
 }

@@ -25,6 +25,7 @@ import {
   Archive,
   ArchiveRestore,
   MessageSquare,
+  Headphones,
   AtSign,
   Globe,
   type LucideIcon,
@@ -64,25 +65,33 @@ export function Sidebar({
   const can = useCan();
   const { projects, loading: projectsLoading, setArchived } = useProjects();
   const isSuperAdmin = user?.role === "SUPER_ADMIN";
+  // Platform staff the super admin added also get the platform nav — but only the
+  // sections their permissions allow (each row is gated by `perm` below).
+  const isPlatform = isSuperAdmin || !!user?.isSuperAdminTeam;
   const currentAdminSection = searchParams.get("s") || "overview";
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Super admin's sidebar is platform-management nav, NOT projects/campaigns.
-  const adminSections: { key: string; label: string; icon: LucideIcon; href?: string }[] = [
-    { key: "overview", label: "Overview", icon: LayoutDashboard },
-    { key: "users", label: "Users", icon: UsersIcon },
-    { key: "orgs", label: "Organizations", icon: Building2 },
-    { key: "plans", label: "Plans", icon: CreditCard },
-    { key: "transactions", label: "Payments", icon: Receipt },
-    { key: "gateways", label: "Payment keys", icon: KeyRound },
-    { key: "contacts", label: "Contact messages", icon: MessageSquare },
-    { key: "subscribers", label: "Subscribers", icon: AtSign },
-    { key: "seo", label: "SEO / head tags", icon: Globe },
-    { key: "blog", label: "Blog", icon: Newspaper, href: "/dashboard/admin/blog" },
-    { key: "email", label: "Email / SMTP", icon: Mail },
-    { key: "audit", label: "Audit log", icon: ScrollText },
-    { key: "settings", label: "Settings", icon: SlidersHorizontal },
+  // Each section is gated by a platform permission so delegated staff see only theirs.
+  const allAdminSections: { key: string; label: string; icon: LucideIcon; href?: string; perm: string }[] = [
+    { key: "overview", label: "Overview", icon: LayoutDashboard, perm: "platform.orgs.view" },
+    { key: "team", label: "Team", icon: UsersIcon, href: "/dashboard/admin?s=team", perm: "platform.staff.manage" },
+    { key: "support", label: "Support tickets", icon: Headphones, href: "/dashboard/support", perm: "platform.support" },
+    { key: "users", label: "Users", icon: UsersIcon, perm: "platform.orgs.view" },
+    { key: "orgs", label: "Organizations", icon: Building2, perm: "platform.orgs.view" },
+    { key: "plans", label: "Plans", icon: CreditCard, perm: "platform.plans.manage" },
+    { key: "transactions", label: "Payments", icon: Receipt, perm: "platform.transactions.view" },
+    { key: "gateways", label: "Payment keys", icon: KeyRound, perm: "platform.gateways.manage" },
+    { key: "contacts", label: "Contact messages", icon: MessageSquare, perm: "platform.orgs.view" },
+    { key: "subscribers", label: "Subscribers", icon: AtSign, perm: "platform.orgs.view" },
+    { key: "seo", label: "SEO / head tags", icon: Globe, perm: "platform.settings.manage" },
+    { key: "blog", label: "Blog", icon: Newspaper, href: "/dashboard/admin/blog", perm: "platform.settings.manage" },
+    { key: "email", label: "Email / SMTP", icon: Mail, perm: "platform.settings.manage" },
+    { key: "audit", label: "Audit log", icon: ScrollText, perm: "platform.audit.view" },
+    { key: "settings", label: "Settings", icon: SlidersHorizontal, perm: "platform.settings.manage" },
   ];
+  // A super admin holds every platform perm; staff see only their granted rows.
+  const adminSections = allAdminSections.filter((s) => isSuperAdmin || (user?.permissions ?? []).includes(s.perm));
 
   async function signOut() {
     try {
@@ -159,8 +168,8 @@ export function Sidebar({
       })()}
 
       <nav className={cn("flex-1 overflow-y-auto py-2", rail ? "px-2.5" : "px-3")}>
-        {isSuperAdmin ? (
-          /* Super admin: platform-management nav (no projects/campaigns) */
+        {isPlatform ? (
+          /* Super admin + platform staff: platform-management nav (no projects/campaigns) */
           <div>
             {!rail && (
               <p className="px-3 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Platform</p>
@@ -201,6 +210,20 @@ export function Sidebar({
             href="/dashboard/clients"
             icon={Contact}
             active={pathname === "/dashboard/clients" || pathname.startsWith("/dashboard/clients/")}
+            rail={rail}
+            onNavigate={onCloseMobile}
+          />
+        )}
+
+        {/* Support agents (users actually granted platform.support) get a direct
+            inbox link. NOT via useCan — an org ADMIN passes every perm there, but
+            support is a platform role, so gate on the resolved permission set. */}
+        {(user?.permissions ?? []).includes("platform.support") && (
+          <NavItem
+            label="Support tickets"
+            href="/dashboard/support"
+            icon={Headphones}
+            active={pathname.startsWith("/dashboard/support")}
             rail={rail}
             onNavigate={onCloseMobile}
           />

@@ -576,6 +576,10 @@ export function OverviewPanel({ project, refreshNonce = 0, base, readOnly = fals
         <StatCard label="Referring domains" value={dash(blLive ? fmtNum(bl!.summary?.referringDomains) : "—")} icon={Globe} accent="amber" hint={blLive ? `spam score ${bl!.summary?.spamScore}%` : "No data yet"} deltaGoodDown />
       </div>
 
+      {/* Full-width day-by-day breakdown — one row per date, merging Search
+          Console clicks/impressions with Analytics sessions/users. */}
+      {(gscLive || gaLive) && <DailyMetricsTable gsc={gsc} ga={ga} />}
+
       {/* Top audit issues with inline, stack-aware AI fixes */}
       {!readOnly && health != null && issues.length > 0 && <TopIssues projectId={project.id} issues={issues} readOnly={readOnly} />}
 
@@ -841,6 +845,96 @@ export function OverviewPanel({ project, refreshNonce = 0, base, readOnly = fals
         </div>
       )}
     </div>
+  );
+}
+
+// Day-by-day metrics table — merges the GSC and GA daily trends (already fetched
+// by the Overview) into one row per date, newest first, with a totals footer.
+// GSC dates arrive as "2026-08-09", GA as "20260809", so both are normalised to
+// a digits-only key before merging (otherwise every date splits into two rows).
+function DailyMetricsTable({ gsc, ga }: { gsc: GscOverview | null; ga: GaOverview | null }) {
+  type DayRow = { key: string; clicks?: number; impressions?: number; sessions?: number; users?: number };
+  const GSC_COLOR = "#458CF5"; // Search Console brand blue
+  const GA_COLOR = "#E37400"; // Analytics brand orange
+
+  const byDate = new Map<string, DayRow>();
+  const put = (raw: string, patch: Partial<DayRow>) => {
+    const key = (raw || "").replace(/[^0-9]/g, "");
+    if (key.length !== 8) return;
+    byDate.set(key, { ...(byDate.get(key) ?? { key }), ...patch, key });
+  };
+  (gsc?.trend ?? []).forEach((t) => put(t.date, { clicks: t.clicks, impressions: t.impressions }));
+  (ga?.trend ?? []).forEach((t) => put(t.date, { sessions: t.sessions, users: t.users }));
+  const rows = [...byDate.values()].sort((a, b) => b.key.localeCompare(a.key));
+  if (!rows.length) return null;
+
+  const fmtDate = (key: string) => {
+    const dt = new Date(Number(key.slice(0, 4)), Number(key.slice(4, 6)) - 1, Number(key.slice(6, 8)));
+    return isNaN(dt.getTime()) ? key : dt.toLocaleDateString(undefined, { weekday: "short", day: "2-digit", month: "short" });
+  };
+  const num = (v?: number) => (v == null ? "—" : fmtNum(v));
+  const ctr = (r: DayRow) => (r.impressions ? `${(((r.clicks ?? 0) / r.impressions) * 100).toFixed(1)}%` : "—");
+  const sum = (k: keyof DayRow) => rows.reduce((s, r) => s + (typeof r[k] === "number" ? (r[k] as number) : 0), 0);
+  const tClicks = sum("clicks"), tImpr = sum("impressions"), tSess = sum("sessions"), tUsers = sum("users");
+
+  const gscCell = "bg-[#458CF5]/[0.04]";
+  const gaCell = "bg-[#E37400]/[0.05]";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Daily breakdown</CardTitle>
+        <CardDescription>Day-by-day Search Console &amp; Analytics performance ({rows.length} days).</CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="max-h-[520px] overflow-auto">
+          <table className="w-full border-separate border-spacing-0 text-sm">
+            <thead className="sticky top-0 z-10 bg-card">
+              {/* Brand group header — shows exactly which Google product each block comes from. */}
+              <tr>
+                <th className="border-b border-border bg-card px-5 py-2" />
+                <th colSpan={3} className="border-b border-border px-5 py-2 text-center text-xs font-semibold" style={{ backgroundColor: `${GSC_COLOR}14`, color: GSC_COLOR }}>
+                  <span className="inline-flex items-center gap-1.5"><SiGooglesearchconsole className="h-4 w-4" style={{ color: GSC_COLOR }} /> Search Console</span>
+                </th>
+                <th colSpan={2} className="border-b border-border px-5 py-2 text-center text-xs font-semibold" style={{ backgroundColor: `${GA_COLOR}14`, color: GA_COLOR }}>
+                  <span className="inline-flex items-center gap-1.5"><SiGoogleanalytics className="h-4 w-4" style={{ color: GA_COLOR }} /> Analytics (GA4)</span>
+                </th>
+              </tr>
+              <tr className="bg-secondary/50 text-[11px] uppercase tracking-wide text-muted-foreground">
+                <th className="border-b border-border px-5 py-2 text-left font-medium">Date</th>
+                <th className={cn("border-b border-border px-5 py-2 text-right font-medium", gscCell)}>Clicks</th>
+                <th className={cn("border-b border-border px-5 py-2 text-right font-medium", gscCell)}>Impr.</th>
+                <th className={cn("border-b border-border px-5 py-2 text-right font-medium", gscCell)}>CTR</th>
+                <th className={cn("border-b border-border px-5 py-2 text-right font-medium", gaCell)}>Sessions</th>
+                <th className={cn("border-b border-border px-5 py-2 text-right font-medium", gaCell)}>Users</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key} className="transition-colors hover:bg-secondary/40">
+                  <td className="border-b border-border/50 px-5 py-2 font-medium text-foreground">{fmtDate(r.key)}</td>
+                  <td className={cn("border-b border-border/50 px-5 py-2 text-right tabular-nums font-medium", gscCell)}>{num(r.clicks)}</td>
+                  <td className={cn("border-b border-border/50 px-5 py-2 text-right tabular-nums", gscCell)}>{num(r.impressions)}</td>
+                  <td className={cn("border-b border-border/50 px-5 py-2 text-right tabular-nums text-muted-foreground", gscCell)}>{ctr(r)}</td>
+                  <td className={cn("border-b border-border/50 px-5 py-2 text-right tabular-nums font-medium", gaCell)}>{num(r.sessions)}</td>
+                  <td className={cn("border-b border-border/50 px-5 py-2 text-right tabular-nums", gaCell)}>{num(r.users)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="sticky bottom-0">
+              <tr className="bg-secondary font-semibold text-foreground">
+                <td className="border-t-2 border-border px-5 py-2.5">Total</td>
+                <td className={cn("border-t-2 border-border px-5 py-2.5 text-right tabular-nums", gscCell)}>{fmtNum(tClicks)}</td>
+                <td className={cn("border-t-2 border-border px-5 py-2.5 text-right tabular-nums", gscCell)}>{fmtNum(tImpr)}</td>
+                <td className={cn("border-t-2 border-border px-5 py-2.5 text-right tabular-nums", gscCell)}>{tImpr ? `${((tClicks / tImpr) * 100).toFixed(1)}%` : "—"}</td>
+                <td className={cn("border-t-2 border-border px-5 py-2.5 text-right tabular-nums", gaCell)}>{fmtNum(tSess)}</td>
+                <td className={cn("border-t-2 border-border px-5 py-2.5 text-right tabular-nums", gaCell)}>{fmtNum(tUsers)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
