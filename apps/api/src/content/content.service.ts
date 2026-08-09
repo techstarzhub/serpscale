@@ -307,7 +307,7 @@ export class ContentService {
   async *generateBlog(
     user: AuthUser,
     projectId: string,
-    dto: { keywords?: string[]; title?: string; tone?: string; wordCount?: number; instructions?: string; images?: boolean; imageCount?: number; keepImages?: string[] },
+    dto: { keywords?: string[]; title?: string; tone?: string; wordCount?: number; instructions?: string; referenceLinks?: string[]; images?: boolean; imageCount?: number; keepImages?: string[] },
   ): AsyncGenerator<BlogEvent> {
     const project = await this.project(user, projectId);
     const keywords = (dto?.keywords ?? []).map((k) => String(k).trim()).filter(Boolean).slice(0, 15);
@@ -318,6 +318,8 @@ export class ContentService {
     const tone = (dto?.tone || "professional").slice(0, 40);
     const words = Math.min(3000, Math.max(400, Number(dto?.wordCount) || 900));
     const instructions = (dto?.instructions ?? "").trim().slice(0, 1500);
+    // External reference links the user wants cited in the post (http/https only).
+    const refLinks = [...new Set((dto?.referenceLinks ?? []).map((u) => String(u).trim()).filter((u) => /^https?:\/\/\S+$/i.test(u)))].slice(0, 12);
     // Validate links against every crawled page (up to 200); only list ~30 in the
     // prompt to keep it short. This way a link to any REAL page is kept, not unwrapped.
     const allPages = await this.internalPages(user, projectId, 200).catch(() => []);
@@ -358,6 +360,9 @@ export class ContentService {
       `LENGTH: Write AT LEAST ${words} words of article body (aim for ${words}-${words + 250}). This is a firm minimum — cover the topic in real depth across about ${sections} substantial H2 sections, each with a few full paragraphs. Do NOT wrap up early, and do NOT pad with filler or repetition to hit the count; add genuinely useful detail, examples and sub-points instead.\n` +
       (instructions
         ? `\nExtra instructions from the user — follow these closely as long as they don't break the formatting rules above:\n"""${instructions}"""\n`
+        : "") +
+      (refLinks.length
+        ? `\nREFERENCE LINKS — external sources the user wants cited. Where genuinely relevant, cite them in-text as markdown links [descriptive anchor](exact-url), copying each URL character-for-character (these are EXTERNAL, separate from the internal links). Then add a short "References" H2 near the end (just before the FAQ) that lists each source as a markdown link. Do NOT invent other external links or cite sources not in this list:\n${refLinks.map((u) => `- ${u}`).join("\n")}\n`
         : "") +
       `Write the full blog post now. Include at least 4-6 internal links using ONLY the exact URLs from the provided list, and do not use any tables.`;
 

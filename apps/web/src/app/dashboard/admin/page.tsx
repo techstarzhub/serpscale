@@ -2,11 +2,12 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { LayoutGrid, CreditCard, Building2, Receipt, ScrollText, KeyRound, Users as UsersIcon, Mail, SlidersHorizontal, Plus, Trash2, Loader2, MessageSquare, AtSign, Globe, type LucideIcon } from "lucide-react";
+import { LayoutGrid, CreditCard, Building2, Receipt, ScrollText, KeyRound, Users as UsersIcon, Mail, SlidersHorizontal, Plus, Trash2, Loader2, MessageSquare, AtSign, Globe, Check, X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { UserAvatar } from "@/components/ui/user-avatar";
 import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useCurrentUser } from "@/components/providers/user-provider";
@@ -30,9 +31,18 @@ function useCatalog(): Catalog | null {
   return c;
 }
 
-type Section = "overview" | "users" | "orgs" | "plans" | "transactions" | "gateways" | "contacts" | "subscribers" | "seo" | "email" | "audit" | "settings";
+type Section = "overview" | "team" | "users" | "orgs" | "plans" | "transactions" | "gateways" | "contacts" | "subscribers" | "seo" | "email" | "audit" | "settings";
+// Each section maps to the platform permission that unlocks it (so delegated
+// platform staff only reach the sections they were granted).
+const SECTION_PERM: Record<Section, string> = {
+  overview: "platform.orgs.view", team: "platform.staff.manage", users: "platform.orgs.view",
+  orgs: "platform.orgs.view", plans: "platform.plans.manage", transactions: "platform.transactions.view",
+  gateways: "platform.gateways.manage", contacts: "platform.orgs.view", subscribers: "platform.orgs.view",
+  seo: "platform.settings.manage", email: "platform.settings.manage", audit: "platform.audit.view", settings: "platform.settings.manage",
+};
 const ADMIN_SECTIONS: { key: Section; label: string; icon: LucideIcon }[] = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
+  { key: "team", label: "Team", icon: UsersIcon },
   { key: "users", label: "Users", icon: UsersIcon },
   { key: "orgs", label: "Organizations", icon: Building2 },
   { key: "plans", label: "Plans", icon: CreditCard },
@@ -61,8 +71,14 @@ function AdminInner() {
   const title = ADMIN_SECTIONS.find((s) => s.key === section)?.label ?? "Overview";
 
   if (loading) return <div className="space-y-3"><div className="grid gap-2.5 sm:grid-cols-3">{[0, 1, 2].map((i) => <Card key={i}><CardContent className="p-4"><div className="h-14" /></CardContent></Card>)}</div></div>;
-  if (user?.role !== "SUPER_ADMIN") {
-    return <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">This area is for the platform owner only.</CardContent></Card>;
+  const isPlatform = user?.role === "SUPER_ADMIN" || !!user?.isSuperAdminTeam;
+  if (!isPlatform) {
+    return <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">This area is for the platform team only.</CardContent></Card>;
+  }
+  // Delegated staff only reach sections their permissions allow.
+  const allowed = user?.role === "SUPER_ADMIN" || (user?.permissions ?? []).includes(SECTION_PERM[section]);
+  if (!allowed) {
+    return <Card><CardContent className="py-12 text-center text-sm text-muted-foreground">You don&apos;t have access to this section.</CardContent></Card>;
   }
 
   return (
@@ -72,6 +88,7 @@ function AdminInner() {
         <p className="text-sm text-muted-foreground">Platform administration — manage the whole software.</p>
       </div>
       {section === "overview" && <Overview />}
+      {section === "team" && <TeamSection />}
       {section === "users" && <UsersSection />}
       {section === "orgs" && <Orgs />}
       {section === "plans" && <Plans />}
@@ -774,5 +791,186 @@ function PlatformSettings() {
         <div className="flex justify-end"><Button size="sm" onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? "Saved" : "Save settings"}</Button></div>
       </CardContent>
     </Card>
+  );
+}
+
+// ===========================================================================
+// Platform Team — the super admin's own staff + their access (mirrors the org
+// team page). Add staff, grant platform permissions, manage them.
+// ===========================================================================
+type PermGroup = { group: string; items: { key: string; label: string; description?: string }[] };
+type Staff = { id: string; email: string; name: string | null; isActive: boolean; lastLoginAt: string | null; avatarUrl: string | null; extraPermissions: string[]; createdAt: string };
+
+function PermissionPicker({ groups, value, onChange }: { groups: PermGroup[]; value: Set<string>; onChange: (v: Set<string>) => void }) {
+  const toggle = (k: string) => { const n = new Set(value); n.has(k) ? n.delete(k) : n.add(k); onChange(n); };
+  return (
+    <div className="space-y-3">
+      {groups.map((g) => (
+        <div key={g.group}>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{g.group}</p>
+          <div className="grid gap-1.5 sm:grid-cols-2">
+            {g.items.map((it) => {
+              const on = value.has(it.key);
+              return (
+                <button key={it.key} type="button" onClick={() => toggle(it.key)}
+                  className={cn("flex items-start gap-2 rounded-lg border p-2 text-left transition-colors", on ? "border-primary/50 bg-primary/[0.06]" : "border-border hover:bg-secondary/50")}>
+                  <span className={cn("mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border", on ? "border-primary bg-primary text-primary-foreground" : "border-input")}>{on && <Check className="h-3 w-3" />}</span>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium">{it.label}</span>
+                    {it.description && <span className="block text-[11px] text-muted-foreground">{it.description}</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TeamSection() {
+  const confirm = useConfirm();
+  const [groups, setGroups] = useState<PermGroup[]>([]);
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showInvite, setShowInvite] = useState(false);
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [perms, setPerms] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [created, setCreated] = useState<{ email: string; tempPassword: string } | null>(null);
+  const [editing, setEditing] = useState<Staff | null>(null);
+
+  const load = useCallback(async () => {
+    const [g, s] = await Promise.all([
+      api.get<PermGroup[]>("/admin/staff/permissions").catch(() => [] as PermGroup[]),
+      api.get<Staff[]>("/admin/staff").catch(() => [] as Staff[]),
+    ]);
+    setGroups(g || []); setStaff(s || []); setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function invite() {
+    if (!email.includes("@")) { setErr("Enter a valid email."); return; }
+    setBusy(true); setErr("");
+    try {
+      const r = await api.post<{ email: string; tempPassword: string }>("/admin/staff", { email: email.trim(), name: name.trim() || undefined, permissions: [...perms] });
+      setCreated(r); setEmail(""); setName(""); setPerms(new Set()); setShowInvite(false);
+      await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : "Could not add the member."); } finally { setBusy(false); }
+  }
+  async function toggleActive(s: Staff) {
+    await api.patch(`/admin/staff/${s.id}`, { isActive: !s.isActive }).catch(() => {});
+    await load();
+  }
+  async function resetPw(s: Staff) {
+    const r = await api.post<{ tempPassword: string }>(`/admin/staff/${s.id}/reset-password`, {}).catch(() => null);
+    if (r) setCreated({ email: s.email, tempPassword: r.tempPassword });
+  }
+  async function remove(s: Staff) {
+    if (!(await confirm({ title: "Remove team member?", description: `${s.name || s.email} will lose all access.`, confirmText: "Remove", destructive: true }))) return;
+    await api.del(`/admin/staff/${s.id}`).catch(() => {});
+    await load();
+  }
+
+  if (loading) return <Card><CardContent className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /></CardContent></Card>;
+
+  return (
+    <div className="space-y-4">
+      {created && (
+        <Card className="border-success/40 bg-success/[0.06]">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="text-sm">
+              <p className="font-semibold">Temporary password for {created.email}</p>
+              <p className="text-muted-foreground">Share it securely — they&apos;ll set their own on first login.</p>
+            </div>
+            <code className="rounded-md border border-border bg-card px-3 py-1.5 font-mono text-sm">{created.tempPassword}</code>
+            <button onClick={() => setCreated(null)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Platform team</CardTitle>
+            <CardDescription>Staff who access this dashboard — each sees only what you allow.</CardDescription>
+          </div>
+          <Button size="sm" className="gap-1.5" onClick={() => { setShowInvite((v) => !v); setErr(""); }}><Plus className="h-4 w-4" /> Add member</Button>
+        </CardHeader>
+        {showInvite && (
+          <CardContent className="space-y-3 border-t border-border pt-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5"><label className="text-xs font-medium text-muted-foreground">Email *</label><Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@company.com" /></div>
+              <div className="space-y-1.5"><label className="text-xs font-medium text-muted-foreground">Name</label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" /></div>
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Access — pick what this member can do</p>
+              <PermissionPicker groups={groups} value={perms} onChange={setPerms} />
+            </div>
+            {err && <p className="text-xs text-destructive">{err}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setShowInvite(false)}>Cancel</Button>
+              <Button size="sm" className="gap-1.5" onClick={invite} disabled={busy || !email.includes("@")}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add to team</Button>
+            </div>
+          </CardContent>
+        )}
+        <CardContent className={cn(showInvite && "border-t border-border pt-4")}>
+          {staff.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">No team members yet. Add someone to help you run the platform.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {staff.map((s) => (
+                <div key={s.id} className="flex flex-wrap items-center gap-3 py-3">
+                  <UserAvatar src={s.avatarUrl} className="h-9 w-9" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{s.name || s.email}</p>
+                    <p className="truncate text-xs text-muted-foreground">{s.email} · {s.extraPermissions.length} permission{s.extraPermissions.length === 1 ? "" : "s"}</p>
+                  </div>
+                  {!s.isActive && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Inactive</span>}
+                  <div className="flex items-center gap-1.5">
+                    <Button variant="outline" size="sm" className="h-8" onClick={() => setEditing(s)}>Edit access</Button>
+                    <Button variant="ghost" size="sm" className="h-8 gap-1" onClick={() => resetPw(s)}><KeyRound className="h-3.5 w-3.5" /></Button>
+                    <Button variant="ghost" size="sm" className="h-8" onClick={() => toggleActive(s)}>{s.isActive ? "Deactivate" : "Activate"}</Button>
+                    <Button variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive" onClick={() => remove(s)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {editing && (
+        <EditAccessModal member={editing} groups={groups} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
+      )}
+    </div>
+  );
+}
+
+function EditAccessModal({ member, groups, onClose, onSaved }: { member: Staff; groups: PermGroup[]; onClose: () => void; onSaved: () => void }) {
+  const [perms, setPerms] = useState<Set<string>>(new Set(member.extraPermissions));
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true);
+    try { await api.patch(`/admin/staff/${member.id}`, { permissions: [...perms] }); onSaved(); }
+    catch { setBusy(false); }
+  }
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-foreground/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <div><p className="text-sm font-semibold">Edit access</p><p className="text-xs text-muted-foreground">{member.name || member.email}</p></div>
+          <button onClick={onClose} className="rounded-lg p-1 text-muted-foreground hover:bg-secondary"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4"><PermissionPicker groups={groups} value={perms} onChange={setPerms} /></div>
+        <div className="flex justify-end gap-2 border-t border-border p-3">
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={save} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save access"}</Button>
+        </div>
+      </div>
+    </div>
   );
 }

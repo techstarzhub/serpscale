@@ -1,0 +1,1 @@
+ALTER TABLE "User" ADD COLUMN "isSuperAdminTeam" BOOLEAN NOT NULL DEFAULT false;

@@ -3,14 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Menu, Moon, Sparkles, Sun, User, Settings, Palette, LogOut, KeyRound, Plus, Clock } from "lucide-react";
+import { Menu, Moon, Sparkles, Sun, User, Settings, Palette, LogOut, KeyRound, Plus, Clock, AlertTriangle, Headphones } from "lucide-react";
+import { FcGoogle } from "react-icons/fc";
 import { useTheme } from "@/components/theme/theme-provider";
 import { useCurrentUser, displayName, roleLabel, trialDaysLeft, useCan } from "@/components/providers/user-provider";
 import { UserAvatar } from "@/components/ui/user-avatar";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { getSupportSocket } from "@/lib/support";
 import { NotificationBell } from "./notification-bell";
+
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 const TITLES: { match: (p: string) => boolean; title: string }[] = [
   { match: (p) => p === "/dashboard", title: "Dashboard" },
@@ -48,9 +52,41 @@ export function Topbar({
 }) {
   const pathname = usePathname();
   const { mode, toggleMode } = useTheme();
-  const { user } = useCurrentUser();
   const can = useCan();
+  const canManageIntegrations = can("integrations.manage");
   const title = TITLES.find((t) => t.match(pathname))?.title ?? "SEO Platform";
+
+  // Watch connected Google accounts so an expired token surfaces right in the
+  // topbar (a blinking alert on the Connect button) — no need to open Settings.
+  const [gAccounts, setGAccounts] = useState<{ accountEmail: string | null; status?: string }[]>([]);
+  useEffect(() => {
+    if (!canManageIntegrations) return;
+    let alive = true;
+    const load = () =>
+      api
+        .get<{ googleAccounts?: { accountEmail: string | null; status?: string }[] }>("/integrations")
+        .then((s) => { if (alive) setGAccounts(s?.googleAccounts ?? []); })
+        .catch(() => {});
+    load();
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => { alive = false; window.removeEventListener("focus", onFocus); };
+  }, [canManageIntegrations]);
+  const expiredEmails = gAccounts.filter((a) => a.status && a.status !== "connected").map((a) => a.accountEmail ?? "Connected account");
+
+  // Unread support messages → a badge on the Support button, kept live over the socket.
+  const [supportUnread, setSupportUnread] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.get<{ count: number }>("/support/unread").then((r) => { if (alive) setSupportUnread(r?.count ?? 0); }).catch(() => {});
+    load();
+    const s = getSupportSocket();
+    const bump = () => load();
+    s.on("message", bump); s.on("ticket:activity", bump); s.on("ticket:new", bump); s.on("read", bump);
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => { alive = false; s.off("message", bump); s.off("ticket:activity", bump); s.off("ticket:new", bump); s.off("read", bump); window.removeEventListener("focus", onFocus); };
+  }, []);
 
   return (
     <header className="sticky top-0 z-30 flex h-[var(--topbar-height)] items-center justify-between border-b border-border bg-card/80 px-4 shadow-[0_1px_3px_hsl(var(--foreground)/0.05)] backdrop-blur-xl supports-[backdrop-filter]:bg-card/65 sm:px-6">
@@ -71,30 +107,90 @@ export function Topbar({
           <>
             <Link
               href="/dashboard/projects/new"
-              className="hidden items-center gap-2 rounded-full bg-gradient-to-r from-primary to-primary/85 py-1.5 pl-2 pr-4 text-sm font-semibold text-primary-foreground shadow-glow transition-all hover:-translate-y-0.5 hover:shadow-glow-lg active:translate-y-0 sm:inline-flex"
+              className="hidden h-9 items-center gap-1.5 rounded-full bg-primary pl-3 pr-4 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 sm:inline-flex"
             >
-              <span className="grid h-6 w-6 place-items-center rounded-full bg-white/20">
-                <Plus className="h-4 w-4" />
-              </span>
-              New Campaign
+              <Plus className="h-4 w-4" /> New Campaign
             </Link>
             <Link
               href="/dashboard/projects/new"
               aria-label="New campaign"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/85 text-primary-foreground shadow-glow transition-all hover:shadow-glow-lg sm:hidden"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 sm:hidden"
             >
               <Plus className="h-[18px] w-[18px]" />
             </Link>
           </>
         )}
 
-        {/* Upgrade → org billing. Only the organization admin manages the plan. */}
-        {user?.role === "ADMIN" && (
+        {/* Connect a Google account from anywhere. Gated by "integrations.manage"
+            (ADMINs pass via useCan) — no need to open Settings → Integrations. When
+            an account's token has expired, a blinking alert appears; hovering lists
+            exactly which accounts need reconnecting. */}
+        {canManageIntegrations && (
+          <div className="group relative hidden sm:block">
+            <button
+              type="button"
+              onClick={() => window.open(`${API}/integrations/google/connect`, "_blank", "noopener,noreferrer")}
+              aria-label={expiredEmails.length ? `${expiredEmails.length} Google account(s) expired — reconnect` : "Connect a Google account"}
+              className={cn(
+                "flex h-9 items-center gap-2 rounded-full border bg-card px-3.5 text-sm font-semibold shadow-sm transition-colors",
+                expiredEmails.length
+                  ? "border-destructive/40 text-destructive hover:bg-destructive/[0.06]"
+                  : "border-input hover:border-primary/40 hover:bg-primary/[0.04]",
+              )}
+            >
+              <FcGoogle className="h-[18px] w-[18px]" />
+              <span className="hidden md:inline">Connect Google</span>
+              {expiredEmails.length > 0 && (
+                <span className="relative flex h-4 w-4 items-center justify-center">
+                  <AlertTriangle className="h-4 w-4 animate-pulse text-destructive" />
+                </span>
+              )}
+            </button>
+
+            {/* Hover card: exactly which accounts are expired. */}
+            {expiredEmails.length > 0 && (
+              <div className="pointer-events-none absolute right-0 top-11 z-50 w-64 -translate-y-1 rounded-xl border border-border bg-popover p-3 text-xs shadow-lg opacity-0 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
+                <p className="mb-1.5 flex items-center gap-1.5 font-semibold text-destructive">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {expiredEmails.length} account{expiredEmails.length > 1 ? "s" : ""} expired
+                </p>
+                <ul className="space-y-1">
+                  {expiredEmails.map((e) => (
+                    <li key={e} className="flex items-center gap-1.5 truncate text-foreground">
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" /> {e}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-muted-foreground">Click to reconnect and resume live data.</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Contact support — opens the in-app support form. Available to everyone,
+            placed just before Upgrade. */}
+        <Link
+          href="/dashboard/support"
+          aria-label="Contact support"
+          title="Contact support"
+          className="relative hidden h-9 items-center gap-1.5 rounded-full border border-input bg-card px-4 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/[0.04] sm:inline-flex"
+        >
+          <Headphones className="h-4 w-4 text-primary" />
+          Support
+          {supportUnread > 0 && (
+            <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-destructive px-1 text-[10px] font-bold text-white">
+              {supportUnread > 9 ? "9+" : supportUnread}
+            </span>
+          )}
+        </Link>
+
+        {/* Upgrade → org billing (last). Gated by the billing permission (ADMINs
+            always pass via useCan; others need "billing.manage"). */}
+        {can("billing.manage") && (
           <Link
             href="/dashboard/settings/billing"
-            className="sheen relative hidden items-center gap-1.5 overflow-hidden rounded-full border border-primary/20 bg-primary/10 px-3.5 py-1.5 text-xs font-semibold text-primary ring-1 ring-inset ring-white/5 transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:bg-primary/15 hover:shadow-glow md:inline-flex"
+            className="hidden h-9 items-center gap-1.5 rounded-full border border-input bg-card px-4 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/[0.04] md:inline-flex"
           >
-            <Sparkles className="h-3.5 w-3.5" />
+            <Sparkles className="h-3.5 w-3.5 text-primary" />
             Upgrade
           </Link>
         )}

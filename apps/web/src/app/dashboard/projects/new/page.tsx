@@ -3,15 +3,17 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Check, Link2, LayoutGrid, Plug, ListChecks, Lock, Info, ExternalLink, Database } from "lucide-react";
+import { ArrowLeft, Loader2, Check, Link2, LayoutGrid, Plug, ListChecks, Lock, Info, ExternalLink, Database, AlertTriangle } from "lucide-react";
 import { FcGoogle } from "react-icons/fc";
 import { SiGoogleanalytics, SiGooglesearchconsole, SiGoogleads, SiMeta, SiInstagram, SiYoutube, SiPinterest } from "react-icons/si";
 import { FaGithub, FaLinkedin } from "react-icons/fa6";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { useProjects } from "@/components/providers/projects-provider";
-import { useFeature } from "@/components/providers/user-provider";
+import { useFeature, useCan } from "@/components/providers/user-provider";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { validateName, validateDomain, normalizeDomain } from "@/lib/campaign-validation";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -110,6 +112,10 @@ export default function NewCampaignPage() {
   const router = useRouter();
   const { addProject } = useProjects();
   const hasFeature = useFeature();
+  const can = useCan();
+  // Connecting Google accounts is an integrations action — ADMINs always may;
+  // others need the "integrations.manage" permission (mirrors the API guard).
+  const canManageIntegrations = can("integrations.manage");
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -123,13 +129,15 @@ export default function NewCampaignPage() {
   const [device, setDevice] = useState("Desktop");
 
   // Real integration status (Google account is org-level → shared by GSC/GA/GMB).
-  const [intg, setIntg] = useState<{ loaded: boolean; configured: boolean; accounts: { id: string; accountEmail: string | null }[] }>({ loaded: false, configured: true, accounts: [] });
+  const [intg, setIntg] = useState<{ loaded: boolean; configured: boolean; accounts: { id: string; accountEmail: string | null; status?: string }[] }>({ loaded: false, configured: true, accounts: [] });
   // Which connected Google account powers this campaign's data. "" = auto-detect
   // by domain across every account (default, and the only option with one account).
   const [dataSource, setDataSource] = useState("");
+  // Per-service overrides of the default above. "" = use the default account.
+  const [svcAccounts, setSvcAccounts] = useState<{ gsc: string; ga: string; gmb: string }>({ gsc: "", ga: "", gmb: "" });
   const fetchIntg = useCallback(async () => {
     try {
-      const s = await api.get<{ googleAccounts?: { id: string; accountEmail: string | null }[]; googleConfigured?: boolean }>("/integrations");
+      const s = await api.get<{ googleAccounts?: { id: string; accountEmail: string | null; status?: string }[]; googleConfigured?: boolean }>("/integrations");
       setIntg({ loaded: true, configured: s?.googleConfigured ?? false, accounts: s?.googleAccounts ?? [] });
     } catch {
       setIntg((p) => ({ ...p, loaded: true }));
@@ -149,9 +157,15 @@ export default function NewCampaignPage() {
     const t = setInterval(async () => { n++; await fetchIntg(); if (n >= 40) clearInterval(t); }, 2500);
   }
 
+  // Per-field validation (mirrors the server DTO). Errors only surface once a
+  // field has been touched, so the form doesn't shout before the user has typed.
+  const [touched, setTouched] = useState<{ name?: boolean; domain?: boolean }>({});
+  const nameErr = validateName(name);
+  const domainErr = validateDomain(domain);
+
   const google = COUNTRIES.find((x) => x.code === country)?.label ?? "us (google.com)";
   const kwCount = keywords.split("\n").map((k) => k.trim()).filter(Boolean).length;
-  const step1Valid = name.trim().length > 0 && domain.trim().length >= 3;
+  const step1Valid = !nameErr && !domainErr;
 
   // Google connection state derived from the connected-accounts list.
   const googleConnected = intg.accounts.length > 0;
@@ -159,11 +173,36 @@ export default function NewCampaignPage() {
   // else "Auto-detect by domain" (shown to the user so the source is never a mystery).
   const effectiveAccount = dataSource || (intg.accounts.length === 1 ? intg.accounts[0].accountEmail ?? "" : "");
   const accountLabel = effectiveAccount || "Auto-detect by domain";
+  // Accounts whose Google token was revoked/expired — they need reconnecting.
+  const isExpired = (s?: string) => !!s && s !== "connected";
+  const expiredAccounts = intg.accounts.filter((a) => isExpired(a.status));
+  // Connected accounts as combobox options (searchable, theme-styled). Expired
+  // accounts are flagged inline so a stale source is obvious in the picker.
+  const accountOpts = intg.accounts.map((a) => ({
+    value: a.accountEmail ?? "",
+    label: (a.accountEmail ?? "Connected account") + (isExpired(a.status) ? "  ·  expired" : ""),
+    hint: isExpired(a.status) ? "reconnect" : undefined,
+  }));
 
   async function finish() {
+    // Final guard: never submit if step 1 is invalid (e.g. reached here via back).
+    if (!step1Valid) {
+      setTouched({ name: true, domain: true });
+      setStep(1);
+      setError(nameErr || domainErr || "Please fix the highlighted fields.");
+      return;
+    }
     setError(""); setLoading(true);
     try {
-      const project = await addProject({ name: name.trim(), domain: domain.trim(), enabledTabs: mods, googleAccountEmail: dataSource || undefined });
+      const project = await addProject({
+        name: name.trim(),
+        domain: normalizeDomain(domain),
+        enabledTabs: mods,
+        googleAccountEmail: dataSource || undefined,
+        gscAccountEmail: svcAccounts.gsc || undefined,
+        gaAccountEmail: svcAccounts.ga || undefined,
+        gmbAccountEmail: svcAccounts.gmb || undefined,
+      });
       // Actually enrol the entered keywords into the rank tracker with the chosen
       // location + device (the real backend fields), so those selectors do real work.
       const kws = keywords.split("\n").map((k) => k.trim()).filter(Boolean);
@@ -205,15 +244,21 @@ export default function NewCampaignPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-x-8 gap-y-4 lg:grid-cols-[1.35fr_1fr]">
-              <label className={PILL}>
-                <LayoutGrid className="h-[18px] w-[18px] shrink-0 text-muted-foreground" />
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Campaign Name" className={FIELD} autoFocus />
-              </label>
+              <div className="min-w-0">
+                <label className={cn(PILL, touched.name && nameErr && "border-destructive focus-within:border-destructive focus-within:ring-destructive/20")}>
+                  <LayoutGrid className="h-[18px] w-[18px] shrink-0 text-muted-foreground" />
+                  <input value={name} onChange={(e) => setName(e.target.value)} onBlur={() => setTouched((t) => ({ ...t, name: true }))} placeholder="Campaign Name" className={FIELD} autoFocus aria-invalid={!!(touched.name && nameErr)} />
+                </label>
+                {touched.name && nameErr && <p className="mt-1.5 px-1 text-xs font-medium text-destructive">{nameErr}</p>}
+              </div>
               <Hint>Name of campaign.</Hint>
 
-              <div className={PILL}>
-                <Link2 className="h-[18px] w-[18px] shrink-0 text-primary" />
-                <input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="example.com" className={FIELD} />
+              <div className="min-w-0">
+                <div className={cn(PILL, touched.domain && domainErr && "border-destructive focus-within:border-destructive focus-within:ring-destructive/20")}>
+                  <Link2 className="h-[18px] w-[18px] shrink-0 text-primary" />
+                  <input value={domain} onChange={(e) => setDomain(e.target.value)} onBlur={() => setTouched((t) => ({ ...t, domain: true }))} placeholder="example.com" className={FIELD} aria-invalid={!!(touched.domain && domainErr)} />
+                </div>
+                {touched.domain && domainErr && <p className="mt-1.5 px-1 text-xs font-medium text-destructive">{domainErr}</p>}
               </div>
               <Hint>Domain of campaign — we track rankings for this site.</Hint>
 
@@ -263,27 +308,55 @@ export default function NewCampaignPage() {
         {/* ------------------------------------------------ STEP 2 --- */}
         {step === 2 && (
           <>
-            <div className="mb-6">
-              <h2 className="font-heading text-2xl font-semibold">Integrations,</h2>
-              <p className="mt-0.5 text-[15px] text-muted-foreground">Connect your accounts to pull live data. You can skip and connect any later.</p>
+            <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="font-heading text-2xl font-semibold">Integrations,</h2>
+                <p className="mt-0.5 text-[15px] text-muted-foreground">Connect your accounts to pull live data. You can skip and connect any later.</p>
+              </div>
+              {/* Add / connect a Google account without leaving the wizard. */}
+              {canManageIntegrations && intg.loaded && intg.configured && (
+                <button
+                  type="button"
+                  onClick={connectGoogle}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-full border border-input bg-card px-5 py-2.5 text-sm font-semibold shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/[0.04]"
+                >
+                  <FcGoogle className="h-5 w-5" /> {googleConnected ? "Add another Google account" : "Connect a Google account"}
+                </button>
+              )}
             </div>
+
+            {/* Any account whose token Google revoked needs a one-time reconnect. */}
+            {expiredAccounts.length > 0 && (
+              <div className="mb-4 flex flex-col gap-2 rounded-2xl border border-destructive/30 bg-destructive/[0.06] px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+                <p className="flex items-start gap-2 text-sm text-destructive">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span><span className="font-semibold">{expiredAccounts.map((a) => a.accountEmail).join(", ")}</span> {expiredAccounts.length === 1 ? "has" : "have"} expired — reconnect to resume live data.</span>
+                </p>
+                {canManageIntegrations && (
+                  <button type="button" onClick={connectGoogle} className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-destructive px-4 py-2 text-sm font-semibold text-destructive-foreground transition-opacity hover:opacity-90">
+                    <ExternalLink className="h-3.5 w-3.5" /> Reconnect
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Data source picker — only when several Google accounts are connected.
                 One account powers all three Google services, so it lives once here. */}
             {googleConnected && intg.accounts.length >= 2 && (
               <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-primary/30 bg-primary/[0.04] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
-                  <p className="flex items-center gap-1.5 text-[15px] font-semibold"><Database className="h-4 w-4 text-primary" /> Data source</p>
-                  <p className="mt-0.5 text-sm text-muted-foreground">{intg.accounts.length} Google accounts connected — choose which one this campaign pulls its data from.</p>
+                  <p className="flex items-center gap-1.5 text-[15px] font-semibold"><Database className="h-4 w-4 text-primary" /> Data source <span className="text-xs font-medium text-muted-foreground">(default)</span></p>
+                  <p className="mt-0.5 text-sm text-muted-foreground">{intg.accounts.length} Google accounts connected — this is the default; override any service below.</p>
                 </div>
-                <select
+                <Combobox
                   value={dataSource}
-                  onChange={(e) => setDataSource(e.target.value)}
-                  className="h-11 shrink-0 cursor-pointer rounded-xl border border-input bg-card px-3 text-sm font-medium outline-none focus:border-primary focus:ring-2 focus:ring-ring/20 sm:min-w-[240px]"
-                >
-                  <option value="">Auto-detect by domain</option>
-                  {intg.accounts.map((a) => <option key={a.id} value={a.accountEmail ?? ""}>{a.accountEmail ?? "Connected account"}</option>)}
-                </select>
+                  onChange={setDataSource}
+                  className="w-full shrink-0 sm:w-64"
+                  align="end"
+                  icon={<Database className="h-4 w-4 shrink-0 text-primary" />}
+                  searchPlaceholder="Search accounts…"
+                  options={[{ value: "", label: "Auto-detect by domain" }, ...accountOpts]}
+                />
               </div>
             )}
 
@@ -300,7 +373,6 @@ export default function NewCampaignPage() {
                     <div className="min-w-0 flex-1">
                       <p className="text-[15px] font-semibold">{it.name}</p>
                       <p className="truncate text-sm text-muted-foreground">{needsSetup ? "Add GOOGLE_CLIENT_ID & secret in settings to enable this." : it.desc}</p>
-                      {connected && <p className="mt-0.5 flex items-center gap-1 truncate text-xs font-medium text-success"><Database className="h-3 w-3 shrink-0" /> {accountLabel}</p>}
                     </div>
                     {/* GitHub is per-campaign → available after launch */}
                     {it.provider === "github" ? (
@@ -308,9 +380,26 @@ export default function NewCampaignPage() {
                         <Lock className="h-3.5 w-3.5" /> After launch
                       </span>
                     ) : connected ? (
-                      <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-success bg-success/10 px-6 py-2 text-sm font-semibold text-success">
-                        <Check className="h-4 w-4" /> Connected
-                      </span>
+                      // Connected badge, and on the same line the account this service
+                      // pulls from — a searchable picker when several accounts exist.
+                      <div className="flex shrink-0 items-center gap-2">
+                        {intg.accounts.length >= 2 ? (
+                          <Combobox
+                            value={svcAccounts[it.id as "gsc" | "ga" | "gmb"]}
+                            onChange={(v) => setSvcAccounts((s) => ({ ...s, [it.id]: v }))}
+                            className="w-56"
+                            align="end"
+                            icon={<Database className="h-3.5 w-3.5 shrink-0 text-success" />}
+                            searchPlaceholder="Search accounts…"
+                            options={[{ value: "", label: `Use default (${accountLabel})` }, ...accountOpts]}
+                          />
+                        ) : (
+                          <p className="flex items-center gap-1 truncate text-xs font-medium text-success"><Database className="h-3 w-3 shrink-0" /> {accountLabel}</p>
+                        )}
+                        <span className="flex items-center gap-1.5 rounded-full border border-success bg-success/10 px-5 py-2 text-sm font-semibold text-success">
+                          <Check className="h-4 w-4" /> Connected
+                        </span>
+                      </div>
                     ) : (
                       <button
                         type="button"
@@ -382,7 +471,7 @@ export default function NewCampaignPage() {
         <button onClick={() => router.push("/dashboard")} className="rounded-full px-6 py-2.5 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground">Cancel</button>
         <div className="flex gap-3">
           {step > 1 && <button onClick={() => setStep((s) => s - 1)} className="rounded-full border border-input bg-card px-7 py-2.5 text-sm font-semibold transition-colors hover:bg-muted">Previous</button>}
-          {step === 1 && <Button className="rounded-full px-8" disabled={!step1Valid} onClick={() => setStep(2)}>Continue</Button>}
+          {step === 1 && <Button className="rounded-full px-8" onClick={() => { if (!step1Valid) { setTouched({ name: true, domain: true }); return; } setStep(2); }}>Continue</Button>}
           {step === 2 && <Button className="rounded-full px-8" onClick={() => setStep(3)}>{googleConnected ? "Next" : "Next / Skip"}</Button>}
           {step === 3 && <Button className="rounded-full px-8" onClick={finish} disabled={loading}>{loading && <Loader2 className="h-4 w-4 animate-spin" />} Finish</Button>}
         </div>

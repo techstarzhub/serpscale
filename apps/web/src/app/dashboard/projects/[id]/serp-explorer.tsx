@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Search,
+  MapPin,
+  ChevronsUpDown,
+  X,
   Loader2,
   Sparkles,
   Star,
@@ -20,8 +23,12 @@ import {
   TrendingDown,
   Minus,
   Wand2,
+  Upload,
+  Download,
+  FileText,
   type LucideIcon,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -131,10 +138,452 @@ function Meta({
   );
 }
 
+// A DataForSEO location: country, state/region or city.
+type Loc = { code: number; name: string; type: string; iso: string | null };
+
+// Searchable country → state → city picker. Queries the backend (DataForSEO's
+// ~260k locations, cached) as you type; empty query shows the country list.
+function LocationPicker({ projectId, value, country, onChange }: { projectId: string; value: Loc | null; country: string; onChange: (loc: Loc) => void }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<Loc[]>([]);
+  const [loading, setLoading] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    setLoading(true);
+    const t = setTimeout(() => {
+      api.get<Loc[]>(`/projects/${projectId}/keywords/locations?q=${encodeURIComponent(q)}`)
+        .then((r) => { if (alive) setResults(Array.isArray(r) ? r : []); })
+        .catch(() => { if (alive) setResults([]); })
+        .finally(() => { if (alive) setLoading(false); });
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q, open, projectId]);
+
+  useEffect(() => { if (open) { const t = setTimeout(() => inputRef.current?.focus(), 0); return () => clearTimeout(t); } }, [open]);
+
+  const label = value?.name ?? (COUNTRIES.find((c) => c.value === country)?.label ?? country);
+  const shortLabel = label.split(",")[0];
+
+  return (
+    <div ref={ref} className="relative w-[180px]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title={label}
+        className="flex h-10 w-full items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm transition-colors hover:bg-secondary/40"
+      >
+        <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-left">{shortLabel}</span>
+        <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+      </button>
+      {open && (
+        <div className="absolute left-0 z-50 mt-1 w-80 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+          <div className="relative border-b border-border">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              ref={inputRef}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search country, state or city…"
+              className="h-9 w-full bg-transparent pl-8 pr-3 text-sm focus:outline-none"
+            />
+          </div>
+          <div className="max-h-72 overflow-y-auto p-1">
+            {/* Worldwide — the global database (no specific country). */}
+            {"worldwide".includes(q.trim().toLowerCase()) && (
+              <button
+                type="button"
+                onClick={() => { onChange({ code: 0, name: "Worldwide", type: "Worldwide", iso: "WW" }); setOpen(false); }}
+                className={cn("flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-secondary/60", value?.code === 0 && "bg-secondary")}
+              >
+                <Globe2 className="h-3.5 w-3.5 shrink-0 text-primary" />
+                <span className="min-w-0 flex-1 truncate font-medium">Worldwide</span>
+                <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Global</span>
+              </button>
+            )}
+            {loading ? (
+              <p className="px-3 py-5 text-center text-xs text-muted-foreground">Searching…</p>
+            ) : results.length === 0 ? (
+              <p className="px-3 py-5 text-center text-xs text-muted-foreground">No locations found</p>
+            ) : (
+              results.map((loc) => {
+                const parts = loc.name.split(",");
+                return (
+                  <button
+                    key={loc.code}
+                    type="button"
+                    onClick={() => { onChange(loc); setOpen(false); }}
+                    className={cn("flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-secondary/60", value?.code === loc.code && "bg-secondary")}
+                  >
+                    <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-medium">{parts[0]}</span>
+                      {parts.length > 1 && <span className="text-muted-foreground">, {parts.slice(1).join(", ")}</span>}
+                    </span>
+                    <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{loc.type}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// "Top markets for this keyword" — country-level Google-Trends interest (0–100).
+// Country-only by design: deeper (state/city) Trends data only exists for a few
+// high-volume keywords, so precise per-place numbers come from the location filter
+// (real search volume) instead.
+type GeoItem = { name: string; value: number; code: number | null };
+function GeoBreakdownModal({ projectId, keyword, location, onClose }: { projectId: string; keyword: string; location: Loc | null; onClose: () => void }) {
+  const [items, setItems] = useState<GeoItem[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [visible, setVisible] = useState(15); // grows as the user scrolls
+
+  // Scope to the location chosen in the dropdown: a country → its states, a state
+  // → its cities, else (Worldwide/none) → countries. code 0 = Worldwide.
+  const scopeCode = location && location.code > 0 ? location.code : undefined;
+  const scopeName = scopeCode ? location!.name.split(",")[0] : null;
+  const t = location?.type;
+  const level = t === "Country" ? "state / region" : (t === "State" || t === "Region" || t === "Province" || t === "Union Territory" || t === "Territory") ? "city" : "country";
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true); setItems(null); setVisible(15);
+    const locQ = scopeCode ? `&location=${scopeCode}` : "";
+    api.get<{ items: GeoItem[] }>(`/projects/${projectId}/keywords/geo?keyword=${encodeURIComponent(keyword)}${locQ}`)
+      .then((r) => { if (alive) setItems(Array.isArray(r?.items) ? r.items : []); })
+      .catch(() => { if (alive) setItems([]); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [projectId, keyword, scopeCode]);
+
+  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) setVisible((v) => v + 15);
+  };
+  const max = Math.max(1, ...(items ?? []).map((i) => i.value));
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 border-b border-border p-4">
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-sm font-semibold"><Globe2 className="h-4 w-4 text-primary" /> {scopeName ? `Demand across ${scopeName}` : "Top markets for this keyword"}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">&ldquo;{keyword}&rdquo; — by {level} · 100 = the #1, others relative (interest, not volume)</p>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="max-h-[58vh] overflow-y-auto p-3" onScroll={onScroll}>
+          {loading ? (
+            <div className="space-y-2">{Array.from({ length: 7 }).map((_, i) => <div key={i} className="h-9 animate-pulse rounded-lg bg-secondary" />)}</div>
+          ) : !items?.length ? (
+            <p className="px-6 py-10 text-center text-sm text-muted-foreground">
+              {scopeName ? `Google Trends has no ${level}-level breakdown for “${keyword}” in ${scopeName} — it only has this for high-volume keywords.` : "No demand data for this keyword."}
+            </p>
+          ) : (
+            <div className="space-y-1">
+              {items.slice(0, visible).map((it, idx) => {
+                const pct = Math.round((it.value / max) * 100);
+                return (
+                  <div key={it.name} className="relative flex items-center gap-3 overflow-hidden rounded-lg px-3 py-2">
+                    <div className="absolute inset-y-1 left-0 rounded-md bg-primary/[0.12]" style={{ width: `${Math.max(5, pct)}%` }} />
+                    <span className="relative z-10 w-5 shrink-0 text-xs font-semibold text-muted-foreground">{idx + 1}</span>
+                    <span className="relative z-10 min-w-0 flex-1 truncate text-sm font-medium">{it.name.split(",")[0]}</span>
+                    <span className="relative z-10 shrink-0 text-sm font-bold tabular-nums">{it.value}<span className="text-[10px] font-normal text-muted-foreground">/100</span></span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div className="border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
+          Google Trends relative interest{scopeName ? ` inside ${scopeName}` : ""} — where demand is highest. For exact search volume, the keyword numbers above already use your selected location.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Bulk import: upload a keyword list (CSV/Excel/Word/PDF) or paste one, then
+// fetch real volume + competition for every keyword at once (server parses the file). --
+function ImportKeywordsModal({
+  projectId, country, language, location, onClose, onDone,
+}: {
+  projectId: string;
+  country: string;
+  language: string;
+  location: Loc | null;
+  onClose: () => void;
+  onDone: (keywords: KeywordMetric[], requested: number) => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [text, setText] = useState("");
+  const [drag, setDrag] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const scope = location && location.code > 0 ? location.name.split(",")[0] : "Worldwide";
+
+  async function submit() {
+    setError("");
+    if (!file && !text.trim()) { setError("Pick a file or paste some keywords first."); return; }
+    setLoading(true);
+    try {
+      const fd = new FormData();
+      if (file) fd.append("file", file);
+      else fd.append("text", text);
+      fd.append("country", country);
+      fd.append("language", language);
+      if (location && location.code > 0) fd.append("location", String(location.code));
+      const res = await api.upload<{ connected: boolean; keywords: KeywordMetric[]; requested: number }>(
+        `/projects/${projectId}/keywords/import`, fd,
+      );
+      if (!res?.keywords?.length) { setError("No keywords with data were found. Check the file and try again."); setLoading(false); return; }
+      onDone(res.keywords, res.requested ?? res.keywords.length);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Import failed. Try a CSV, Excel, Word or PDF file.");
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/40 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 border-b border-border p-4">
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-sm font-semibold"><Upload className="h-4 w-4 text-primary" /> Import keywords</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Upload a list — we&apos;ll fetch real volume &amp; competition for <span className="font-medium text-foreground">{scope}</span>.</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-muted-foreground hover:bg-secondary"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="space-y-3 p-4">
+          {/* Dropzone */}
+          <div
+            onClick={() => inputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={(e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) { setFile(f); setText(""); } }}
+            className={cn(
+              "flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed p-6 text-center transition-colors",
+              drag ? "border-primary bg-primary/[0.04]" : "border-border hover:border-primary/40 hover:bg-secondary/40",
+            )}
+          >
+            {file ? (
+              <>
+                <FileText className="h-6 w-6 text-primary" />
+                <p className="text-sm font-medium">{file.name}</p>
+                <button className="text-xs text-muted-foreground hover:text-destructive hover:underline" onClick={(e) => { e.stopPropagation(); setFile(null); if (inputRef.current) inputRef.current.value = ""; }}>Remove</button>
+              </>
+            ) : (
+              <>
+                <Upload className="h-6 w-6 text-muted-foreground" />
+                <p className="text-sm font-medium">Drop a file or click to browse</p>
+                {/* Explicit format chips so it's obvious all four are supported. */}
+                <div className="mt-1 flex flex-wrap items-center justify-center gap-1.5">
+                  {["CSV", "Excel", "Word", "PDF"].map((f) => (
+                    <span key={f} className="rounded-md border border-border bg-secondary/50 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">{f}</span>
+                  ))}
+                </div>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">.csv · .xlsx · .docx · .pdf — up to 300 keywords</p>
+              </>
+            )}
+            {/* Extension-only accept: native file dialogs grey out files when long
+                MIME types are mixed in, so keep it to extensions for reliability. */}
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".csv,.tsv,.txt,.xlsx,.xls,.docx,.doc,.pdf"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0] ?? null; setFile(f); if (f) setText(""); }}
+            />
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span className="h-px flex-1 bg-border" /> or paste <span className="h-px flex-1 bg-border" />
+          </div>
+
+          <textarea
+            value={text}
+            onChange={(e) => { setText(e.target.value); if (e.target.value.trim()) setFile(null); }}
+            placeholder={"One keyword per line, e.g.\nseo services\ndigital marketing agency\nppc management"}
+            rows={4}
+            disabled={!!file}
+            className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/70 focus:border-primary/50 disabled:opacity-50"
+          />
+
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border p-3">
+          <Button variant="ghost" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button className="gap-2" onClick={submit} disabled={loading || (!file && !text.trim())}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4" />}
+            {loading ? "Analysing…" : "Get volume & competition"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Export the current keyword table to CSV, Excel, PDF report or Word. ----
+// Heavy report libs (jspdf / docx) are dynamically imported inside the handlers
+// so they only load when the user actually exports — the page stays light.
+function ExportMenu({ keywords, location, projectName, domain }: { keywords: KeywordMetric[]; location: Loc | null; projectName?: string; domain?: string }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const scopeLabel = location && location.code > 0 ? location.name.split(",")[0] : "Worldwide";
+  const scope = scopeLabel.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+  const dateStr = new Date().toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const totalVol = keywords.reduce((s, k) => s + (k.volume || 0), 0);
+  const withDiff = keywords.filter((k) => k.difficulty != null);
+  const avgDiff = withDiff.length ? Math.round(withDiff.reduce((s, k) => s + (k.difficulty || 0), 0) / withDiff.length) : null;
+  const brand = projectName || domain || "SerpScale";
+  const num = (n: number) => n.toLocaleString("en-US");
+  const cpc = (v: number | null) => (v != null ? `$${v.toFixed(2)}` : "—");
+  const summary = `${keywords.length} keywords · ${num(totalVol)}/mo total volume${avgDiff != null ? ` · avg difficulty ${avgDiff}` : ""}`;
+  const meta = `${brand}  ·  ${scopeLabel}  ·  ${dateStr}`;
+  const rows = keywords.map((k) => ({
+    Keyword: k.keyword,
+    "Volume/mo": k.volume,
+    Difficulty: k.difficulty ?? "",
+    Competition: k.competitionLevel ?? "",
+    "CPC (USD)": k.cpc ?? "",
+  }));
+
+  function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setOpen(false);
+  }
+  function exportCsv() {
+    const headers = Object.keys(rows[0]);
+    const esc = (v: unknown) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const csv = [headers.join(","), ...rows.map((r) => headers.map((h) => esc((r as any)[h])).join(","))].join("\n");
+    downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `keywords-${scope}.csv`);
+  }
+  function exportXlsx() {
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 38 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Keywords");
+    XLSX.writeFile(wb, `keywords-${scope}.xlsx`);
+    setOpen(false);
+  }
+  async function exportPdf() {
+    setBusy("pdf");
+    try {
+      const { default: JsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default;
+      const doc = new JsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      const m = 40;
+      doc.setFont("helvetica", "bold").setFontSize(18).setTextColor(17, 24, 39);
+      doc.text("Keyword Report", m, 50);
+      doc.setFont("helvetica", "normal").setFontSize(10).setTextColor(120, 120, 120);
+      doc.text(meta, m, 68);
+      doc.text(summary, m, 82);
+      autoTable(doc, {
+        startY: 96,
+        head: [["#", "Keyword", "Volume/mo", "Difficulty", "Competition", "CPC"]],
+        body: keywords.map((k, i) => [String(i + 1), k.keyword, num(k.volume), k.difficulty != null ? String(k.difficulty) : "—", k.competitionLevel ?? "—", cpc(k.cpc)]),
+        styles: { fontSize: 9, cellPadding: 5 },
+        headStyles: { fillColor: [37, 99, 235], textColor: 255 },
+        alternateRowStyles: { fillColor: [245, 247, 250] },
+        columnStyles: { 0: { cellWidth: 26, halign: "center" }, 2: { halign: "right" }, 3: { halign: "center" }, 4: { halign: "center" }, 5: { halign: "right" } },
+        margin: { left: m, right: m },
+      });
+      doc.save(`keywords-${scope}.pdf`);
+      setOpen(false);
+    } finally { setBusy(null); }
+  }
+  async function exportDocx() {
+    setBusy("docx");
+    try {
+      const d = await import("docx");
+      const { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType } = d;
+      const head = ["#", "Keyword", "Volume/mo", "Difficulty", "Competition", "CPC"];
+      const cell = (text: string, opts?: { bold?: boolean; color?: string; fill?: string }) =>
+        new TableCell({ shading: opts?.fill ? { fill: opts.fill } : undefined, children: [new Paragraph({ children: [new TextRun({ text, bold: opts?.bold, color: opts?.color })] })] });
+      const headRow = new TableRow({ tableHeader: true, children: head.map((h) => cell(h, { bold: true, color: "FFFFFF", fill: "2563EB" })) });
+      const bodyRows = keywords.map((k, i) => new TableRow({ children: [
+        cell(String(i + 1)), cell(k.keyword), cell(num(k.volume)),
+        cell(k.difficulty != null ? String(k.difficulty) : "—"), cell(k.competitionLevel ?? "—"), cell(cpc(k.cpc)),
+      ] }));
+      const table = new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [headRow, ...bodyRows] });
+      const doc = new Document({ sections: [{ children: [
+        new Paragraph({ text: "Keyword Report", heading: HeadingLevel.HEADING_1 }),
+        new Paragraph({ children: [new TextRun({ text: meta, color: "777777" })] }),
+        new Paragraph({ children: [new TextRun({ text: summary, color: "777777" })] }),
+        new Paragraph({ text: "" }),
+        table,
+      ] }] });
+      downloadBlob(await Packer.toBlob(doc), `keywords-${scope}.docx`);
+    } finally { setBusy(null); }
+  }
+
+  const item = (onClick: () => void, icon: React.ReactNode, label: string, key: string) => (
+    <button onClick={onClick} disabled={!!busy} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm hover:bg-secondary/60 disabled:opacity-50">
+      {busy === key ? <Loader2 className="h-4 w-4 animate-spin" /> : icon} {label}
+    </button>
+  );
+
+  return (
+    <div className="relative" ref={ref}>
+      <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => setOpen((v) => !v)}>
+        <Download className="h-3.5 w-3.5" /> Export
+        <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+      </Button>
+      {open && (
+        <div className="absolute right-0 top-9 z-50 w-44 overflow-hidden rounded-lg border border-border bg-card p-1 shadow-lg">
+          <p className="px-2.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Data</p>
+          {item(exportCsv, <FileText className="h-4 w-4 text-muted-foreground" />, "CSV (.csv)", "csv")}
+          {item(exportXlsx, <FileText className="h-4 w-4 text-chart-2" />, "Excel (.xlsx)", "xlsx")}
+          <p className="px-2.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Report</p>
+          {item(exportPdf, <FileText className="h-4 w-4 text-destructive" />, "PDF report", "pdf")}
+          {item(exportDocx, <FileText className="h-4 w-4 text-primary" />, "Word (.docx)", "docx")}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SerpExplorer({ project }: { project: Project }) {
   const myDomain = project.domain.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").toLowerCase();
   const [query, setQuery] = useState("");
   const [country, setCountry] = useState("US");
+  // Precise location (country / state / city) from DataForSEO. Drives keyword
+  // research; null = use the plain country above. Keeps `country` (ISO) in sync
+  // for the live SERP search + saved-search history.
+  const [location, setLocation] = useState<Loc | null>(null);
+  // The keyword whose geo (country/state/city) demand breakdown is open, if any.
+  const [geoKeyword, setGeoKeyword] = useState<string | null>(null);
   const [language, setLanguage] = useState("en");
   const [device, setDevice] = useState("desktop");
   const [loading, setLoading] = useState(false);
@@ -145,6 +594,9 @@ export function SerpExplorer({ project }: { project: Project }) {
   const [openPaa, setOpenPaa] = useState<number | null>(null);
   const [ideas, setIdeas] = useState<KeywordMetric[] | null>(null);
   const [ideasLoading, setIdeasLoading] = useState(false);
+  // Bulk import (CSV/Excel/Word/PDF → volume+competition) modal + last-import note.
+  const [importOpen, setImportOpen] = useState(false);
+  const [imported, setImported] = useState<{ shown: number; requested: number } | null>(null);
   // Saved keywords (keyword -> saved record id) so users can bookmark ideas and
   // reuse them later in the Content / Blog Generator tab.
   const [saved, setSaved] = useState<Map<string, string>>(new Map());
@@ -258,7 +710,9 @@ export function SerpExplorer({ project }: { project: Project }) {
   async function loadIdeas(seed: string): Promise<KeywordMetric[]> {
     setIdeas(null); setIdeasLoading(true);
     try {
-      const r = await api.get<IdeasResp>(`/projects/${project.id}/keywords?seed=${encodeURIComponent(seed)}&country=${country}&language=${language}`);
+      // code 0 = Worldwide → send no location (backend uses the global database).
+      const locQ = location && location.code ? `&location=${location.code}` : "";
+      const r = await api.get<IdeasResp>(`/projects/${project.id}/keywords?seed=${encodeURIComponent(seed)}&country=${country}&language=${language}${locQ}`);
       const kws = r.keywords ?? [];
       setIdeas(kws);
       return kws;
@@ -274,7 +728,7 @@ export function SerpExplorer({ project }: { project: Project }) {
     const q = (typeof term === "string" ? term : query).trim();
     if (!q) return;
     if (q !== query) setQuery(q);
-    setView("explore"); setActiveSaved(null);
+    setView("explore"); setActiveSaved(null); setImported(null);
     setLoading(true); setError(""); setSerp(null); setCached(false); setStatusMsg("Sending request…");
     const ideasP = loadIdeas(q);
     let snapshot: NormalizedSerp | null = null;
@@ -354,7 +808,7 @@ export function SerpExplorer({ project }: { project: Project }) {
               />
             </div>
             <div className="flex gap-2">
-              <Combobox value={country} onChange={setCountry} options={COUNTRIES} className="w-[150px]" icon={<Globe2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />} />
+              <LocationPicker projectId={project.id} value={location} country={country} onChange={(loc) => { setLocation(loc); setCountry(loc.iso ?? "US"); }} />
               <Combobox value={language} onChange={setLanguage} options={LANGUAGES} className="w-[120px]" />
               <Combobox value={device} onChange={setDevice} options={DEVICES} className="w-[120px]" />
             </div>
@@ -362,9 +816,34 @@ export function SerpExplorer({ project }: { project: Project }) {
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
               Search
             </Button>
+            <Button variant="outline" className="h-10 gap-2" onClick={() => setImportOpen(true)} title="Import a keyword list (CSV, Excel, Word or PDF) and get volume + competition for each">
+              <Upload className="h-4 w-4" />
+              <span className="hidden sm:inline">Import</span>
+            </Button>
           </div>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Tip: <button className="font-medium text-primary hover:underline" onClick={() => setImportOpen(true)}>Import a list</button> from CSV, Excel, Word or PDF to bulk-check volume &amp; competition for {location && location.code > 0 ? location.name.split(",")[0] : "your market"}.
+          </p>
         </CardContent>
       </Card>
+
+      {importOpen && (
+        <ImportKeywordsModal
+          projectId={project.id}
+          country={country}
+          language={language}
+          location={location}
+          onClose={() => setImportOpen(false)}
+          onDone={(kws, requested) => {
+            setSerp(null); setError(""); setActiveSaved(null);
+            setIdeas(kws);
+            setImported({ shown: kws.length, requested });
+            setImportOpen(false);
+          }}
+        />
+      )}
+
+      {geoKeyword && <GeoBreakdownModal projectId={project.id} keyword={geoKeyword} location={location} onClose={() => setGeoKeyword(null)} />}
 
       <AiAdvisor
         project={project}
@@ -399,15 +878,24 @@ export function SerpExplorer({ project }: { project: Project }) {
       {/* Keyword ideas — volume, difficulty, CPC + opportunity scoring (DataForSEO Labs) */}
       {(ideasLoading || (ideas && ideas.length > 0)) && (
         <Card className="overflow-hidden">
-          <div className="flex items-center justify-between border-b border-border p-3">
-            <div className="flex items-center gap-2.5">
-              <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary/10 text-primary"><TrendingUp className="h-4 w-4" /></span>
-              <div>
-                <h4 className="font-heading text-sm font-semibold">Keyword ideas</h4>
-                <p className="text-xs text-muted-foreground">Related keywords you could target — click any to search it</p>
+          <div className="flex items-center justify-between gap-2 border-b border-border p-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><TrendingUp className="h-4 w-4" /></span>
+              <div className="min-w-0">
+                <h4 className="font-heading text-sm font-semibold">{imported ? "Imported keywords" : "Keyword ideas"}</h4>
+                <p className="truncate text-xs text-muted-foreground">
+                  {imported
+                    ? `${imported.shown} of ${imported.requested} keywords with real volume${location && location.code > 0 ? ` in ${location.name.split(",")[0]}` : ""} — sorted by volume`
+                    : "Related keywords you could target — click any to search it"}
+                </p>
               </div>
             </div>
-            {ideasLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+            <div className="flex shrink-0 items-center gap-1.5">
+              {ideasLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+              {ideas && ideas.length > 0 && (
+                <ExportMenu keywords={ideas} location={location} projectName={project.name} domain={myDomain} />
+              )}
+            </div>
           </div>
           {ideas && ideas.length > 0 && (() => {
             const totalVol = ideas.reduce((s, k) => s + k.volume, 0);
@@ -466,10 +954,20 @@ export function SerpExplorer({ project }: { project: Project }) {
                         return (
                           <tr key={i} className={cn("border-b border-border last:border-0 hover:bg-secondary/40", easy && "bg-chart-2/[0.06]")}>
                             <td className="px-4 py-2">
-                              <button onClick={() => setQuery(k.keyword)} className="flex items-center gap-1.5 text-left font-medium hover:text-primary" title="Search this keyword">
-                                {easy && <Zap className="h-3.5 w-3.5 shrink-0 text-chart-2" />}
-                                <span className="line-clamp-1">{k.keyword}</span>
-                              </button>
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => setQuery(k.keyword)} className="flex min-w-0 items-center gap-1.5 text-left font-medium hover:text-primary" title="Search this keyword">
+                                  {easy && <Zap className="h-3.5 w-3.5 shrink-0 text-chart-2" />}
+                                  <span className="line-clamp-1">{k.keyword}</span>
+                                </button>
+                                <button
+                                  onClick={() => setGeoKeyword(k.keyword)}
+                                  onMouseEnter={() => { void api.get(`/projects/${project.id}/keywords/geo?keyword=${encodeURIComponent(k.keyword)}${location && location.code > 0 ? `&location=${location.code}` : ""}`).catch(() => {}); }}
+                                  title={location && location.code > 0 ? `Where in ${location.name.split(",")[0]} is this searched?` : "Which countries search this most?"}
+                                  className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-primary"
+                                >
+                                  <Globe2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
                             </td>
                             <td className="px-3 py-1.5"><BarCell value={k.volume} max={ideasMax} color="chart-1" format={fmtVol} /></td>
                             <td className="px-4 py-2 text-center"><span className={cn("inline-block min-w-[2rem] rounded-md px-2 py-0.5 text-xs font-semibold", dt.cls)}>{dt.label}</span></td>

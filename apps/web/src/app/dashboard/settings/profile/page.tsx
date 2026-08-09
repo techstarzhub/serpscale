@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Upload } from "lucide-react";
+import { Loader2, Upload, Bot, Headphones } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useWidgetPrefs, type WidgetKey } from "@/lib/widget-prefs";
 import {
   Card,
   CardContent,
@@ -163,7 +165,52 @@ export default function ProfilePage() {
       </Card>
 
       {user?.isAgencyClient && <AgencyBrandingCard onSaved={refresh} />}
+
+      <WidgetsCard />
     </div>
+  );
+}
+
+// Show/hide the floating helper widgets (AI Copilot + Support). Hiding one from
+// the widget itself flips these off; toggle them back on here.
+function WidgetsCard() {
+  const { prefs, setVisible } = useWidgetPrefs();
+  const rows: { key: WidgetKey; label: string; desc: string; icon: typeof Bot; on: boolean }[] = [
+    { key: "copilot", label: "AI Copilot", desc: "Floating AI SEO assistant (bottom-right).", icon: Bot, on: prefs.copilot },
+    { key: "support", label: "Support", desc: "Floating support chat widget (bottom-right).", icon: Headphones, on: prefs.support },
+  ];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Floating widgets</CardTitle>
+        <CardDescription>Show or hide the on-screen helper buttons.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {rows.map((r) => {
+          const Icon = r.icon;
+          return (
+            <div key={r.key} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
+              <div className="flex items-center gap-3">
+                <span className="grid h-9 w-9 place-items-center rounded-lg bg-primary/10 text-primary"><Icon className="h-4 w-4" /></span>
+                <div>
+                  <p className="text-sm font-medium">{r.label}</p>
+                  <p className="text-xs text-muted-foreground">{r.desc}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={r.on}
+                onClick={() => setVisible(r.key, !r.on)}
+                className={cn("relative h-6 w-11 shrink-0 rounded-full transition-colors", r.on ? "bg-primary" : "bg-input")}
+              >
+                <span className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-card shadow transition-transform", r.on ? "left-0.5 translate-x-5" : "left-0.5")} />
+              </button>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }
 

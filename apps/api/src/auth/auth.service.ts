@@ -284,6 +284,7 @@ export class AuthService {
         avatarKey: true,
         clientId: true,
         clientOwner: true,
+        isSuperAdminTeam: true,
         organization: { select: { name: true, branding: true, slug: true } },
         client: { select: { name: true, type: true, branding: true, allowTeam: true } },
       },

@@ -26,6 +26,16 @@ export class ContactDto {
   website?: string;
 }
 
+// In-app support form. The user is authenticated, so name/email come from the
+// session (no captcha, no honeypot) — only subject + message are submitted.
+export class SupportDto {
+  @IsOptional() @IsString() @MaxLength(160)
+  subject?: string;
+
+  @IsString() @IsNotEmpty() @MaxLength(5000)
+  message!: string;
+}
+
 export class SubscribeDto {
   @IsEmail() @MaxLength(160)
   email!: string;

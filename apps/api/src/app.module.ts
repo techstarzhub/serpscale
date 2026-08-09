@@ -25,6 +25,7 @@ import { ImagesModule } from "./images/images.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { PublicModule } from "./public/public.module";
 import { EntitlementsModule } from "./entitlements/entitlements.module";
+import { SupportModule } from "./support/support.module";
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { EntitlementsModule } from "./entitlements/entitlements.module";
     ImagesModule,
     DashboardModule,
     PublicModule,
+    SupportModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

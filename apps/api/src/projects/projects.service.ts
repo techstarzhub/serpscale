@@ -330,7 +330,7 @@ export class ProjectsService {
     return match?.accountEmail ?? null;
   }
 
-  async create(user: AuthUser, input: { name: string; domain: string; enabledTabs?: string[]; googleAccountEmail?: string }) {
+  async create(user: AuthUser, input: { name: string; domain: string; enabledTabs?: string[]; googleAccountEmail?: string; gscAccountEmail?: string; gaAccountEmail?: string; gmbAccountEmail?: string }) {
     const domain = cleanDomain(input.domain);
     if (!domain || domain.length < 3) throw new BadRequestException("A valid domain is required");
     if (isInternalDomain(domain)) throw new BadRequestException("That domain is not allowed.");
@@ -339,9 +339,16 @@ export class ProjectsService {
     const enabledTabs = Array.isArray(input.enabledTabs)
       ? [...new Set(input.enabledTabs.filter((t) => VALID_TABS.includes(t)))]
       : [];
-    const googleAccountEmail = await this.resolveGoogleAccount(user, input.googleAccountEmail);
+    // The default account, plus each optional per-service override — all verified
+    // against the owner's real connected accounts (bogus emails become null).
+    const [googleAccountEmail, gscAccountEmail, gaAccountEmail, gmbAccountEmail] = await Promise.all([
+      this.resolveGoogleAccount(user, input.googleAccountEmail),
+      this.resolveGoogleAccount(user, input.gscAccountEmail),
+      this.resolveGoogleAccount(user, input.gaAccountEmail),
+      this.resolveGoogleAccount(user, input.gmbAccountEmail),
+    ]);
     const orgId = user.orgId ?? null;
-    const data = { name: input.name.trim(), domain, enabledTabs, googleAccountEmail, orgId, createdById: user.id };
+    const data = { name: input.name.trim(), domain, enabledTabs, googleAccountEmail, gscAccountEmail, gaAccountEmail, gmbAccountEmail, orgId, createdById: user.id };
     let project: Project;
     if (orgId) {
       const ent = await this.entitlements.forOrg(orgId);
@@ -390,7 +397,7 @@ export class ProjectsService {
     });
   }
 
-  async update(user: AuthUser, id: string, input: { name?: string; domain?: string; enabledTabs?: string[]; googleAccountEmail?: string }) {
+  async update(user: AuthUser, id: string, input: { name?: string; domain?: string; enabledTabs?: string[]; googleAccountEmail?: string; gscAccountEmail?: string; gaAccountEmail?: string; gmbAccountEmail?: string }) {
     await this.get(user, id);
     // Keep only real dashboard keys; drop anything unknown the client may send.
     const VALID_TABS = ["overview", "copilot", "keywords", "content", "ranks", "competitors", "traffic", "backlinks", "domain", "ai", "audit"];
@@ -402,11 +409,22 @@ export class ProjectsService {
       domain = cleanDomain(input.domain);
       if (!domain || domain.length < 3 || isInternalDomain(domain)) throw new BadRequestException("A valid, public domain is required");
     }
-    // Only touch the data source when the caller explicitly sent the field.
-    const changingSource = input.googleAccountEmail !== undefined || domain !== undefined;
-    const googleAccountEmail = input.googleAccountEmail !== undefined
-      ? await this.resolveGoogleAccount(user, input.googleAccountEmail)
-      : undefined;
+    // Resolve each account field only when the caller explicitly sent it. An empty
+    // string clears it (null); an unconnected email also resolves to null.
+    const resolveIfSent = (v: string | undefined) => (v !== undefined ? this.resolveGoogleAccount(user, v) : Promise.resolve(undefined));
+    const [googleAccountEmail, gscAccountEmail, gaAccountEmail, gmbAccountEmail] = await Promise.all([
+      resolveIfSent(input.googleAccountEmail),
+      resolveIfSent(input.gscAccountEmail),
+      resolveIfSent(input.gaAccountEmail),
+      resolveIfSent(input.gmbAccountEmail),
+    ]);
+    // Any account/domain change must drop the cached Google data below.
+    const changingSource =
+      domain !== undefined ||
+      input.googleAccountEmail !== undefined ||
+      input.gscAccountEmail !== undefined ||
+      input.gaAccountEmail !== undefined ||
+      input.gmbAccountEmail !== undefined;
     const project = await this.prisma.project.update({
       where: { id },
       data: {
@@ -414,6 +432,9 @@ export class ProjectsService {
         domain,
         enabledTabs,
         googleAccountEmail,
+        gscAccountEmail,
+        gaAccountEmail,
+        gmbAccountEmail,
       },
     });
     // The GSC/GA/GMB caches are keyed per project, so a change to the domain or

@@ -94,12 +94,20 @@ model User {
   notifications    Notification[]
 
   // Ad-hoc permissions granted directly to this user (on top of their role /
-  // custom role) — e.g. approved via an access request.
+  // custom role) — e.g. approved via an access request, or platform-staff grants.
   extraPermissions String[]     @default([])
+  // True for platform staff the SUPER_ADMIN adds to their own team. These users
+  // reach the super-admin dashboard, but only the sections their permissions allow.
+  isSuperAdminTeam Boolean      @default(false)
   accessRequests   AccessRequest[] @relation("MyAccessRequests")
 
   // Marketing blog articles authored by this user (super-admin CMS).
   articles         Article[]    @relation("ArticleAuthor")
+
+  // Support: tickets this user opened / is assigned to handle, and messages sent.
+  supportTickets   SupportTicket[]  @relation("TicketCreator")
+  assignedTickets  SupportTicket[]  @relation("TicketAssignee")
+  supportMessages  SupportMessage[] @relation("MessageSender")
 
   @@index([orgId])
   @@index([clientId])
@@ -161,6 +169,7 @@ model Organization {
   customRoles  CustomRole[]
   transactions Transaction[]
   clients      Client[]
+  supportTickets SupportTicket[]
 
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -372,11 +381,16 @@ model Project {
   // Which dashboards (project detail tabs) are active for THIS campaign. Empty =
   // all tabs available. Chosen in the create-campaign wizard, editable later.
   enabledTabs  String[]      @default([])
-  // Which connected Google account (by email) powers this campaign's Search
-  // Console / Analytics / Business Profile data. Null = auto-detect the best
-  // account by domain match (the default when only one account is connected).
-  // Chosen in the create-campaign wizard when several Google accounts exist.
+  // The DEFAULT connected Google account (by email) powering this campaign's
+  // Google data. Null = auto-detect the best account by domain match (the default
+  // when only one account is connected). Chosen when several accounts exist.
   googleAccountEmail String?
+  // Per-service overrides of the default account above — an agency may verify
+  // Search Console under one Google login, Analytics under another, and Business
+  // Profile under a third. Null on any of these = fall back to googleAccountEmail.
+  gscAccountEmail String?
+  gaAccountEmail  String?
+  gmbAccountEmail String?
   createdById  String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -907,6 +921,78 @@ model ContactMessage {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// Support desk — in-app ticketing + real-time chat between customers and agents
+// (super admins / team members granted the support permission).
+// -----------------------------------------------------------------------------
+enum TicketStatus {
+  OPEN     // needs an agent's attention
+  PENDING  // waiting on the customer to reply
+  CLOSED   // resolved
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model SupportTicket {
+  id            String         @id @default(cuid())
+  // Human-friendly sequential ticket number (shown as #1042) — copyable + searchable.
+  number        Int            @unique @default(autoincrement())
+  subject       String
+  status        TicketStatus   @default(OPEN)
+  priority      TicketPriority @default(NORMAL)
+
+  // Who opened it (any authenticated user).
+  creatorId     String
+  creator       User           @relation("TicketCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  orgId         String?
+  organization  Organization?  @relation(fields: [orgId], references: [id], onDelete: SetNull)
+
+  // Optional agent handling it (super admin / support-role member).
+  assigneeId    String?
+  assignee      User?          @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  // Denormalised for a fast, sortable inbox (avoids a subquery per row).
+  lastMessageAt     DateTime   @default(now())
+  lastPreview       String?    @db.Text
+  // Per-side unread counters so list badges are O(1).
+  unreadForAgent    Int        @default(0)
+  unreadForCustomer Int        @default(0)
+  closedAt          DateTime?
+
+  messages      SupportMessage[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([creatorId])
+  @@index([orgId])
+  @@index([status, lastMessageAt])
+  @@index([lastMessageAt])
+}
+
+model SupportMessage {
+  id          String        @id @default(cuid())
+  ticketId    String
+  ticket      SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderId    String
+  sender      User          @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  // True when sent by the support (agent) side — drives bubble side + read ticks.
+  fromAgent   Boolean       @default(false)
+  body        String        @db.Text
+  // Attachments: [{ key, url, name, contentType, size, width?, height? }]
+  attachments Json?
+  // WhatsApp-style receipts.
+  deliveredAt DateTime?
+  readAt      DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
 }
 
 // Newsletter subscribers captured from the marketing footer form.
