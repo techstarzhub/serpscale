@@ -157,8 +157,12 @@ export default function DashboardPage() {
   const activeMetric = availMetrics.find((m) => m.key === metric) ?? availMetrics[0];
 
   // Default the chart to whichever metric actually has the most data, so it never
-  // opens on a near-empty series.
+  // opens on a near-empty series. Only auto-pick until the user makes a manual
+  // choice — otherwise every data refresh/re-render would clobber their selection
+  // (availMetrics changes identity each render because useCan() is unstable).
+  const userPickedMetric = useRef(false);
   useEffect(() => {
+    if (userPickedMetric.current) return;
     if (!summary || !availMetrics.length) return;
     const t = summary.trend ?? [];
     const best = availMetrics.map((m) => ({ k: m.key, total: t.reduce((a, d) => a + ((d as any)[m.key] ?? 0), 0) })).sort((a, b) => b.total - a.total)[0];
@@ -222,7 +226,7 @@ export default function DashboardPage() {
                 <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Performance · last {period} days</h3>
                 <div className="inline-flex rounded-lg border border-border p-0.5">
                   {availMetrics.map((m) => (
-                    <button key={m.key} onClick={() => setMetric(m.key)} className={cn("rounded-md px-3 py-1 text-xs font-medium transition-colors", activeMetric.key === m.key ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground")}>{m.label}</button>
+                    <button key={m.key} onClick={() => { userPickedMetric.current = true; setMetric(m.key); }} className={cn("rounded-md px-3 py-1 text-xs font-medium transition-colors", activeMetric.key === m.key ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground")}>{m.label}</button>
                   ))}
                 </div>
               </div>
