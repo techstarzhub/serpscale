@@ -8,6 +8,8 @@ export interface ComboOption {
   value: string;
   label: string;
   hint?: string;
+  /** Secondary line shown beneath the label (e.g. a campaign's domain). */
+  sub?: string;
   icon?: React.ReactNode;
 }
 
@@ -92,7 +94,7 @@ export function Combobox({
           disabled && "cursor-not-allowed opacity-50",
         )}
       >
-        {selected?.icon ?? icon}
+        {(selected?.icon ?? icon) && <span className="shrink-0">{selected?.icon ?? icon}</span>}
         <span className={cn("min-w-0 flex-1 truncate text-left", !selected && "text-muted-foreground")}>{selected?.label ?? placeholder}</span>
         <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
       </button>
@@ -130,8 +132,11 @@ export function Combobox({
                     i === active ? "bg-secondary" : "hover:bg-secondary/60",
                   )}
                 >
-                  {o.icon}
-                  <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                  {o.icon && <span className="shrink-0">{o.icon}</span>}
+                  <span className="min-w-0 flex-1 overflow-hidden">
+                    <span className="block truncate">{o.label}</span>
+                    {o.sub && <span className="block truncate text-xs font-normal text-muted-foreground">{o.sub}</span>}
+                  </span>
                   {o.hint && <span className="shrink-0 text-xs text-muted-foreground">{o.hint}</span>}
                   <Check className={cn("h-4 w-4 shrink-0", o.value === value ? "text-primary opacity-100" : "opacity-0")} />
                 </button>
