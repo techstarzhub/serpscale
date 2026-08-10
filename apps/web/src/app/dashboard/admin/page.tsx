@@ -1,14 +1,16 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, Fragment, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { LayoutGrid, CreditCard, Building2, Receipt, ScrollText, KeyRound, Users as UsersIcon, Mail, SlidersHorizontal, Plus, Trash2, Loader2, MessageSquare, AtSign, Globe, Check, X, type LucideIcon } from "lucide-react";
+import { LayoutGrid, CreditCard, Building2, Receipt, ScrollText, KeyRound, Users as UsersIcon, Mail, SlidersHorizontal, Plus, Trash2, Loader2, MessageSquare, AtSign, Globe, Check, X, ChevronDown, Power, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { UserAvatar } from "@/components/ui/user-avatar";
 import { api } from "@/lib/api";
+import { toast } from "sonner";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useCurrentUser } from "@/components/providers/user-provider";
 
@@ -157,7 +159,7 @@ function Plans() {
                   <td className="px-4 py-2 text-right tabular-nums">{money(p.priceCents, p.currency)}<span className="text-muted-foreground">/{p.interval === "year" ? "yr" : "mo"}</span></td>
                   <td className="px-4 py-2 text-center">{p.isPublic ? "Yes" : "No"}</td>
                   <td className="px-4 py-2 text-right tabular-nums">{p._count?.subscriptions ?? 0}</td>
-                  <td className="px-4 py-2 text-right"><div className="flex justify-end gap-1.5"><Button size="sm" variant="outline" onClick={() => setEditing(p)}>Edit</Button><Button size="sm" variant="outline" className="text-destructive" onClick={async () => { try { await api.del(`/admin/plans/${p.id}`); load(); } catch (e) { alert(e instanceof Error ? e.message : "Could not delete plan"); } }}><Trash2 className="h-4 w-4" /></Button></div></td>
+                  <td className="px-4 py-2 text-right"><div className="flex justify-end gap-1.5"><Button size="sm" variant="outline" onClick={() => setEditing(p)}>Edit</Button><Button size="sm" variant="outline" className="text-destructive" onClick={async () => { try { await api.del(`/admin/plans/${p.id}`); load(); } catch (e) { toast.error(e instanceof Error ? e.message : "Could not delete plan"); } }}><Trash2 className="h-4 w-4" /></Button></div></td>
                 </tr>
               ))}
             </tbody>
@@ -275,7 +277,16 @@ function Orgs() {
   const [orgs, setOrgs] = useState<any[]>([]);
   const [plans, setPlans] = useState<any[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [showNew, setShowNew] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const confirm = useConfirm();
+
+  async function toggleActive(o: any) {
+    setBusy(o.id);
+    try { await api.patch(`/admin/orgs/${o.id}`, { isActive: !o.isActive }); await load(); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); }
+    finally { setBusy(null); }
+  }
   const load = useCallback(() => api.get<any[]>("/admin/orgs").then(setOrgs).catch(() => setOrgs([])), []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { api.get<any[]>("/admin/plans").then(setPlans).catch(() => setPlans([])); }, []);
@@ -285,7 +296,7 @@ function Orgs() {
   async function assignPlan(orgId: string, planId: string) {
     setBusy(orgId);
     try { await api.patch(`/admin/orgs/${orgId}`, { planId }); await load(); }
-    catch (e) { alert(e instanceof Error ? e.message : "Could not change plan"); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Could not change plan"); }
     finally { setBusy(null); }
   }
 
@@ -295,7 +306,7 @@ function Orgs() {
   async function setStatus(orgId: string, status: string) {
     setBusy(orgId);
     try { await api.patch(`/admin/orgs/${orgId}`, { status }); await load(); }
-    catch (e) { alert(e instanceof Error ? e.message : "Could not change status"); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Could not change status"); }
     finally { setBusy(null); }
   }
 
@@ -310,74 +321,293 @@ function Orgs() {
     }))) return;
     setBusy(o.id);
     try { await api.del(`/admin/orgs/${o.id}`); await load(); }
-    catch (e) { alert(e instanceof Error ? e.message : "Could not delete organization"); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Could not delete organization"); }
     finally { setBusy(null); }
   }
 
   return (
     <Card>
-      <CardHeader className="pb-3"><CardTitle className="text-base">Organizations</CardTitle><CardDescription>Assign any plan to any workspace — its features unlock for that org&apos;s users instantly.</CardDescription></CardHeader>
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <CardTitle className="text-base">Organizations</CardTitle>
+            <CardDescription>Assign any plan to any workspace — its features unlock for that org&apos;s users instantly.</CardDescription>
+          </div>
+          <Button size="sm" onClick={() => setShowNew((v) => !v)} className="gap-1.5"><Plus className="h-4 w-4" /> New organization</Button>
+        </div>
+      </CardHeader>
       <CardContent>
-        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
-          {orgs.map((o) => (
-            <div key={o.id} className="flex flex-col gap-3 p-3 xl:flex-row xl:items-center xl:gap-4">
-              {/* Identity + counts */}
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate font-medium">{o.name}</span>
-                  <span className={cn("rounded-md px-2 py-0.5 text-xs font-medium", o.isActive ? "bg-chart-2/12 text-chart-2" : "bg-muted text-muted-foreground")}>{o.isActive ? "Active" : "Suspended"}</span>
-                </div>
-                <div className="truncate text-xs text-muted-foreground">{o.admin?.email ?? "—"}</div>
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                  <span>{o.users} user{o.users === 1 ? "" : "s"}</span>
-                  <span>{o.projects} campaign{o.projects === 1 ? "" : "s"}</span>
-                </div>
-              </div>
+        {showNew && <NewOrgForm plans={plans} onDone={() => { setShowNew(false); load(); }} onCancel={() => setShowNew(false)} />}
+        <div className="overflow-x-auto rounded-xl border border-border shadow-card">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead>
+              <tr className="border-b border-border bg-secondary/40 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-3">Organization</th>
+                <th className="px-4 py-3">Plan</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Users</th>
+                <th className="px-4 py-3 text-right">Campaigns</th>
+                <th className="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orgs.map((o) => {
+                const av = accentVar(o.id);
+                const pv = accentVar(o.plan || o.planId || "none");
+                const ss = statusStyle(o.status);
+                const isOpen = expandedId === o.id;
+                return (
+                <Fragment key={o.id}>
+                  <tr className={cn("border-b border-border transition-colors hover:bg-secondary/20", isOpen && "bg-secondary/20")}>
+                    {/* Organization */}
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-3">
+                        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-sm font-bold" style={{ backgroundColor: tint(av, 0.15), color: solid(av) }}>
+                          {(o.name?.[0] ?? "?").toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold">{o.name}</span>
+                            {!o.isActive && <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ backgroundColor: tint("--destructive", 0.14), color: solid("--destructive") }}>Suspended</span>}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">{o.admin?.email ?? "—"}</div>
+                        </div>
+                      </div>
+                    </td>
 
-              {/* Plan + subscription status */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                <select
-                  value={o.planId ?? ""}
-                  disabled={busy === o.id}
-                  onChange={(e) => assignPlan(o.id, e.target.value)}
-                  className="h-8 rounded-md border border-border bg-card px-2 text-sm disabled:opacity-50"
-                >
-                  <option value="">— No plan —</option>
-                  {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-                {o.planId && (
-                  <select
-                    value={o.status ?? "ACTIVE"}
-                    disabled={busy === o.id}
-                    onChange={(e) => setStatus(o.id, e.target.value)}
-                    title="Subscription status — anything other than Active pauses access"
-                    className={cn(
-                      "h-8 rounded-md border px-2 text-xs disabled:opacity-50",
-                      o.status === "ACTIVE" || o.status === "TRIALING"
-                        ? "border-border bg-card text-muted-foreground"
-                        : "border-destructive/40 bg-destructive/10 font-semibold text-destructive",
-                    )}
-                  >
-                    <option value="ACTIVE">Active</option>
-                    <option value="TRIALING">Trialing</option>
-                    <option value="PAST_DUE">Past due (paused)</option>
-                    <option value="CANCELED">Canceled (paused)</option>
-                  </select>
-                )}
-                {busy === o.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-              </div>
+                    {/* Plan (read-only badge + keyword cap) */}
+                    <td className="px-4 py-2.5">
+                      {o.plan ? (
+                        <div>
+                          <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold" style={{ backgroundColor: tint(pv, 0.15), color: solid(pv) }}>
+                            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: solid(pv) }} />
+                            {o.plan}
+                          </span>
+                          {o.keywords != null && <div className="mt-1 text-[11px] font-medium text-muted-foreground">{o.keywords.toLocaleString()} keywords</div>}
+                        </div>
+                      ) : <span className="text-xs text-muted-foreground">No plan</span>}
+                    </td>
 
-              {/* Actions */}
-              <div className="flex flex-wrap gap-1.5 xl:justify-end">
-                <Button size="sm" variant="outline" disabled={busy === o.id} onClick={async () => { try { await api.patch(`/admin/orgs/${o.id}`, { isActive: !o.isActive }); load(); } catch (e) { alert(e instanceof Error ? e.message : "Failed"); } }}>{o.isActive ? "Suspend" : "Activate"}</Button>
-                <Button size="sm" variant="outline" className="text-destructive" disabled={busy === o.id} title="Delete organization" onClick={() => removeOrg(o)}><Trash2 className="h-4 w-4" /></Button>
-              </div>
-            </div>
-          ))}
-          {orgs.length === 0 && <div className="px-4 py-6 text-center text-muted-foreground">No organizations yet.</div>}
+                    {/* Status (read-only pill + trial) */}
+                    <td className="px-4 py-2.5">
+                      {o.planId ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold" style={{ backgroundColor: tint(ss.v, 0.14), color: solid(ss.v) }}>
+                            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: solid(ss.v) }} />
+                            {ss.label}
+                          </span>
+                          <TrialBadge status={o.status} trialEndsAt={o.trialEndsAt} />
+                        </div>
+                      ) : <span className="text-xs text-muted-foreground">—</span>}
+                    </td>
+
+                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{o.users}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{o.projects}</td>
+
+                    {/* Actions */}
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {busy === o.id && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                        <Button size="sm" variant={isOpen ? "default" : "outline"} className="gap-1" onClick={() => setExpandedId(isOpen ? null : o.id)}>
+                          Manage <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", isOpen && "rotate-180")} />
+                        </Button>
+                        <DropdownMenu items={[
+                          { label: o.isActive ? "Suspend workspace" : "Activate workspace", icon: <Power className="h-4 w-4" />, onClick: () => toggleActive(o) },
+                          { label: "Delete organization", icon: <Trash2 className="h-4 w-4" />, destructive: true, onClick: () => removeOrg(o) },
+                        ]} />
+                      </div>
+                    </td>
+                  </tr>
+
+                  {/* Expandable manage panel — all editing lives here so the table stays clean */}
+                  {isOpen && (
+                    <tr className="border-b border-border bg-secondary/10">
+                      <td colSpan={6} className="px-4 py-3">
+                        <div className="grid gap-4 rounded-lg border border-border bg-card p-3 md:grid-cols-3">
+                          <div>
+                            <div className="mb-1 text-xs font-medium text-muted-foreground">Plan</div>
+                            <select value={o.planId ?? ""} disabled={busy === o.id} onChange={(e) => assignPlan(o.id, e.target.value)} className="h-9 w-full rounded-md border border-border bg-card px-2 text-sm disabled:opacity-50">
+                              <option value="">— No plan —</option>
+                              {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-medium text-muted-foreground">Subscription status</div>
+                            <select value={o.status ?? "ACTIVE"} disabled={busy === o.id || !o.planId} onChange={(e) => setStatus(o.id, e.target.value)} className="h-9 w-full rounded-md border border-border bg-card px-2 text-sm disabled:opacity-50">
+                              <option value="ACTIVE">Active</option>
+                              <option value="TRIALING">Trialing</option>
+                              <option value="PAST_DUE">Past due (paused)</option>
+                              <option value="CANCELED">Canceled (paused)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-medium text-muted-foreground">Grant trial</div>
+                            <TrialGranter org={o} plans={plans} onDone={load} />
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );})}
+              {orgs.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No organizations yet.</td></tr>}
+            </tbody>
+          </table>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// Deterministic accent color (theme chart tokens) so an org / plan always maps to
+// the same hue. We build colors as inline CSS from the CSS vars so they always
+// render regardless of which Tailwind color utilities are generated.
+const CHART_VARS = ["--chart-1", "--chart-2", "--chart-3", "--chart-4", "--chart-5"];
+const tint = (v: string, a: number) => `hsl(var(${v}) / ${a})`;
+const solid = (v: string) => `hsl(var(${v}))`;
+function accentVar(key: string): string {
+  let h = 0;
+  for (const c of key || "?") h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return CHART_VARS[h % CHART_VARS.length];
+}
+// Subscription-status → semantic color var + label.
+function statusStyle(status?: string | null): { v: string; label: string } {
+  if (status === "ACTIVE") return { v: "--chart-2", label: "Active" };
+  if (status === "TRIALING") return { v: "--chart-3", label: "Trialing" };
+  return { v: "--destructive", label: status === "PAST_DUE" ? "Past due" : "Canceled" };
+}
+
+// A plan's keyword tiers (sorted low→high). Empty = fixed-price plan (no picker).
+type Tier = { keywords: number; priceCents: number };
+const tiersOf = (p: any): Tier[] => (p && Array.isArray(p.pricingTiers) ? [...p.pricingTiers].sort((a: Tier, b: Tier) => a.keywords - b.keywords) : []);
+
+// Create a new org + first admin from the platform panel. Choose a plan and,
+// optionally, grant it as an N-day trial. The admin gets a sign-in invite email.
+function NewOrgForm({ plans, onDone, onCancel }: { plans: any[]; onDone: () => void; onCancel: () => void }) {
+  const [name, setName] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminName, setAdminName] = useState("");
+  const [planId, setPlanId] = useState("");
+  const [trial, setTrial] = useState(false);
+  const [trialDays, setTrialDays] = useState(14);
+  const [tierIdx, setTierIdx] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const selPlan = plans.find((p) => p.id === planId);
+  const tiers = tiersOf(selPlan);
+  async function submit() {
+    if (!name.trim()) { toast.error("Organization name is required."); return; }
+    if (!adminEmail.trim()) { toast.error("Admin email is required."); return; }
+    if (trial && !planId) { toast.error("Pick a plan to grant a trial on."); return; }
+    setBusy(true);
+    try {
+      const body: any = { name: name.trim(), adminEmail: adminEmail.trim(), adminName: adminName.trim() || undefined, planId: planId || undefined };
+      if (planId && tiers.length) body.keywords = tiers[Math.min(tierIdx, tiers.length - 1)]?.keywords;
+      if (planId && trial) { body.trial = true; body.trialDays = trialDays; }
+      const res = await api.post<{ emailed?: boolean }>("/admin/orgs", body);
+      onDone();
+      toast.success("Organization created", {
+        description: res?.emailed
+          ? `A sign-in invite was emailed to ${adminEmail.trim()}.`
+          : "No invite email was sent (SMTP not configured).",
+      });
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not create organization"); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div className="mb-3 rounded-xl border border-border bg-secondary/30 p-3">
+      <div className="mb-2 text-sm font-medium">New organization</div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <input value={name} onChange={(e) => setName(e.target.value)} disabled={busy} placeholder="Organization name" className="h-9 rounded-md border border-border bg-card px-3 text-sm" />
+        <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} disabled={busy} type="email" placeholder="Admin email" className="h-9 rounded-md border border-border bg-card px-3 text-sm" />
+        <input value={adminName} onChange={(e) => setAdminName(e.target.value)} disabled={busy} placeholder="Admin name (optional)" className="h-9 rounded-md border border-border bg-card px-3 text-sm" />
+        <select value={planId} onChange={(e) => { setPlanId(e.target.value); setTierIdx(0); if (!e.target.value) setTrial(false); }} disabled={busy} className="h-9 rounded-md border border-border bg-card px-2 text-sm">
+          <option value="">No plan</option>
+          {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {tiers.length > 0 && (
+          <select value={Math.min(tierIdx, tiers.length - 1)} onChange={(e) => setTierIdx(Number(e.target.value))} disabled={busy} title="Keywords to track" className="h-9 rounded-md border border-border bg-card px-2 text-sm sm:col-span-2">
+            {tiers.map((t, i) => <option key={i} value={i}>{t.keywords.toLocaleString()} keywords — {money(t.priceCents, selPlan.currency)}</option>)}
+          </select>
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <label className={cn("flex items-center gap-1.5 text-sm", !planId && "opacity-50")}>
+          <input type="checkbox" checked={trial} disabled={busy || !planId} onChange={(e) => setTrial(e.target.checked)} />
+          Give as trial
+        </label>
+        {trial && planId && (
+          <>
+            <input type="number" min={1} max={365} value={trialDays} onChange={(e) => setTrialDays(Number(e.target.value))} disabled={busy} className="h-8 w-16 rounded-md border border-border bg-card px-2 text-sm" />
+            <span className="text-xs text-muted-foreground">days, then must subscribe</span>
+          </>
+        )}
+        <div className="ml-auto flex gap-1.5">
+          <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button size="sm" onClick={submit} disabled={busy}>{busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create & invite"}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Small pill showing where a trial stands. Only meaningful while TRIALING.
+function TrialBadge({ status, trialEndsAt }: { status?: string | null; trialEndsAt?: string | null }) {
+  if (status !== "TRIALING" || !trialEndsAt) return null;
+  const daysLeft = Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / 86400000);
+  const expired = daysLeft <= 0;
+  const v = expired ? "--destructive" : "--chart-4";
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold" style={{ backgroundColor: tint(v, 0.14), color: solid(v) }}>
+      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: solid(v) }} />
+      {expired ? "Trial expired" : `${daysLeft}d left`}
+    </span>
+  );
+}
+
+// Pick a plan + number of days and grant the org a trial. On success the org
+// admin gets a sign-in email with credentials, and access auto-expires after N days.
+function TrialGranter({ org, plans, onDone }: { org: any; plans: any[]; onDone: () => void }) {
+  const [planId, setPlanId] = useState<string>(org.planId ?? "");
+  const [days, setDays] = useState<number>(14);
+  const [tierIdx, setTierIdx] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const selPlan = plans.find((p) => p.id === planId);
+  const tiers = tiersOf(selPlan);
+  async function grant() {
+    if (!planId) { toast.error("Pick a plan for the trial."); return; }
+    if (!days || days < 1) { toast.error("Enter the trial length in days (min 1)."); return; }
+    setBusy(true);
+    try {
+      const keywords = tiers.length ? tiers[Math.min(tierIdx, tiers.length - 1)]?.keywords : undefined;
+      const res = await api.post<{ emailed?: boolean }>(`/admin/orgs/${org.id}/grant-trial`, { planId, days, keywords });
+      onDone();
+      toast.success("Trial granted", {
+        description: res?.emailed
+          ? `A sign-in email was sent to ${org.admin?.email ?? "the org admin"}.`
+          : "No email sent (SMTP not configured, or the org has no admin).",
+      });
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not grant trial"); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <select value={planId} onChange={(e) => { setPlanId(e.target.value); setTierIdx(0); }} disabled={busy} className="h-8 rounded-md border border-border bg-card px-2 text-sm disabled:opacity-50">
+        <option value="">Trial plan…</option>
+        {plans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      {tiers.length > 0 && (
+        <select value={Math.min(tierIdx, tiers.length - 1)} onChange={(e) => setTierIdx(Number(e.target.value))} disabled={busy} title="Keyword tier" className="h-8 rounded-md border border-border bg-card px-2 text-sm disabled:opacity-50">
+          {tiers.map((t, i) => <option key={i} value={i}>{t.keywords.toLocaleString()} keywords — {money(t.priceCents, selPlan.currency)}</option>)}
+        </select>
+      )}
+      <div className="flex items-center gap-1.5">
+        <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(Number(e.target.value))} disabled={busy} title="Trial length in days" className="h-8 w-16 rounded-md border border-border bg-card px-2 text-sm disabled:opacity-50" />
+        <span className="text-xs text-muted-foreground">days</span>
+        <Button size="sm" variant="outline" disabled={busy} onClick={grant} className="ml-auto">
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Grant"}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -525,7 +755,7 @@ function UsersSection() {
   async function toggleActive(u: any) {
     setBusy(u.id);
     try { await api.patch(`/admin/users/${u.id}`, { isActive: !u.isActive }); await load(); }
-    catch (e) { alert(e instanceof Error ? e.message : "Failed"); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(null); }
   }
 
@@ -539,7 +769,7 @@ function UsersSection() {
     }))) return;
     setBusy(u.id);
     try { await api.del(`/admin/users/${u.id}`); await load(); }
-    catch (e) { alert(e instanceof Error ? e.message : "Could not delete user"); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Could not delete user"); }
     finally { setBusy(null); }
   }
 
@@ -599,14 +829,14 @@ function ContactMessages() {
   async function toggleHandled(m: any) {
     setBusy(m.id);
     try { await api.patch(`/admin/contact-messages/${m.id}`, { handled: !m.handled }); await load(); }
-    catch (e) { alert(e instanceof Error ? e.message : "Failed"); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Failed"); }
     finally { setBusy(null); }
   }
   async function remove(m: any) {
     if (!(await confirm({ title: "Delete message?", description: `Message from ${m.name} (${m.email}) will be permanently deleted.`, confirmText: "Delete", destructive: true }))) return;
     setBusy(m.id);
     try { await api.del(`/admin/contact-messages/${m.id}`); await load(); }
-    catch (e) { alert(e instanceof Error ? e.message : "Could not delete"); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Could not delete"); }
     finally { setBusy(null); }
   }
 
@@ -653,7 +883,7 @@ function Subscribers() {
     if (!(await confirm({ title: "Remove subscriber?", description: `${s.email} will be removed from the newsletter list.`, confirmText: "Remove", destructive: true }))) return;
     setBusy(s.id);
     try { await api.del(`/admin/subscribers/${s.id}`); await load(); }
-    catch (e) { alert(e instanceof Error ? e.message : "Could not remove"); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Could not remove"); }
     finally { setBusy(null); }
   }
   function copyAll() {

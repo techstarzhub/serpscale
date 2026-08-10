@@ -107,7 +107,7 @@ export default function IntegrationsPage() {
         <Skeleton className="h-48 rounded-xl" />
       ) : (
         <>
-          <Card>
+          <Card data-tour="setup-integrations">
             <CardHeader className="flex-row items-center justify-between space-y-0">
               <div className="flex items-center gap-3">
                 <span className="grid h-11 w-11 place-items-center rounded-xl border border-border bg-card"><FcGoogle className="h-6 w-6" /></span>

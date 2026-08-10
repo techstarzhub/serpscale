@@ -187,7 +187,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-3">
       {/* Welcome bar (relative z-20: keeps the campaign dropdown above the stat rail) */}
-      <div className="fade-up relative z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+      <div data-tour="dash-overview" className="fade-up relative z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
         <div className="flex items-center gap-3.5">
           <UserAvatar src={user?.avatarUrl} className="h-12 w-12 shrink-0" />
           <div>
@@ -207,7 +207,7 @@ export default function DashboardPage() {
           <Combobox value={period} onChange={setPeriod} options={PERIODS} align="end" className="w-40" />
 
           {can("projects.create") && (
-            <Link href="/dashboard/projects/new" className={cn(buttonVariants(), "gap-2")}><Plus className="h-4 w-4" /> New project</Link>
+            <Link href="/dashboard/projects/new" data-tour="new-project" className={cn(buttonVariants(), "gap-2")}><Plus className="h-4 w-4" /> New project</Link>
           )}
         </div>
       </div>
@@ -507,7 +507,7 @@ function EmptyState({ canCreate }: { canCreate: boolean }) {
           <h3 className="font-heading text-base font-semibold">No campaigns yet</h3>
           <p className="mx-auto max-w-sm text-sm text-muted-foreground">{canCreate ? "Add a website to start tracking keywords, rankings, backlinks, traffic and site health." : "You haven't been given access to any campaigns yet. Ask your admin to assign one."}</p>
         </div>
-        {canCreate && <Link href="/dashboard/projects/new" className={cn(buttonVariants(), "mt-1 gap-2")}><Plus className="h-4 w-4" /> New project</Link>}
+        {canCreate && <Link href="/dashboard/projects/new" data-tour="new-project" className={cn(buttonVariants(), "mt-1 gap-2")}><Plus className="h-4 w-4" /> New project</Link>}
       </CardContent>
     </Card>
   );

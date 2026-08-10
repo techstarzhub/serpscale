@@ -7,6 +7,7 @@ import { CopilotWidget } from "@/components/copilot/copilot-widget";
 import { SupportDock } from "@/components/support/support-dock";
 import { ThemeSync } from "@/components/theme/theme-sync";
 import { OnboardingGate } from "@/components/onboarding/onboarding-gate";
+import { QuickTourGate } from "@/components/onboarding/quick-tour";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
 
@@ -25,6 +26,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
               <CopilotWidget />
               <SupportDock />
               <ImpersonationBanner />
+              <QuickTourGate />
             </ProjectsProvider>
           </OnboardingGate>
         </ConfirmProvider>

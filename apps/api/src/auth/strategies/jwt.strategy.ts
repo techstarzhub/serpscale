@@ -36,8 +36,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(req: Request, payload: JwtPayload) {
-    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub }, include: { organization: { select: { isActive: true } } } });
     if (!user || !user.isActive) throw new UnauthorizedException();
+    // Org-level suspend blocks EVERY member/client of that workspace on the very
+    // next request — active sessions included, on any domain — not just new logins.
+    // Super admins have no org and are never gated here.
+    if (user.role !== "SUPER_ADMIN" && user.organization && !user.organization.isActive) {
+      throw new UnauthorizedException("Your workspace has been suspended.");
+    }
     // Reject access tokens minted before the user's last password change/reset —
     // otherwise a stolen access token stays valid for its full TTL even after the
     // victim resets their password. (1s skew tolerance for issue/write ordering.)

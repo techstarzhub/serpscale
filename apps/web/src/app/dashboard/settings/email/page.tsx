@@ -84,7 +84,7 @@ function EmailInner() {
   }
 
   return (
-    <Card>
+    <Card data-tour="setup-smtp">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Mail className="h-4 w-4 text-primary" /> Email (SMTP)
@@ -104,7 +104,7 @@ function EmailInner() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <label className={label}>SMTP host</label>
-                <input className={field} value={s.host} placeholder="smtp.yourdomain.com" onChange={(e) => setS((p) => ({ ...p, host: e.target.value }))} />
+                <input data-tour="smtp-host" className={field} value={s.host} placeholder="smtp.yourdomain.com" onChange={(e) => setS((p) => ({ ...p, host: e.target.value }))} />
               </div>
               <div>
                 <label className={label}>Port</label>

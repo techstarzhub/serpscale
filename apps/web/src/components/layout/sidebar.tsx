@@ -167,7 +167,7 @@ export function Sidebar({
         );
       })()}
 
-      <nav className={cn("flex-1 overflow-y-auto py-2", rail ? "px-2.5" : "px-3")}>
+      <nav data-tour="sidebar" className={cn("flex-1 overflow-y-auto py-2", rail ? "px-2.5" : "px-3")}>
         {isPlatform ? (
           /* Super admin + platform staff: platform-management nav (no projects/campaigns) */
           <div>
@@ -205,14 +205,16 @@ export function Sidebar({
         />
 
         {(can("clients.view_all") || can("clients.view_assigned")) && (
-          <NavItem
-            label="Clients"
-            href="/dashboard/clients"
-            icon={Contact}
-            active={pathname === "/dashboard/clients" || pathname.startsWith("/dashboard/clients/")}
-            rail={rail}
-            onNavigate={onCloseMobile}
-          />
+          <div data-tour="nav-clients">
+            <NavItem
+              label="Clients"
+              href="/dashboard/clients"
+              icon={Contact}
+              active={pathname === "/dashboard/clients" || pathname.startsWith("/dashboard/clients/")}
+              rail={rail}
+              onNavigate={onCloseMobile}
+            />
+          </div>
         )}
 
         {/* Support agents (users actually granted platform.support) get a direct

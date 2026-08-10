@@ -39,7 +39,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
 
       <div className="flex flex-col gap-5 lg:flex-row">
         {/* Settings sub-nav */}
-        <nav className="shrink-0 lg:w-56">
+        <nav data-tour="settings-nav" className="shrink-0 lg:w-56">
           <div className="space-y-0.5 rounded-xl border border-border bg-card p-2 shadow-card lg:sticky lg:top-24">
             {items.map((item) => {
               const Icon = item.icon;
