@@ -6,7 +6,7 @@ import { CurrentUser, type AuthUser } from "../auth/decorators/current-user.deco
 import { PERMISSIONS } from "../auth/permissions";
 import { AuditService } from "../auth/audit.service";
 import { AdminService } from "./admin.service";
-import { CreatePlanDto, RecordTransactionDto, SetActiveDto, UpdateOrgDto, UpdatePlanDto } from "./dto/admin.dto";
+import { CreateOrgDto, CreatePlanDto, GrantTrialDto, RecordTransactionDto, SetActiveDto, UpdateOrgDto, UpdatePlanDto } from "./dto/admin.dto";
 import { catalogPayload } from "../entitlements/entitlements.catalog";
 
 // Every route here is platform-owner only (SUPER_ADMIN holds all platform.* perms).
@@ -67,11 +67,31 @@ export class AdminController {
     return this.admin.listOrgs();
   }
 
+  // Create a new org + its first admin (optionally on a plan / trial). Emails the
+  // admin a sign-in link with credentials, like a team invite.
+  @Post("orgs")
+  @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
+  async createOrg(@CurrentUser() user: AuthUser, @Body() dto: CreateOrgDto) {
+    const res = await this.admin.createOrg(dto);
+    await this.audit.log(user, "org.create", { target: res.orgId, metadata: { name: dto.name, adminEmail: dto.adminEmail, planId: dto.planId, trial: dto.trial, trialDays: dto.trialDays } });
+    return res;
+  }
+
   @Patch("orgs/:id")
   @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
   async setOrg(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: UpdateOrgDto) {
     const res = await this.admin.updateOrg(id, dto);
     await this.audit.log(user, "org.update", { target: id, metadata: { ...dto } });
+    return res;
+  }
+
+  // Grant an org a time-boxed trial of any plan (no payment). Emails the org's
+  // admins a welcome + sign-in link (with fresh credentials, like a team invite).
+  @Post("orgs/:id/grant-trial")
+  @RequirePermissions(PERMISSIONS.PLATFORM_SETTINGS_MANAGE)
+  async grantTrial(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() dto: GrantTrialDto) {
+    const res = await this.admin.grantTrial(id, dto);
+    await this.audit.log(user, "org.grant_trial", { target: id, metadata: { planId: dto.planId, days: dto.days } });
     return res;
   }
 

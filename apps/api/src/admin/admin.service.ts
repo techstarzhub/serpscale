@@ -1,6 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { randomBytes, createHash } from "crypto";
+import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { EmailService } from "../email/email.service";
+import { normalizeEmail } from "../common/email.util";
 import { withFeatureLabels } from "../entitlements/entitlements.catalog";
 
 const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -12,7 +16,112 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly email: EmailService,
   ) {}
+
+  /** Issue a 24h one-click magic sign-in link for a user (mirrors
+   *  AuthService.createLoginLink; inlined to avoid an AdminModule→AuthModule dep). */
+  private async createLoginLink(userId: string): Promise<string> {
+    const raw = randomBytes(32).toString("hex");
+    const tokenHash = createHash("sha256").update(raw).digest("hex");
+    await this.prisma.magicLink.create({ data: { userId, tokenHash, expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24) } });
+    const api = process.env.API_ORIGIN || `http://localhost:${process.env.API_PORT || 4000}`;
+    return `${api}/auth/magic?token=${raw}`;
+  }
+
+  /** Send a team-invite-style welcome: a 24h one-click sign-in link plus the
+   *  email + temp password as a fallback. Shared by createOrg and grantTrial. */
+  private async emailSignInInvite(opts: { userId: string; email: string; tempPassword: string; subject: string; intro: string; orgId: string | null }): Promise<boolean> {
+    const loginLink = await this.createLoginLink(opts.userId);
+    return this.email.sendBranded(
+      opts.email,
+      opts.subject,
+      opts.subject,
+      `${opts.intro}<br><br>` +
+        `Click the button below to sign in — no password needed. The link works for 24 hours.<br><br>` +
+        `If it expires, sign in with:<br><b>Email:</b> ${opts.email}<br><b>Temporary password:</b> ${opts.tempPassword}<br><br>` +
+        `You'll set your own password when you sign in.`,
+      { label: "Sign in", url: loginLink },
+      opts.orgId, // org's own SMTP + branding if configured
+    );
+  }
+
+  /** Platform-owner: spin up a brand-new org + its first admin, optionally on a
+   *  plan (paid assignment or an N-day trial). The admin is emailed a sign-in
+   *  link + temp credentials so they can jump straight in — same as a team invite. */
+  async createOrg(dto: { name: string; adminEmail: string; adminName?: string; planId?: string; trial?: boolean; trialDays?: number; keywords?: number }) {
+    const name = (dto.name || "").trim();
+    if (!name) throw new BadRequestException("Organization name is required");
+    const email = normalizeEmail(dto.adminEmail || "");
+    if (!email || !email.includes("@")) throw new BadRequestException("A valid admin email is required");
+    if (await this.prisma.user.findUnique({ where: { email }, select: { id: true } })) {
+      throw new BadRequestException("A user with this email already exists");
+    }
+    // Unique slug from the name (append -2, -3… on collision).
+    const base = slugify(name) || "org";
+    let slug = base;
+    for (let i = 2; await this.prisma.organization.findUnique({ where: { slug }, select: { id: true } }); i++) slug = `${base}-${i}`;
+
+    let plan: any = null;
+    if (dto.planId) {
+      const p = await this.prisma.plan.findUnique({ where: { id: dto.planId } });
+      if (!p || !p.isActive) throw new BadRequestException("Unknown or inactive plan");
+      plan = p;
+    }
+    const trial = !!dto.trial;
+    const days = trial ? Math.floor(Number(dto.trialDays)) : 0;
+    if (trial && (!Number.isFinite(days) || days < 1)) throw new BadRequestException("Trial length must be at least 1 day");
+    if (trial && !plan) throw new BadRequestException("Pick a plan to grant a trial on");
+
+    // If the plan includes white-label, seed the org's brand name = org name so its
+    // subdomain (‹slug›.APP_DOMAIN) is live from the very first login: /auth/me only
+    // returns orgSlug (which drives the client's main-domain → subdomain redirect)
+    // once branding.agencyName is set. The admin can refine the logo/name later.
+    const isWhiteLabel = !!plan && Array.isArray(plan.features) && plan.features.includes("white_label");
+    const org = await this.prisma.organization.create({
+      data: { name, slug, isActive: true, ...(isWhiteLabel ? { branding: { agencyName: name } } : {}) },
+    });
+    const tempPassword = randomBytes(6).toString("base64url");
+    const admin = await this.prisma.user.create({
+      data: { email, name: dto.adminName?.trim() || null, role: "ADMIN", orgId: org.id, passwordHash: await bcrypt.hash(tempPassword, 12), mustSetPassword: true },
+      select: { id: true, email: true },
+    });
+
+    let planLine = "";
+    if (plan) {
+      const ends = trial ? new Date(Date.now() + days * 24 * 3600 * 1000) : null;
+      // Chosen keyword tier → per-tenant override; its price drives the invoice.
+      const kw = dto.keywords;
+      const tiers = Array.isArray(plan.pricingTiers) ? plan.pricingTiers : [];
+      const tier = kw != null ? tiers.find((t: any) => Number(t.keywords) === kw) : null;
+      const limitOverrides = kw != null ? { keywords: kw } : undefined;
+      await this.prisma.subscription.create({
+        data: { orgId: org.id, planId: plan.id, status: trial ? "TRIALING" : "ACTIVE", currentPeriodEnd: ends, gateway: "manual", limitOverrides },
+      });
+      const kwLine = kw != null ? ` (${kw.toLocaleString()} keywords)` : "";
+      if (trial) {
+        const endLabel = ends!.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+        planLine = ` You're on a ${days}-day <b>${plan.name}</b>${kwLine} trial — it ends on <b>${endLabel}</b>; subscribe before then to keep access.`;
+      } else {
+        // Manual paid assignment — record it in the org's billing history at the tier price.
+        const amountCents = tier ? Number(tier.priceCents) : plan.priceCents;
+        await this.prisma.transaction.create({ data: { orgId: org.id, planId: plan.id, amountCents, currency: plan.currency, status: "succeeded", gateway: "manual" } });
+        planLine = ` Your workspace is on the <b>${plan.name}</b>${kwLine} plan.`;
+      }
+    }
+
+    // White-label plans get their own branded subdomain — tell the admin its URL.
+    const brandLine = isWhiteLabel ? ` Your branded workspace lives at <b>${slug}.${process.env.APP_DOMAIN || "serpscale.com"}</b>.` : "";
+    const emailed = await this.emailSignInInvite({
+      userId: admin.id,
+      email: admin.email,
+      tempPassword,
+      subject: "Your workspace is ready",
+      intro: `An account has been created for you on the platform.${planLine}${brandLine}`,
+      orgId: org.id,
+    });
+    return { ok: true, orgId: org.id, emailed };
+  }
 
   /** Notify an org's active admins about a platform-owner action on their account. */
   private async notifyOrgAdmins(orgId: string, payload: { title: string; body: string; link: string }) {
@@ -154,6 +263,14 @@ export class AdminService {
       plan: o.subscription?.plan?.name ?? null,
       planId: o.subscription?.planId ?? null,
       status: o.subscription?.status ?? null,
+      // Keyword cap this org actually has: the per-tenant tier override wins over
+      // the plan's base keyword limit (mirrors EntitlementsService resolution).
+      keywords: ((o.subscription?.limitOverrides as any)?.keywords)
+        ?? ((o.subscription?.plan?.limits as any)?.keywords)
+        ?? null,
+      // ISO date a trial ends (used by the admin UI to show "X days left" /
+      // "expired"). Only meaningful while status is TRIALING.
+      trialEndsAt: o.subscription?.currentPeriodEnd ?? null,
     }));
   }
 
@@ -220,6 +337,70 @@ export class AdminService {
       await this.prisma.subscription.updateMany({ where: { orgId: id }, data: { status: dto.status as any } });
     }
     return { ok: true };
+  }
+
+  /** Grant an org a time-boxed trial of any plan (no payment). Upserts the org's
+   *  subscription to TRIALING with currentPeriodEnd = now + days and marks it
+   *  admin-granted. Access flows immediately via /auth/me entitlements and is
+   *  revoked automatically the moment the trial end date passes — after which the
+   *  org must subscribe to keep the plan. Unlike the self-serve trial this has no
+   *  "new accounts only" rule: the platform owner can grant/extend at will. */
+  async grantTrial(id: string, dto: { planId: string; days: number; keywords?: number }) {
+    const org = await this.prisma.organization.findUnique({ where: { id }, select: { id: true } });
+    if (!org) throw new NotFoundException("Organization not found");
+    const plan = await this.prisma.plan.findUnique({ where: { id: dto.planId } });
+    if (!plan || !plan.isActive) throw new BadRequestException("Unknown or inactive plan");
+    const days = Math.floor(dto.days);
+    if (!Number.isFinite(days) || days < 1) throw new BadRequestException("Trial length must be at least 1 day");
+    const ends = new Date(Date.now() + days * 24 * 3600 * 1000);
+    // Keyword tier → per-tenant limitOverrides.keywords (merged onto any existing
+    // overrides). Entitlements then resolve this over the plan's base keyword cap.
+    const existing = await this.prisma.subscription.findUnique({ where: { orgId: id }, select: { limitOverrides: true } });
+    const limitOverrides = dto.keywords != null
+      ? { ...((existing?.limitOverrides as any) ?? {}), keywords: dto.keywords }
+      : ((existing?.limitOverrides as any) ?? undefined);
+    await this.prisma.subscription.upsert({
+      where: { orgId: id },
+      // gateway "manual" marks an admin grant (vs "trial" self-serve / "stripe" etc).
+      // pendingPlanId cleared so a previously scheduled change can't override the trial.
+      create: { orgId: id, planId: plan.id, status: "TRIALING", currentPeriodEnd: ends, gateway: "manual", limitOverrides },
+      update: { planId: plan.id, status: "TRIALING", currentPeriodEnd: ends, gateway: "manual", pendingPlanId: null, pendingKeywords: null, ...(limitOverrides !== undefined ? { limitOverrides } : {}) },
+    });
+    const endLabel = ends.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+
+    // Email the org's primary admin a proper welcome with a one-click sign-in link
+    // + fresh credentials — same shape as a team invite. We reset that admin's
+    // password to a temp one so the password quoted in the email actually works
+    // (existing hashes can't be recovered); mustSetPassword makes onboarding ask
+    // them to choose their own, and passwordChangedAt invalidates old tokens.
+    const admin = await this.prisma.user.findFirst({
+      where: { orgId: id, role: "ADMIN", isActive: true },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, email: true, name: true },
+    });
+    let emailed = false;
+    if (admin) {
+      const tempPassword = randomBytes(6).toString("base64url");
+      await this.prisma.user.update({
+        where: { id: admin.id },
+        data: { passwordHash: await bcrypt.hash(tempPassword, 12), mustSetPassword: true, passwordChangedAt: new Date() },
+      });
+      emailed = await this.emailSignInInvite({
+        userId: admin.id,
+        email: admin.email,
+        tempPassword,
+        subject: `Your ${plan.name} trial is ready`,
+        intro: `The platform team has set up a ${days}-day <b>${plan.name}</b> trial on your workspace. It ends on <b>${endLabel}</b>; subscribe before then to keep your access.`,
+        orgId: id,
+      });
+    }
+
+    void this.notifyOrgAdmins(id, {
+      title: `Your ${plan.name} trial is active`,
+      body: `The platform team granted you a ${days}-day ${plan.name} trial. It ends on ${endLabel} — subscribe before then to keep access.`,
+      link: "/dashboard/settings/billing",
+    });
+    return { ok: true, trialEndsAt: ends.toISOString(), emailed };
   }
 
   /** Permanently delete an org and everything scoped to it. Most relations don't

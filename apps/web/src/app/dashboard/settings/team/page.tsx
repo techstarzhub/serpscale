@@ -79,14 +79,14 @@ function RolesSection({ groups, roles, onChange, canManage }: { groups: PermGrou
   const [editing, setEditing] = useState<Role | "new" | null>(null);
 
   return (
-    <Card>
+    <Card data-tour="setup-roles">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
         <div>
           <div className="flex items-center gap-2"><Shield className="h-4 w-4 text-primary" /><CardTitle className="text-base">Roles &amp; permissions</CardTitle></div>
           <CardDescription>Create roles and choose exactly what each can do.</CardDescription>
         </div>
         {canManage && editing == null && (
-          <Button size="sm" className="gap-1.5" onClick={() => setEditing("new")}><Plus className="h-4 w-4" /> New role</Button>
+          <Button data-tour="new-role" size="sm" className="gap-1.5" onClick={() => setEditing("new")}><Plus className="h-4 w-4" /> New role</Button>
         )}
       </CardHeader>
       <CardContent className="space-y-3">
@@ -273,13 +273,13 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
         </div>
       </div>
     )}
-    <Card>
+    <Card data-tour="setup-members">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
         <div>
           <div className="flex items-center gap-2"><Users className="h-4 w-4 text-primary" /><CardTitle className="text-base">Team members</CardTitle></div>
           <CardDescription>Invite people, assign roles and campaigns.</CardDescription>
         </div>
-        {canManage && !inviting && <Button size="sm" className="gap-1.5" onClick={() => setInviting(true)}><UserPlus className="h-4 w-4" /> Invite</Button>}
+        {canManage && !inviting && <Button data-tour="invite-member" size="sm" className="gap-1.5" onClick={() => setInviting(true)}><UserPlus className="h-4 w-4" /> Invite</Button>}
       </CardHeader>
       <CardContent className="space-y-3">
         {tempPw && (

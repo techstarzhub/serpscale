@@ -74,6 +74,15 @@ export class AuthService {
     if (org.id !== user.orgId) throw new UnauthorizedException("This account isn't part of this workspace.");
   }
 
+  /** Block a whole suspended workspace: when the org's isActive is false, none of
+   *  its members/clients may sign in or refresh (the JWT strategy enforces the
+   *  same on every request, so active sessions die too). Super admins have no org. */
+  async assertOrgActive(user: { orgId: string | null; role: string }) {
+    if (user.role === "SUPER_ADMIN" || !user.orgId) return;
+    const org = await this.prisma.organization.findUnique({ where: { id: user.orgId }, select: { isActive: true } });
+    if (!org || !org.isActive) throw new UnauthorizedException("Your workspace has been suspended. Contact support.");
+  }
+
   // ---- Login: password first, then an email OTP (2FA) when SMTP is set up. ----
   async login(input: { email: string; password: string }, tenantSlug?: string | null, ip?: string): Promise<{ otpRequired: true; email: string } | { tokens: Tokens }> {
     const email = normalizeEmail(input.email);
@@ -83,6 +92,8 @@ export class AuthService {
     if (!ok) throw new UnauthorizedException("Invalid email or password.");
     // Enforce the subdomain lock before doing anything else with the session.
     await this.assertTenantAccess(user, tenantSlug ?? null);
+    // Block sign-in entirely if the whole workspace is suspended (any domain).
+    await this.assertOrgActive(user);
     if (!(await this.email.platformReady())) {
       await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
       await this.logLogin(user, ip);
@@ -256,6 +267,8 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || !user.isActive) throw new UnauthorizedException("Session expired.");
+    // A suspended workspace can't mint fresh tokens either.
+    await this.assertOrgActive(user);
 
     // Soft-revoked rows only need to outlive the replay-grace check above — sweep
     // anything past that (plus any naturally-expired rows) so the table doesn't

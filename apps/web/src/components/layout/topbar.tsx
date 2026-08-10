@@ -188,6 +188,7 @@ export function Topbar({
         {can("billing.manage") && (
           <Link
             href="/dashboard/settings/billing"
+            data-tour="upgrade"
             className="hidden h-9 items-center gap-1.5 rounded-full border border-input bg-card px-4 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/[0.04] md:inline-flex"
           >
             <Sparkles className="h-3.5 w-3.5 text-primary" />
