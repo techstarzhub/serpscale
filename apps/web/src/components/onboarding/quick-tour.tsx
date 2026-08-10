@@ -25,7 +25,6 @@ const targetSelector = (s: Step): string | null => s.selector ?? (s.anchor ? `[d
 // A settings-nav tab link, targeted by its route (no extra anchors needed).
 const navSel = (p: string) => `[data-tour="settings-nav"] a[href="/dashboard/settings/${p}"]`;
 
-const tourKey = (id: string) => `quicktour:${id}`;
 
 // Theme the driver.js popover to match the app (light/dark), no gradients.
 const TOUR_CSS = `
@@ -57,7 +56,7 @@ const TOUR_CSS = `
  *  guided setup — once per user (localStorage), never for super admins, and
  *  force-replayable via ?tour=1 for testing. */
 export function QuickTourGate() {
-  const { user, loading } = useCurrentUser();
+  const { user, loading, refresh } = useCurrentUser();
   const [ready, setReady] = useState(false);
   const [seen, setSeen] = useState(true);
 
@@ -66,9 +65,9 @@ export function QuickTourGate() {
     const forced = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tour") === "1";
     const gated = !user || (!user.onboardedAt && !forced) || user.role === "SUPER_ADMIN";
     if (gated) { setSeen(true); setReady(true); return; }
-    let s = true;
-    try { s = !forced && localStorage.getItem(tourKey(user!.id)) === "done"; } catch { s = false; }
-    setSeen(s);
+    // Server-side flag: once quickTourAt is set the tour never returns — even after
+    // a cache clear or on another device. ?tour=1 forces a replay for testing.
+    setSeen(!forced && !!user!.quickTourAt);
     setReady(true);
   }, [user, loading]);
 
@@ -76,8 +75,9 @@ export function QuickTourGate() {
   return (
     <QuickTour
       onClose={() => {
-        try { localStorage.setItem(tourKey(user.id), "done"); } catch { /* ignore */ }
         setSeen(true);
+        // Persist per-account, then refresh so the cached user carries quickTourAt.
+        api.post("/users/me/quicktour").catch(() => {}).finally(() => { refresh().catch(() => {}); });
       }}
     />
   );
