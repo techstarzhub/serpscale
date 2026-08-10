@@ -116,7 +116,7 @@ export default function DashboardPage() {
   const viewRows = useMemo(() => (isSingle ? rows.filter((r) => r.id === selected) : rows), [rows, selected, isSingle]);
   const campaignOptions = useMemo(() => [
     { value: "all", label: "All campaigns" },
-    ...rows.map((r) => ({ value: r.id, label: r.name, hint: r.domain, icon: <SiteFavicon domain={r.domain} className="h-5 w-5" iconClassName="h-3 w-3" /> })),
+    ...rows.map((r) => ({ value: r.id, label: r.name, sub: r.domain, icon: <SiteFavicon domain={r.domain} className="h-5 w-5" iconClassName="h-3 w-3" /> })),
   ], [rows]);
 
   const kpis = useMemo(() => {
