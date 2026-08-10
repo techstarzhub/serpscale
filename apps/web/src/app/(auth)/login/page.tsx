@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
+import { loginRedirectUrl } from "@/lib/tenant";
 import { OtpStep } from "@/components/auth/otp-step";
 
 // useSearchParams must sit under a Suspense boundary (Next.js CSR bailout).
@@ -26,9 +27,13 @@ function LoginForm() {
   const [error, setError] = useState("");
   const [otpEmail, setOtpEmail] = useState<string | null>(null); // set once password passes
 
-  function done() {
+  async function done() {
     const next = params.get("next");
-    window.location.href = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+    const dest = next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+    // Go straight to the org's own subdomain (white-label) instead of flashing the
+    // main-domain dashboard and bouncing — one clean redirect, no flicker.
+    const sub = await loginRedirectUrl(dest);
+    window.location.href = sub ?? dest;
   }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
