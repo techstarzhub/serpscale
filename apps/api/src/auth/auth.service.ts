@@ -293,6 +293,7 @@ export class AuthService {
         orgId: true,
         themeOverrides: true,
         onboardedAt: true,
+        quickTourAt: true,
         mustSetPassword: true,
         avatarKey: true,
         clientId: true,

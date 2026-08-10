@@ -78,6 +78,12 @@ export class UsersController {
     return result;
   }
 
+  // Mark the quick guided setup tour done (finished or skipped) — per account.
+  @Post("me/quicktour")
+  completeQuickTour(@CurrentUser() user: AuthUser) {
+    return this.users.completeQuickTour(user.id);
+  }
+
   @Post("me/avatar")
   @UseInterceptors(
     FileInterceptor("file", { limits: { fileSize: 2 * 1024 * 1024 } }), // 2MB

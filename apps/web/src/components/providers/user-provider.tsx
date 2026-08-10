@@ -13,6 +13,9 @@ export interface CurrentUser {
   avatarUrl: string | null;
   // Null until the user finishes the first-login onboarding wizard.
   onboardedAt?: string | null;
+  // Null until the user finishes/skips the quick guided setup tour (server-side,
+  // so it never reappears after a cache clear or on another device).
+  quickTourAt?: string | null;
   // True for temp-password users (invited/clients) → onboarding shows a
   // "set your password" step. Self-signup owners already have a password.
   mustSetPassword?: boolean;

@@ -127,6 +127,13 @@ export class UsersService {
     return this.toPublic(updated);
   }
 
+  /** Mark the quick guided setup tour as finished/skipped — once per account, so
+   *  it never reappears (even after a cache clear or on another device). */
+  async completeQuickTour(userId: string) {
+    await this.prisma.user.update({ where: { id: userId }, data: { quickTourAt: new Date() } });
+    return { ok: true };
+  }
+
   async setAvatar(userId: string, file: Express.Multer.File) {
     if (!file) throw new BadRequestException("No file uploaded.");
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.mimetype)) {

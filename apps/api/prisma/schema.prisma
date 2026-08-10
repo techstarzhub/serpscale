@@ -60,6 +60,9 @@ model User {
   // (set password, profile photo, theme). Invited members / clients start null so
   // they get the wizard; self-signup owners and existing users are marked done.
   onboardedAt    DateTime?
+  // When the user finished (or skipped) the quick guided setup tour. Null = never
+  // seen it → show once. Server-side so it survives cache clears and new devices.
+  quickTourAt    DateTime?
   // True for users created with a temporary password (invited members / clients)
   // so the onboarding wizard shows the "set your password" step. Self-signup
   // owners chose their own password, so this stays false and that step is hidden.
