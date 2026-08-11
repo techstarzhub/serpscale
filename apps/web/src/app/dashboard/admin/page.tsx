@@ -2,7 +2,7 @@
 
 import { Suspense, Fragment, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { LayoutGrid, CreditCard, Building2, Receipt, ScrollText, KeyRound, Users as UsersIcon, Mail, SlidersHorizontal, Plus, Trash2, Loader2, MessageSquare, AtSign, Globe, Check, X, ChevronDown, Power, type LucideIcon } from "lucide-react";
+import { LayoutGrid, CreditCard, Building2, Receipt, ScrollText, KeyRound, Users as UsersIcon, Mail, SlidersHorizontal, Plus, Trash2, Loader2, MessageSquare, AtSign, Globe, Check, X, ChevronDown, Power, LogIn, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -325,6 +325,17 @@ function Orgs() {
     finally { setBusy(null); }
   }
 
+  async function loginAsOrg(o: any) {
+    const adminId = o.admin?.id;
+    if (!adminId) { toast.error("This org has no admin user to log in as."); return; }
+    setBusy(o.id);
+    try {
+      await api.post("/auth/impersonate", { userId: adminId });
+      window.location.href = "/dashboard";
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not impersonate"); }
+    finally { setBusy(null); }
+  }
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -412,6 +423,7 @@ function Orgs() {
                           Manage <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", isOpen && "rotate-180")} />
                         </Button>
                         <DropdownMenu items={[
+                          { label: "Login as org", icon: <LogIn className="h-4 w-4" />, onClick: () => loginAsOrg(o) },
                           { label: o.isActive ? "Suspend workspace" : "Activate workspace", icon: <Power className="h-4 w-4" />, onClick: () => toggleActive(o) },
                           { label: "Delete organization", icon: <Trash2 className="h-4 w-4" />, destructive: true, onClick: () => removeOrg(o) },
                         ]} />

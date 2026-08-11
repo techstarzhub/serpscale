@@ -248,7 +248,7 @@ export class AdminService {
       include: {
         subscription: { include: { plan: true } },
         _count: { select: { users: true, projects: true } },
-        users: { where: { role: "ADMIN" }, select: { email: true, name: true, lastLoginAt: true }, take: 1 },
+        users: { where: { role: "ADMIN" }, select: { id: true, email: true, name: true, lastLoginAt: true }, take: 1 },
       },
     });
     return orgs.map((o) => ({
