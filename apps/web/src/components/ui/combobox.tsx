@@ -24,6 +24,7 @@ export function Combobox({
   placeholder = "Select…",
   searchPlaceholder = "Search…",
   className,
+  triggerClassName,
   align = "start",
   disabled,
   icon,
@@ -34,6 +35,8 @@ export function Combobox({
   placeholder?: string;
   searchPlaceholder?: string;
   className?: string;
+  /** Override the trigger button's className entirely (useful to match pill-shaped form fields). */
+  triggerClassName?: string;
   align?: "start" | "end";
   disabled?: boolean;
   icon?: React.ReactNode;
@@ -90,7 +93,8 @@ export function Combobox({
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "flex h-9 w-full items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm transition-colors hover:bg-secondary/40 focus:outline-none focus:ring-2 focus:ring-ring",
+          triggerClassName ??
+            "flex h-9 w-full items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm transition-colors hover:bg-secondary/40 focus:outline-none focus:ring-2 focus:ring-ring",
           disabled && "cursor-not-allowed opacity-50",
         )}
       >

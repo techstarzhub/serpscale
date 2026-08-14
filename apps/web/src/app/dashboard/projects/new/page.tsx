@@ -256,12 +256,15 @@ export default function NewCampaignPage() {
               </div>
               <Hint>Domain of campaign — we track rankings for this site.</Hint>
 
-              <div className={PILL}>
-                <FcGoogle className="h-5 w-5 shrink-0" />
-                <select value={country} onChange={(e) => setCountry(e.target.value)} className="min-w-0 flex-1 cursor-pointer bg-transparent text-[15px] text-foreground outline-none">
-                  {COUNTRIES.map((x) => <option key={x.code} value={x.code}>{x.label}</option>)}
-                </select>
-              </div>
+              <Combobox
+                value={country}
+                onChange={setCountry}
+                options={COUNTRIES.map((x) => ({ value: x.code, label: x.label }))}
+                placeholder="Select country…"
+                searchPlaceholder="Search country…"
+                icon={<FcGoogle className="h-5 w-5 shrink-0" />}
+                triggerClassName="flex h-[54px] w-full items-center gap-3 rounded-full border border-input bg-card px-4 shadow-sm transition-colors hover:border-primary/40 focus:outline-none focus:border-primary focus:ring-2 focus:ring-ring/20 text-[15px]"
+              />
               <Hint>Select the version of Google you want to track results in. By default it&apos;s Google.com.</Hint>
 
               <div className="lg:col-span-2">
@@ -437,11 +440,15 @@ export default function NewCampaignPage() {
                 <p className="mt-2 text-sm text-muted-foreground"><span className="font-semibold text-foreground">{kwCount}</span> keyword{kwCount === 1 ? "" : "s"} — tracked daily on {google}.</p>
               </div>
               <div className="space-y-3">
-                <div className={PILL}><FcGoogle className="h-5 w-5 shrink-0" />
-                  <select value={country} onChange={(e) => setCountry(e.target.value)} className="min-w-0 flex-1 cursor-pointer bg-transparent text-[15px] outline-none">
-                    {COUNTRIES.map((x) => <option key={x.code} value={x.code}>{x.label}</option>)}
-                  </select>
-                </div>
+                <Combobox
+                  value={country}
+                  onChange={setCountry}
+                  options={COUNTRIES.map((x) => ({ value: x.code, label: x.label }))}
+                  placeholder="Select country…"
+                  searchPlaceholder="Search country…"
+                  icon={<FcGoogle className="h-5 w-5 shrink-0" />}
+                  triggerClassName="flex h-[54px] w-full items-center gap-3 rounded-full border border-input bg-card px-4 shadow-sm transition-colors hover:border-primary/40 focus:outline-none focus:border-primary focus:ring-2 focus:ring-ring/20 text-[15px]"
+                />
                 <div>
                   <p className="mb-1.5 text-xs font-medium text-muted-foreground">Device</p>
                   <div className="flex gap-2">
