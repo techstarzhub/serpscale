@@ -490,6 +490,8 @@ export class BillingService {
         if (local) {
           await this.prisma.subscription.update({ where: { orgId: local.orgId }, data: { status: "PAST_DUE" } });
           await this.notifyOrgAdmins(local.orgId, { title: "Payment failed", body: "We couldn't charge your payment method. Please update it to keep your subscription active.", link: "/dashboard/settings/billing" });
+          await this.emailOrgAdmins(local.orgId, "Action required: payment failed", "We couldn't process your payment. Please update your payment method to avoid losing access to your subscription.", { label: "Update payment method", url: `${WEB()}/dashboard/settings/billing` });
+          await this.alertSuperAdmins(local.orgId, "Payment failed", "Payment failed", { Event: "Stripe invoice.payment_failed — subscription now PAST_DUE" });
         }
       } else if (event.type === "customer.subscription.deleted") {
         const sub: any = event.data.object;
@@ -497,6 +499,7 @@ export class BillingService {
         if (local) {
           await this.prisma.subscription.update({ where: { orgId: local.orgId }, data: { status: "CANCELED" } });
           await this.notifyOrgAdmins(local.orgId, { title: "Subscription ended", body: "Your subscription has ended.", link: "/dashboard/settings/billing" });
+          await this.emailOrgAdmins(local.orgId, "Your subscription has ended", "Your subscription has been canceled and access to paid features has ended. You can re-subscribe anytime from the billing page.", { label: "Re-subscribe", url: `${WEB()}/dashboard/settings/billing` });
         }
       }
     } catch (e) {

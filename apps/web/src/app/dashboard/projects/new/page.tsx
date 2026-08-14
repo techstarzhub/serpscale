@@ -14,6 +14,7 @@ import { useFeature, useCan } from "@/components/providers/user-provider";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { validateName, validateDomain, normalizeDomain } from "@/lib/campaign-validation";
+import { COUNTRIES as ALL_COUNTRIES } from "@/lib/locations";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -41,15 +42,8 @@ const MODULES: { id: string; label: string; info: string }[] = [
   { id: "audit", label: "Audit", info: "Full technical site crawl with a health score and prioritized fixes." },
 ];
 
-const COUNTRIES = [
-  { code: "US", label: "us (google.com)" },
-  { code: "GB", label: "uk (google.co.uk)" },
-  { code: "IN", label: "in (google.co.in)" },
-  { code: "CA", label: "ca (google.ca)" },
-  { code: "AU", label: "au (google.com.au)" },
-  { code: "DE", label: "de (google.de)" },
-  { code: "AE", label: "ae (google.ae)" },
-];
+// All countries from the shared lib (WW = worldwide not relevant for rank tracking)
+const COUNTRIES = ALL_COUNTRIES.filter((x) => x.value !== "WW").map((x) => ({ code: x.value, label: x.label }));
 const DEVICES = ["Desktop", "Mobile"];
 
 type Intg = { id: string; provider: "google" | "github"; name: string; desc: string; Icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>; color?: string };

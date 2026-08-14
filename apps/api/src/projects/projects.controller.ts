@@ -399,7 +399,8 @@ export class ProjectsController {
   @RequireFeature("backlinks")
   async backlinks(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("fresh") fresh?: string, @Query("cachedOnly") cachedOnly?: string) {
     const project = await this.projects.get(user, id);
-    return this.dataforseo.backlinksForDomain(project.domain, isFresh(fresh), cachedOnly === "1");
+    const live = isFresh(fresh) && await this.dataforseo.claimDailyRefresh(id, "backlinks");
+    return this.dataforseo.backlinksForDomain(project.domain, live, cachedOnly === "1");
   }
 
   // ---- DataForSEO Labs: keyword ideas + ranked keywords (cached 7d) ----
@@ -488,7 +489,8 @@ export class ProjectsController {
     @Query("cachedOnly") cachedOnly?: string,
   ) {
     const project = await this.projects.get(user, id);
-    return this.dataforseo.rankedKeywords(project.domain, country, language || "en", isFresh(fresh), cachedOnly === "1");
+    const live = isFresh(fresh) && await this.dataforseo.claimDailyRefresh(id, "ranked-keywords");
+    return this.dataforseo.rankedKeywords(project.domain, country, language || "en", live, cachedOnly === "1");
   }
 
   // ---- DataForSEO Labs: competitors + domain rank overview ----
@@ -505,7 +507,8 @@ export class ProjectsController {
     @Query("cachedOnly") cachedOnly?: string,
   ) {
     const project = await this.projects.get(user, id);
-    return this.dataforseo.competitors(project.domain, country, language || "en", isFresh(fresh), cachedOnly === "1");
+    const live = isFresh(fresh) && await this.dataforseo.claimDailyRefresh(id, "competitors");
+    return this.dataforseo.competitors(project.domain, country, language || "en", live, cachedOnly === "1");
   }
 
   @Get(":id/keyword-gap")
@@ -530,7 +533,8 @@ export class ProjectsController {
   @RequireFeature("domain")
   async technologies(@CurrentUser() user: AuthUser, @Param("id") id: string, @Query("fresh") fresh?: string, @Query("cachedOnly") cachedOnly?: string) {
     const project = await this.projects.get(user, id);
-    return this.dataforseo.technologies(project.domain, isFresh(fresh), cachedOnly === "1");
+    const live = isFresh(fresh) && await this.dataforseo.claimDailyRefresh(id, "technologies");
+    return this.dataforseo.technologies(project.domain, live, cachedOnly === "1");
   }
 
   // ---- Business Data: local listings (category + coordinate) ----

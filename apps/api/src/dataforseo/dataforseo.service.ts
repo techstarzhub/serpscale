@@ -83,6 +83,29 @@ export class DataForSeoService {
     }).catch(() => { /* budget bookkeeping must never break the actual call */ });
   }
 
+  /**
+   * Server-side rate-limit for the manual Refresh button: allows ONE paid live
+   * re-fetch per project per endpoint per UTC day, shared across ALL users and
+   * browsers. The first caller wins (atomic advisory lock); everyone else that
+   * day gets the cached result for free. Fails open so a DB hiccup never blocks
+   * a legitimate refresh.
+   */
+  async claimDailyRefresh(projectId: string, endpoint: string): Promise<boolean> {
+    const today = new Date().toISOString().slice(0, 10);
+    const key = `paid-refresh:${endpoint}:${projectId}:${today}`;
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+        const existing = await tx.dataCache.findUnique({ where: { key } });
+        if (existing) return false;
+        await tx.dataCache.create({ data: { key, payload: { date: today } } });
+        return true;
+      });
+    } catch {
+      return true; // fail open — don't silently block a valid refresh
+    }
+  }
+
   private async post(path: string, body: unknown): Promise<any> {
     const auth = this.auth();
     if (!auth) return null;

@@ -32,11 +32,14 @@ export class RankTrackerScheduler implements OnModuleInit, OnModuleDestroy {
     try {
       const connection = redisConnection();
       this.queue = new Queue(QUEUE, { connection });
-      // Idempotent: adding the same repeatable key just keeps one schedule.
+      // Remove any stale daily job from a previous deploy.
+      await this.queue.removeRepeatable("daily-rank-check", { pattern: "0 3 * * *" }).catch(() => {});
+      // Every 2 days at 03:00 UTC — daily is overkill since rankings rarely shift
+      // meaningfully in 24h. Every-other-day halves SERP cost with no real data loss.
       await this.queue.add(
-        "daily-rank-check",
+        "rank-check",
         {},
-        { repeat: { pattern: "0 3 * * *" }, removeOnComplete: true, removeOnFail: 20 },
+        { repeat: { pattern: "0 3 */2 * *" }, removeOnComplete: true, removeOnFail: 20 },
       );
       // In Standard (queue) mode the daily job only POSTS cheap SERP tasks; a
       // separate poller drains the finished results every few minutes.
@@ -56,7 +59,7 @@ export class RankTrackerScheduler implements OnModuleInit, OnModuleDestroy {
         { connection, concurrency: 1 },
       );
       this.worker.on("failed", (_job, err) => this.logger.warn(`rank-tracker job failed: ${String(err).slice(0, 120)}`));
-      this.logger.log("rank tracker scheduled (daily 03:00)");
+      this.logger.log("rank tracker scheduled (every 2 days 03:00 UTC)");
     } catch (e) {
       this.logger.warn(`rank tracker scheduler not started (Redis unavailable?): ${String(e).slice(0, 120)}`);
     }

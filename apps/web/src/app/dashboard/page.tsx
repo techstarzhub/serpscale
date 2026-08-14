@@ -13,7 +13,7 @@ import { TrendChart, Sparkline } from "@/components/ui/charts";
 import { Combobox } from "@/components/ui/combobox";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { useCurrentUser, displayName, useCan } from "@/components/providers/user-provider";
+import { useCurrentUser, displayName, useCan, useLimit } from "@/components/providers/user-provider";
 import { useProjects } from "@/components/providers/projects-provider";
 import { CampaignsTable, type CampaignRow } from "./campaigns-table";
 import { GroupedCampaigns, type GroupBy } from "./grouped-campaigns";
@@ -67,6 +67,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const { user, loading: userLoading } = useCurrentUser();
   const can = useCan();
+  const getLimit = useLimit();
   const { projects: provided, loading: projectsLoading } = useProjects();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -206,9 +207,23 @@ export default function DashboardPage() {
           )}
           <Combobox value={period} onChange={setPeriod} options={PERIODS} align="end" className="w-40" />
 
-          {can("projects.create") && (
-            <Link href="/dashboard/projects/new" data-tour="new-project" className={cn(buttonVariants(), "gap-2")}><Plus className="h-4 w-4" /> New project</Link>
-          )}
+          {can("projects.create") && (() => {
+            const projectLimit = getLimit("projects");
+            const atLimit = projectLimit != null && rows.length >= projectLimit;
+            return atLimit ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{rows.length}/{projectLimit} campaigns</span>
+                <Link href="/dashboard/settings/billing" className={cn(buttonVariants({ variant: "outline" }), "gap-2")}>
+                  <Plus className="h-4 w-4" /> Upgrade to add more
+                </Link>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                {projectLimit != null && <span className="text-xs text-muted-foreground">{rows.length}/{projectLimit}</span>}
+                <Link href="/dashboard/projects/new" data-tour="new-project" className={cn(buttonVariants(), "gap-2")}><Plus className="h-4 w-4" /> New project</Link>
+              </div>
+            );
+          })()}
         </div>
       </div>
 

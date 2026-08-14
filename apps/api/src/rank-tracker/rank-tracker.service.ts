@@ -202,10 +202,10 @@ export class RankTrackerService {
     return process.env.RANK_TRACKER_STANDARD === "1";
   }
 
-  // Scheduler entry point: check keywords not read in the last ~20h (daily cadence).
+  // Scheduler entry point: check keywords not read in the last 44h (every-2-day cadence).
   async checkDue(limit = 500) {
     if (this.standardMode()) return this.postDue(limit);
-    const cutoff = new Date(Date.now() - 20 * 3600_000);
+    const cutoff = new Date(Date.now() - 44 * 3600_000);
     const due = await this.prisma.rankKeyword.findMany({
       where: { OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: cutoff } }] },
       include: { project: { select: { id: true, orgId: true, domain: true } } },
@@ -231,7 +231,7 @@ export class RankTrackerService {
   // drainSerpTasks(). We de-dupe by keyword+country+device so several campaigns
   // tracking the same term only pay for one SERP; the result maps to all of them.
   async postDue(limit = 500) {
-    const cutoff = new Date(Date.now() - 20 * 3600_000);
+    const cutoff = new Date(Date.now() - 44 * 3600_000);
     const due = await this.prisma.rankKeyword.findMany({
       where: { OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: cutoff } }] },
       include: { project: { select: { id: true, orgId: true, domain: true } } },

@@ -345,9 +345,9 @@ export default function ProjectWorkspace() {
   const [refreshNonce, setRefreshNonce] = useState(0);
   // Reporting window for the header KPIs + Overview (preset days or custom range).
   const [period, setPeriod] = useState<Period>({ days: 28 });
-  // The Refresh button spends a paid DataForSeo call at most ONCE per day per
-  // campaign; every other refresh that day just re-reads the cache (free).
-  const [refreshMode, setRefreshMode] = useState<"live" | "cached">("live");
+  // Always send fresh=1; the server enforces one paid refresh per project per day
+  // across all users via an atomic DB claim — no client-side tracking needed.
+  const refreshMode = "live" as const;
   // "Run audit" in the header should both open the Audit tab AND kick off a crawl.
   const [pendingAudit, setPendingAudit] = useState(false);
   // Super admins manage the platform, not campaigns — send them to the admin panel.
@@ -496,18 +496,10 @@ export default function ProjectWorkspace() {
     );
   }
 
-  // Force a live re-fetch of the active tab (bypasses the server cache via ?fresh=1).
-  // No spinner — panels swap to structured skeletons while the fresh data loads.
+  // Send fresh=1 to the server; the server's claimDailyRefresh decides whether
+  // to make a real paid API call or serve the existing cache. Safe to call from
+  // any user or browser — the one-per-day quota is enforced server-side in the DB.
   function onRefresh() {
-    // First refresh of the day → paid live re-fetch; the rest → cache only.
-    let mode: "live" | "cached" = "live";
-    try {
-      const key = `df-paid-refresh:${project!.id}`;
-      const today = new Date().toDateString();
-      if (localStorage.getItem(key) === today) mode = "cached";
-      else localStorage.setItem(key, today);
-    } catch { /* localStorage blocked → default to live */ }
-    setRefreshMode(mode);
     setRefreshNonce((n) => n + 1);
   }
 
