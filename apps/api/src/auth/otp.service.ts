@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
@@ -11,7 +11,6 @@ const MAX_ATTEMPTS = 8; // cumulative wrong guesses allowed per email+purpose pe
  *  login 2FA. Codes are stored hashed; pending signup data rides in `payload`. */
 @Injectable()
 export class OtpService {
-  private readonly logger = new Logger(OtpService.name);
   constructor(private readonly prisma: PrismaService, private readonly email: EmailService) {}
 
   private hash(code: string): string {
@@ -49,9 +48,7 @@ export class OtpService {
     const intro = isSignup
       ? "Use this code to verify your email and finish creating your account."
       : "Use this code to finish signing in.";
-    const sent = await this.email.sendBranded(email, subject, subject, `${intro} It expires in 10 minutes.${this.email.codeBlock(code)}`, undefined, await this.orgFor(email, purpose));
-    // Dev fallback so the flow is testable before SMTP is configured.
-    if (!sent) this.logger.warn(`OTP for ${email} (${purpose}): ${code}`);
+    await this.email.sendBranded(email, subject, subject, `${intro} It expires in 10 minutes.${this.email.codeBlock(code)}`, undefined, await this.orgFor(email, purpose));
     return { otpRequired: true, email };
   }
 

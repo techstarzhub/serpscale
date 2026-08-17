@@ -201,7 +201,7 @@ export class AuthService {
         data: { userId: user.id, tokenHash, expiresAt: new Date(Date.now() + 1000 * 60 * 30) },
       });
       const link = `${process.env.WEB_ORIGIN || "http://localhost:3000"}/reset-password?token=${raw}`;
-      const sent = await this.email.sendBranded(
+      await this.email.sendBranded(
         user.email,
         "Reset your password",
         "Reset your password",
@@ -209,8 +209,6 @@ export class AuthService {
         { label: "Reset password", url: link },
         user.orgId, // agency's own SMTP + branding when configured
       );
-      // Fallback for local dev when SMTP isn't configured.
-      if (!sent) console.log(`[auth] password reset link for ${user.email}: ${link}`);
     }
     return { ok: true };
   }
