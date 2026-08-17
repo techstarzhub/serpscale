@@ -22,6 +22,10 @@ async function bootstrap() {
   // replaces Nest's default 100kb JSON limit (too small for base64 logo uploads
   // like /team/branding's logoDataUrl) while still capturing rawBody.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true, bodyParser: false });
+  // We sit behind exactly one reverse proxy (nginx) which sets X-Forwarded-For.
+  // Without this, Express's req.ip is always nginx's own address, so every
+  // client shares one IP-based throttle bucket (ThrottlerGuard keys on req.ip).
+  app.set("trust proxy", 1);
   app.useBodyParser("json", { limit: "10mb" });
   app.useBodyParser("urlencoded", { limit: "10mb", extended: true });
   app.use(cookieParser());
