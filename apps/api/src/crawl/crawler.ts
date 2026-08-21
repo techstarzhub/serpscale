@@ -460,6 +460,8 @@ function parseHtml(
   }
 
   const host = rootHost(new URL(url).hostname);
+  // Normalized base for the current page — used to detect same-page anchor links.
+  const urlBase = url.split("#")[0].replace(/\/$/, "") || url;
   const links: string[] = [];
   const externalUrls: string[] = [];
   let internalLinks = 0;
@@ -472,7 +474,10 @@ function parseHtml(
       if (abs.protocol !== "http:" && abs.protocol !== "https:") return;
       if (rootHost(abs.hostname) === host) {
         internalLinks++;
-        links.push(abs.href);
+        // Same-page anchors (e.g. #section) never produce a new crawlable page.
+        // Count them toward internalLinks for reporting but don't add to the crawl queue.
+        const absBase = abs.href.split("#")[0].replace(/\/$/, "") || abs.href;
+        if (absBase !== urlBase) links.push(abs.href);
       } else {
         externalLinks++;
         // Cap per page so a link farm can't bloat memory; enough to cover real pages.
@@ -738,26 +743,28 @@ async function fetchPage(url: string, depth: number, render?: RenderFn): Promise
     let { signals, links } = parseHtml(url, html, statusCode, xRobots, depth, loadMs);
     signals = withRedirect(signals);
 
-    // JS-render fallback. Trigger when the raw HTML looks JS-rendered: either it
-    // yielded no internal links (classic SPA), OR the MAIN content is missing —
-    // no H1 and thin body — which is the case for pages whose nav is server-
-    // rendered but whose article/H1 is injected by JavaScript (e.g. blog pages).
-    const looksJsRendered = signals.internalLinks === 0 || (signals.h1Count === 0 && signals.wordCount < 300);
+    // JS-render fallback. Trigger when the raw HTML looks JS-rendered:
+    // - No distinct crawlable links found (classic SPA, or a site where every
+    //   "link" is a same-page #anchor — hash-only anchors are excluded from
+    //   `links` so they can't mask a JS-rendered navigation).
+    // - OR the MAIN content is missing (no H1 + thin body), e.g. a blog page
+    //   whose article is injected by JavaScript.
+    const looksJsRendered = links.length === 0 || (signals.h1Count === 0 && signals.wordCount < 300);
     if (render && looksJsRendered) {
       const rawWords = signals.wordCount;
-      const rawLinks = signals.internalLinks;
+      const rawLinks = links.length; // crawlable (non-hash) link count before rendering
       const rawH1 = signals.h1Count;
       const rendered = await render(url);
       if (rendered?.html) {
         const reparsed = parseHtml(url, rendered.html, rendered.statusCode ?? statusCode, xRobots, depth, Date.now() - t0);
-        if (reparsed.signals.internalLinks > signals.internalLinks || reparsed.signals.wordCount > signals.wordCount) {
+        if (reparsed.links.length > links.length || reparsed.signals.wordCount > signals.wordCount) {
           signals = withRedirect(reparsed.signals);
           links = reparsed.links;
           // JS-dependent content/navigation: the raw HTML (what non-rendering
           // crawlers and AI answer engines like GPTBot see) is materially thinner
           // than the rendered DOM. Googlebot renders, but the gap is still a risk.
           const contentGap = rawWords < 250 && signals.wordCount - rawWords >= 150;
-          const navGap = rawLinks === 0 && signals.internalLinks >= 5;
+          const navGap = rawLinks === 0 && links.length >= 5;
           const h1Gap = rawH1 === 0 && signals.h1Count > 0;
           if (contentGap || navGap || h1Gap) {
             signals = {
@@ -768,7 +775,7 @@ async function fetchPage(url: string, depth: number, render?: RenderFn): Promise
                   code: "js-dependent-content",
                   severity: "warning",
                   category: "technical",
-                  message: `Content/links appear only after JavaScript runs (raw ${rawWords} words / ${rawLinks} links → rendered ${signals.wordCount} / ${signals.internalLinks}) — non-rendering crawlers and AI answer engines may see little`,
+                  message: `Content/links appear only after JavaScript runs (raw ${rawWords} words / ${rawLinks} links → rendered ${signals.wordCount} / ${links.length}) — non-rendering crawlers and AI answer engines may see little`,
                 },
               ],
             };

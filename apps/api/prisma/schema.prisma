@@ -556,8 +556,9 @@ model CopilotMessage {
 
 model Crawl {
   id           String      @id @default(cuid())
-  projectId    String
-  project      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId    String?
+  project      Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  byUserId     String?
   status       CrawlStatus @default(QUEUED)
   startUrl     String
   maxPages     Int         @default(1000)
@@ -589,6 +590,7 @@ model Crawl {
   pages        CrawlPage[]
 
   @@index([projectId])
+  @@index([byUserId])
 }
 
 // Third-party integrations (Google Search Console / Analytics / Business, DataForSEO).

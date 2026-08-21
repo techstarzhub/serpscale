@@ -58,6 +58,14 @@ export class ProjectsController {
     private readonly audit: AuditService,
   ) {}
 
+  // Org-wide keyword usage (used / limit) — used by the frontend to show plan
+  // limits and pre-validate before adding keywords.
+  @Get("keywords-usage")
+  async keywordsUsage(@CurrentUser() user: AuthUser) {
+    const orgId = user.orgId ?? null;
+    return this.rankTracker.orgUsage(orgId);
+  }
+
   // ---- Scheduled rank tracking ----
 
   @Get(":id/rank-keywords")

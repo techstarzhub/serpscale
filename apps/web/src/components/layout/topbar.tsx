@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Menu, Moon, Sparkles, Sun, User, Settings, Palette, LogOut, KeyRound, Plus, Clock, AlertTriangle, Headphones } from "lucide-react";
+
 import { FcGoogle } from "react-icons/fc";
 import { useTheme } from "@/components/theme/theme-provider";
 import { useCurrentUser, displayName, roleLabel, trialDaysLeft, useCan } from "@/components/providers/user-provider";
@@ -102,6 +103,7 @@ export function Topbar({
 
       <div className="flex items-center gap-1.5">
         <TrialPill />
+
         {/* Primary action — only for roles allowed to create campaigns. */}
         {can("projects.create") && (
           <>
@@ -207,6 +209,7 @@ export function Topbar({
     </header>
   );
 }
+
 
 function UserMenu() {
   const router = useRouter();

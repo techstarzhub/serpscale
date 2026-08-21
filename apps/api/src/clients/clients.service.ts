@@ -91,9 +91,6 @@ export class ClientsService {
     dto: { name?: string; company?: string; email?: string; phone?: string; notes?: string; password?: string; sendInvite?: boolean; type?: string; allowTeam?: boolean },
   ) {
     const orgId = this.orgOf(user);
-    // Enforce the plan's clients cap (a Starter plan with clients:0 blocks all).
-    const clientCount = await this.prisma.client.count({ where: { orgId } });
-    await this.entitlements.assertWithinLimit(orgId, "clients", clientCount);
     const name = (dto?.name ?? "").trim();
     if (!name) throw new BadRequestException("Client name is required.");
     const email = normalizeEmail(dto?.email ?? "");
@@ -104,34 +101,41 @@ export class ClientsService {
     if (!password) password = randomBytes(6).toString("base64url");
     if (await this.prisma.user.findUnique({ where: { email } }))
       throw new BadRequestException("A user with this email already exists.");
+    const passwordHash = await bcrypt.hash(password, 12);
 
-    const client = await this.prisma.client.create({
-      data: {
-        orgId,
-        name: name.slice(0, 120),
-        company: dto.company?.trim() || null,
-        email,
-        phone: dto.phone?.trim() || null,
-        notes: dto.notes?.trim() || null,
-        type: dto.type === "AGENCY" ? "AGENCY" : "CLIENT",
-        allowTeam: !!dto.allowTeam,
-      },
-      include: clientInclude,
-    });
-
-    // Create the client's portal login (owner) so they can sign in to view reports.
-    const owner = await this.prisma.user.create({
-      data: {
-        email,
-        name: name.slice(0, 120),
-        role: "CLIENT",
-        orgId,
-        clientId: client.id,
-        clientOwner: true,
-        passwordHash: await bcrypt.hash(password, 12),
-        mustSetPassword: true, // temp password → onboarding asks them to set their own
-      },
-      select: { id: true },
+    // Advisory-lock transaction: count → cap check → create, preventing two
+    // concurrent requests from both slipping past the clients limit (TOCTOU).
+    const { client, owner } = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}))`;
+      const clientCount = await tx.client.count({ where: { orgId } });
+      await this.entitlements.assertWithinLimit(orgId, "clients", clientCount);
+      const client = await tx.client.create({
+        data: {
+          orgId,
+          name: name.slice(0, 120),
+          company: dto.company?.trim() || null,
+          email,
+          phone: dto.phone?.trim() || null,
+          notes: dto.notes?.trim() || null,
+          type: dto.type === "AGENCY" ? "AGENCY" : "CLIENT",
+          allowTeam: !!dto.allowTeam,
+        },
+        include: clientInclude,
+      });
+      const owner = await tx.user.create({
+        data: {
+          email,
+          name: name.slice(0, 120),
+          role: "CLIENT",
+          orgId,
+          clientId: client.id,
+          clientOwner: true,
+          passwordHash,
+          mustSetPassword: true,
+        },
+        select: { id: true },
+      });
+      return { client, owner };
     });
 
     // Send the login email (email + password + portal URL). Toggle, on by default.

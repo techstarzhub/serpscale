@@ -33,6 +33,8 @@ export default function TeamPage() {
 
 function TeamInner() {
   const can = useCan();
+  const limit = useLimit();
+  const seatLimit = limit("seats");
   const allowed = can("team.view") || can("roles.manage");
   const [groups, setGroups] = useState<PermGroup[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -188,6 +190,7 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
   const [roleId, setRoleId] = useState("");
   const [pw, setPw] = useState("");
   const [saving, setSaving] = useState(false);
+  const [inviteErr, setInviteErr] = useState<string | null>(null);
   const [tempPw, setTempPw] = useState<{ email: string; pw: string } | null>(null);
   const [orgProjects, setOrgProjects] = useState<{ id: string; name: string; domain: string }[]>([]);
   const [campMember, setCampMember] = useState<Member | null>(null);
@@ -232,6 +235,7 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
 
   async function invite() {
     if (!email.trim()) return;
+    setInviteErr(null);
     setSaving(true);
     try {
       const base = roleId === "ADMIN"
@@ -242,6 +246,8 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
       setTempPw({ email: res.email, pw: res.tempPassword });
       setEmail(""); setName(""); setRoleId(""); setPw(""); setInviting(false);
       onChange();
+    } catch (e) {
+      setInviteErr(e instanceof Error ? e.message : "Could not send invite.");
     } finally {
       setSaving(false);
     }
@@ -277,9 +283,20 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
         <div>
           <div className="flex items-center gap-2"><Users className="h-4 w-4 text-primary" /><CardTitle className="text-base">Team members</CardTitle></div>
-          <CardDescription>Invite people, assign roles and campaigns.</CardDescription>
+          <CardDescription>
+            Invite people, assign roles and campaigns.
+            {seatLimit != null && <span className={cn("ml-2 font-medium", members.length >= seatLimit ? "text-destructive" : "text-muted-foreground")}>{members.length} / {seatLimit} seats used</span>}
+          </CardDescription>
         </div>
-        {canManage && !inviting && <Button data-tour="invite-member" size="sm" className="gap-1.5" onClick={() => setInviting(true)}><UserPlus className="h-4 w-4" /> Invite</Button>}
+        {canManage && !inviting && (
+          seatLimit != null && members.length >= seatLimit ? (
+            <Button size="sm" variant="outline" className="gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10" onClick={() => window.location.href = "/dashboard/settings/billing"}>
+              <UserPlus className="h-4 w-4" /> Upgrade to invite
+            </Button>
+          ) : (
+            <Button data-tour="invite-member" size="sm" className="gap-1.5" onClick={() => { setInviteErr(null); setInviting(true); }}><UserPlus className="h-4 w-4" /> Invite</Button>
+          )
+        )}
       </CardHeader>
       <CardContent className="space-y-3">
         {tempPw && (
@@ -311,8 +328,15 @@ function MembersSection({ members, roles, onChange, canManage }: { members: Memb
                 <p className="mt-1 text-xs text-destructive">Password must be at least 8 characters.</p>
               )}
             </div>
+            {inviteErr && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-destructive">
+                <span className="shrink-0">⚠</span>
+                {inviteErr}
+                {/plan|limit|upgrade|seat/i.test(inviteErr) && <a href="/dashboard/settings/billing" className="ml-1 font-semibold underline underline-offset-2">Upgrade</a>}
+              </p>
+            )}
             <div className="mt-3 flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setInviting(false)}>Cancel</Button>
+              <Button variant="outline" size="sm" onClick={() => { setInviting(false); setInviteErr(null); }}>Cancel</Button>
               <Button size="sm" onClick={invite} disabled={saving || !email.trim() || (pw.trim().length > 0 && pw.trim().length < 8)}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send invite"}</Button>
             </div>
           </div>

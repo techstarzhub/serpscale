@@ -123,10 +123,6 @@ export class TeamService {
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) throw new BadRequestException("A user with this email already exists");
 
-    // Enforce the plan's team-member (seats) cap.
-    const seatCount = await this.prisma.user.count({ where: { orgId, isActive: true } });
-    await this.entitlements.assertWithinLimit(orgId, "seats", seatCount);
-
     // Only a full admin can create another admin (privilege escalation guard).
     const makeAdmin = dto.role === "ADMIN";
     if (makeAdmin && user.role !== "ADMIN") throw new ForbiddenException("Only an admin can create another admin.");
@@ -138,17 +134,26 @@ export class TeamService {
 
     // Temp password: admin shares it, user resets on first login.
     const tempPassword = dto.password?.trim() || randomBytes(6).toString("base64url");
-    const created = await this.prisma.user.create({
-      data: {
-        email,
-        name: dto.name ?? null,
-        role: makeAdmin ? "ADMIN" : "MEMBER",
-        orgId,
-        customRoleId: makeAdmin ? null : dto.customRoleId ?? null,
-        passwordHash: await bcrypt.hash(tempPassword, 12),
-        mustSetPassword: true, // temp password → wizard asks them to set their own
-      },
-      select: { id: true, email: true, name: true },
+    const passwordHash = await bcrypt.hash(tempPassword, 12);
+
+    // Enforce the plan's seat cap inside an advisory-lock transaction so two
+    // concurrent invites can't both slip past the limit (TOCTOU race).
+    const created = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}))`;
+      const seatCount = await tx.user.count({ where: { orgId, isActive: true } });
+      await this.entitlements.assertWithinLimit(orgId, "seats", seatCount);
+      return tx.user.create({
+        data: {
+          email,
+          name: dto.name ?? null,
+          role: makeAdmin ? "ADMIN" : "MEMBER",
+          orgId,
+          customRoleId: makeAdmin ? null : dto.customRoleId ?? null,
+          passwordHash,
+          mustSetPassword: true,
+        },
+        select: { id: true, email: true, name: true },
+      });
     });
     // Keep the org's OTHER active admins in the loop that a new member joined
     // (exclude the actor and the freshly-created member, who gets their own welcome).
