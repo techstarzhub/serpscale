@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Sparkles, Star, X, FileText, Copy, Download, Check, PenLine, Trash2, Search, TrendingUp, RefreshCw, Image as ImageIcon, Link2, Plus } from "lucide-react";
+import Link from "next/link";
+import { Loader2, Sparkles, Star, X, FileText, Copy, Download, Check, PenLine, Trash2, Search, TrendingUp, RefreshCw, Image as ImageIcon, Link2, Plus, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,8 @@ export function ContentPanel({ project }: { project: Project }) {
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const [blogs, setBlogs] = useState<BlogRow[]>([]);
+  const [blogError, setBlogError] = useState<string | null>(null);
+  const [blogUsage, setBlogUsage] = useState<{ used: number; limit: number | null } | null>(null);
 
   const loadKeywords = useCallback(() => {
     setLoadingKw(true);
@@ -76,6 +79,12 @@ export function ContentPanel({ project }: { project: Project }) {
   }, [project.id]);
 
   useEffect(() => { loadKeywords(); loadBlogs(); loadSearches(); loadPages(); }, [loadKeywords, loadBlogs, loadSearches, loadPages]);
+
+  useEffect(() => {
+    api.get<{ blogs: { used: number; limit: number | null } }>("/billing/usage")
+      .then((u) => setBlogUsage(u?.blogs ?? null))
+      .catch(() => {});
+  }, []);
 
   function toggle(kw: string) {
     setSelected((s) => { const n = new Set(s); n.has(kw) ? n.delete(kw) : n.add(kw); return n; });
@@ -147,7 +156,7 @@ export function ContentPanel({ project }: { project: Project }) {
         onToken: (t) => setBlog(t),
         onStatus: (m) => setImgStatus(m),
         onDone: (t) => { setBlog(t); setGenerating(false); setImgStatus(""); },
-        onError: (msg) => { setGenerating(false); setImgStatus(""); if (msg) alert(msg); else setBlog("Couldn't generate the blog right now. Please try again."); },
+        onError: (msg) => { setGenerating(false); setImgStatus(""); setBlogError(msg || "Couldn't generate the blog right now. Please try again."); },
       },
     );
   }
@@ -171,7 +180,7 @@ export function ContentPanel({ project }: { project: Project }) {
         onToken: (t) => setBlog(t),
         onStatus: (m) => setImgStatus(m),
         onDone: (t) => { setBlog(t); setGenerating(false); setImgStatus(""); },
-        onError: (msg) => { setGenerating(false); setImgStatus(""); if (msg) alert(msg); else setBlog("Couldn't regenerate right now. Please try again."); },
+        onError: (msg) => { setGenerating(false); setImgStatus(""); setBlogError(msg || "Couldn't regenerate right now. Please try again."); },
       },
     );
   }
@@ -350,15 +359,37 @@ export function ContentPanel({ project }: { project: Project }) {
                 </div>
               </div>
             )}
-            <Button
-              className="h-9 gap-2 px-5 font-semibold shadow-sm"
-              onClick={() => (blog ? setRegenOpen(true) : generate())}
-              disabled={generating || (!blog && totalSelected === 0)}
-            >
-              {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : blog ? <RefreshCw className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
-              {generating ? (imgStatus || "Writing…") : blog ? "Regenerate" : totalSelected ? `Generate · ${totalSelected} kw` : "Generate"}
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              {blogUsage?.limit != null && (
+                <span className={cn(
+                  "text-[11px] font-medium",
+                  blogUsage.used >= blogUsage.limit ? "text-destructive" : blogUsage.used >= blogUsage.limit * 0.9 ? "text-chart-3" : "text-muted-foreground",
+                )}>
+                  {blogUsage.used} / {blogUsage.limit} drafts this month
+                </span>
+              )}
+              <Button
+                className="h-9 gap-2 px-5 font-semibold shadow-sm"
+                onClick={() => { setBlogError(null); blog ? setRegenOpen(true) : generate(); }}
+                disabled={generating || (!blog && totalSelected === 0) || (blogUsage?.limit != null && blogUsage.used >= blogUsage.limit)}
+                title={blogUsage?.limit != null && blogUsage.used >= blogUsage.limit ? "Monthly blog limit reached — upgrade to generate more" : undefined}
+              >
+                {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : blog ? <RefreshCw className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+                {generating ? (imgStatus || "Writing…") : blog ? "Regenerate" : totalSelected ? `Generate · ${totalSelected} kw` : "Generate"}
+              </Button>
+            </div>
           </div>
+
+          {blogError && (
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/[0.06] px-3 py-2.5 text-sm text-destructive">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span className="flex-1">{blogError}</span>
+              {/plan|limit|upgrade/i.test(blogError) && (
+                <Link href="/dashboard/settings/billing" className="shrink-0 font-semibold underline underline-offset-2 hover:opacity-80">Upgrade</Link>
+              )}
+              <button onClick={() => setBlogError(null)} className="shrink-0 opacity-60 hover:opacity-100"><X className="h-4 w-4" /></button>
+            </div>
+          )}
 
           {/* Optional freeform instructions — full-width under the controls. */}
           <div className="relative">

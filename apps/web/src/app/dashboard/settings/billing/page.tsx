@@ -15,7 +15,7 @@ interface Tier { keywords: number; priceCents: number }
 interface Plan { id: string; name: string; priceCents: number; currency: string; interval: string; limits: any; features: string[] | null; featureLabels?: string[]; pricingTiers?: Tier[] | null; trialDays?: number | null }
 interface Subscription { status: string; currentPeriodEnd: string | null; plan: Plan | null; pendingPlan?: { id: string; name: string } | null }
 interface Meter { used: number; limit: number | null }
-interface Usage { plan: string | null; status: string | null; projects: Meter; seats: Meter; clients: Meter; keywords: { limit: number | null } }
+interface Usage { plan: string | null; status: string | null; projects: Meter; seats: Meter; clients: Meter; keywords: Meter; blogs: Meter }
 interface Txn { id: string; planName: string | null; amountCents: number; currency: string; status: string; gateway: string; createdAt: string }
 
 function UsageBar({ label, m }: { label: string; m: Meter }) {
@@ -183,13 +183,15 @@ function BillingInner() {
         </CardContent>
       </Card>
 
-      {usage && (usage.projects.limit != null || usage.seats.limit != null || usage.clients.limit != null) && (
+      {usage && (usage.projects.limit != null || usage.seats.limit != null || usage.clients.limit != null || usage.keywords.limit != null || usage.blogs?.limit != null) && (
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-base">Usage this plan</CardTitle><CardDescription>What you&apos;ve used against your plan limits.</CardDescription></CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-3">
+          <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <UsageBar label="Campaigns" m={usage.projects} />
             <UsageBar label="Team seats" m={usage.seats} />
             <UsageBar label="Clients" m={usage.clients} />
+            <UsageBar label="Keywords tracked" m={usage.keywords} />
+            {usage.blogs?.limit != null && <UsageBar label="Blog drafts / mo" m={usage.blogs} />}
           </CardContent>
         </Card>
       )}

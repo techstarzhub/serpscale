@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Check, Link2, LayoutGrid, Plug, ListChecks, Lock, Info, ExternalLink, Database, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Loader2, Check, Link2, LayoutGrid, Plug, ListChecks, Lock, Info, ExternalLink, Database, AlertTriangle, AlertCircle } from "lucide-react";
 import { FcGoogle } from "react-icons/fc";
 import { SiGoogleanalytics, SiGooglesearchconsole, SiGoogleads, SiMeta, SiInstagram, SiYoutube, SiPinterest } from "react-icons/si";
 import { FaGithub, FaLinkedin } from "react-icons/fa6";
@@ -14,6 +14,7 @@ import { useCan } from "@/components/providers/user-provider";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { validateName, validateDomain, normalizeDomain } from "@/lib/campaign-validation";
+import { COUNTRIES as ALL_COUNTRIES } from "@/lib/locations";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -41,15 +42,7 @@ const MODULES: { id: string; label: string; info: string }[] = [
   { id: "audit", label: "Audit", info: "Full technical site crawl with a health score and prioritized fixes." },
 ];
 
-const COUNTRIES = [
-  { code: "US", label: "us (google.com)" },
-  { code: "GB", label: "uk (google.co.uk)" },
-  { code: "IN", label: "in (google.co.in)" },
-  { code: "CA", label: "ca (google.ca)" },
-  { code: "AU", label: "au (google.com.au)" },
-  { code: "DE", label: "de (google.de)" },
-  { code: "AE", label: "ae (google.ae)" },
-];
+const COUNTRIES = ALL_COUNTRIES.filter((x) => x.value !== "WW").map((x) => ({ code: x.value, label: x.label }));
 const DEVICES = ["Desktop", "Mobile"];
 
 type Intg = { id: string; provider: "google" | "github"; name: string; desc: string; Icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>; color?: string };
@@ -122,6 +115,7 @@ export default function EditCampaignPage() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [kwUsage, setKwUsage] = useState<{ used: number; limit: number | null } | null>(null);
 
   const [name, setName] = useState("");
   const [domain, setDomain] = useState("");
@@ -158,6 +152,13 @@ export default function EditCampaignPage() {
       }
     })();
   }, [project, hydrated]);
+
+  // Load org-wide keyword usage so we can show the plan limit in the UI.
+  useEffect(() => {
+    api.get<{ used: number; limit: number | null }>("/projects/keywords-usage")
+      .then(setKwUsage)
+      .catch(() => {});
+  }, []);
 
   // Real integration status (Google account is org-level → shared by GSC/GA/GMB).
   const [intg, setIntg] = useState<{ loaded: boolean; configured: boolean; accounts: { id: string; accountEmail: string | null; status?: string }[] }>({ loaded: false, configured: true, accounts: [] });
@@ -204,7 +205,15 @@ export default function EditCampaignPage() {
   const domainErr = validateDomain(domain);
 
   const google = COUNTRIES.find((x) => x.code === country)?.label ?? "us (google.com)";
-  const kwCount = keywords.split("\n").map((k) => k.trim()).filter(Boolean).length;
+  const kwLines = keywords.split("\n").map((k) => k.trim()).filter(Boolean);
+  const kwCount = kwLines.length;
+  // How many genuinely new keywords would be added.
+  const existingLC = new Map(existingKws.map((k) => [k.keyword.toLowerCase(), k]));
+  const newKwsToAdd = kwLines.filter((k) => !existingLC.has(k.toLowerCase())).length;
+  // Slots used by OTHER campaigns (org total minus this campaign's current keywords).
+  const slotsUsedByOthers = kwUsage ? kwUsage.used - existingKws.length : null;
+  const projectedUsed = slotsUsedByOthers != null ? slotsUsedByOthers + kwCount : null;
+  const overLimit = kwUsage?.limit != null && projectedUsed != null && projectedUsed > kwUsage.limit;
   const step1Valid = !nameErr && !domainErr;
 
   // Google connection state + the account that actually powers this campaign's data:
@@ -225,7 +234,6 @@ export default function EditCampaignPage() {
 
   async function finish() {
     if (!project) return;
-    // Final guard: never submit if step 1 is invalid (e.g. reached here via back).
     if (!step1Valid) {
       setTouched({ name: true, domain: true });
       setStep(1);
@@ -234,9 +242,6 @@ export default function EditCampaignPage() {
     }
     setError(""); setLoading(true);
     try {
-      // 1) Save the campaign's core details (name / domain / dashboards / data source).
-      // Always send googleAccountEmail so switching account — or back to auto-detect
-      // ("") — persists; the server clears the choice on an empty string.
       const updated = await updateProject(project.id, {
         name: name.trim(),
         domain: normalizeDomain(domain),
@@ -247,18 +252,52 @@ export default function EditCampaignPage() {
         gmbAccountEmail: svcAccounts.gmb,
       });
 
-      // 2) Sync the tracked keywords: add newly-typed lines, drop removed ones.
       const desired = [...new Set(keywords.split("\n").map((k) => k.trim()).filter(Boolean))];
       const desiredLC = new Set(desired.map((k) => k.toLowerCase()));
       const existingLC = new Map(existingKws.map((k) => [k.keyword.toLowerCase(), k]));
-
       const toAdd = desired.filter((k) => !existingLC.has(k.toLowerCase()));
       const toRemove = existingKws.filter((k) => !desiredLC.has(k.keyword.toLowerCase()));
 
-      await Promise.allSettled([
-        ...toAdd.map((keyword) => api.post(`/projects/${project.id}/rank-keywords`, { keyword, country, device: device.toLowerCase() })),
-        ...toRemove.map((k) => api.del(`/projects/${project.id}/rank-keywords/${k.id}`)),
-      ]);
+      // Pre-validate against plan limit before making any API calls.
+      if (kwUsage?.limit != null) {
+        const slotsUsedByOthers = kwUsage.used - existingKws.length;
+        const wouldUse = slotsUsedByOthers + desired.length;
+        if (wouldUse > kwUsage.limit) {
+          const available = Math.max(0, kwUsage.limit - slotsUsedByOthers - existingKws.length);
+          setError(
+            `Your plan allows ${kwUsage.limit} keywords total. You're using ${kwUsage.used - existingKws.length} across other campaigns, leaving ${Math.max(0, kwUsage.limit - (kwUsage.used - existingKws.length))} slots for this campaign. Remove ${desired.length - (kwUsage.limit - slotsUsedByOthers)} keyword${desired.length - (kwUsage.limit - slotsUsedByOthers) === 1 ? "" : "s"} to stay within your plan, or upgrade for more.` +
+            (available > 0 ? ` (${available} new keyword${available === 1 ? "" : "s"} can still be added)` : ""),
+          );
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Remove deleted keywords first.
+      await Promise.allSettled(toRemove.map((k) => api.del(`/projects/${project.id}/rank-keywords/${k.id}`)));
+
+      // Add new keywords sequentially so we stop cleanly at the plan limit.
+      let added = 0;
+      let limitHit = false;
+      for (const keyword of toAdd) {
+        try {
+          await api.post(`/projects/${project.id}/rank-keywords`, { keyword, country, device: device.toLowerCase() });
+          added++;
+        } catch (e: any) {
+          const msg: string = e?.message ?? "";
+          if (msg.includes("plan") || msg.includes("limit") || msg.includes("upgrade") || e?.status === 403) {
+            limitHit = true;
+            break;
+          }
+        }
+      }
+
+      if (limitHit) {
+        const skipped = toAdd.length - added;
+        setError(`Plan limit reached — ${added} keyword${added === 1 ? "" : "s"} added, ${skipped} skipped. Upgrade your plan to track more.`);
+        setLoading(false);
+        return;
+      }
 
       router.push(`/dashboard/projects/${updated.slug}?tab=ranks`);
     } catch (err) {
@@ -525,9 +564,39 @@ export default function EditCampaignPage() {
                   value={keywords}
                   onChange={(e) => setKeywords(e.target.value)}
                   placeholder={"Enter one keyword per line\nseo tools\nrank tracker\nbacklink checker"}
-                  className="min-h-[280px] w-full resize-y rounded-2xl border border-input bg-card px-4 py-3 text-[15px] shadow-sm outline-none placeholder:text-muted-foreground/60 focus:border-primary focus:ring-2 focus:ring-ring/20"
+                  className={cn(
+                    "min-h-[280px] w-full resize-y rounded-2xl border bg-card px-4 py-3 text-[15px] shadow-sm outline-none placeholder:text-muted-foreground/60 focus:ring-2",
+                    overLimit
+                      ? "border-destructive focus:border-destructive focus:ring-destructive/20"
+                      : "border-input focus:border-primary focus:ring-ring/20",
+                  )}
                 />
-                <p className="mt-2 text-sm text-muted-foreground"><span className="font-semibold text-foreground">{kwCount}</span> keyword{kwCount === 1 ? "" : "s"} — tracked daily on {google}.</p>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-muted-foreground">
+                    <span className="font-semibold text-foreground">{kwCount}</span> keyword{kwCount === 1 ? "" : "s"}
+                    {newKwsToAdd > 0 && <span className="ml-1 text-chart-2">+{newKwsToAdd} new</span>}
+                    {" "}— tracked daily on {google}.
+                  </p>
+                  {kwUsage && (
+                    <span className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold",
+                      overLimit
+                        ? "bg-destructive/10 text-destructive"
+                        : projectedUsed != null && kwUsage.limit != null && projectedUsed >= kwUsage.limit * 0.9
+                          ? "bg-chart-3/15 text-chart-3"
+                          : "bg-secondary text-muted-foreground",
+                    )}>
+                      {overLimit && <AlertCircle className="h-3.5 w-3.5" />}
+                      {projectedUsed ?? kwUsage.used} / {kwUsage.limit ?? "∞"} keywords used
+                    </span>
+                  )}
+                </div>
+                {overLimit && kwUsage?.limit != null && (
+                  <p className="mt-1.5 text-xs font-medium text-destructive">
+                    Over plan limit by {projectedUsed! - kwUsage.limit} keyword{projectedUsed! - kwUsage.limit === 1 ? "" : "s"}. Remove some or{" "}
+                    <a href="/dashboard/settings/billing" className="underline underline-offset-2">upgrade your plan</a>.
+                  </p>
+                )}
               </div>
               <div className="space-y-3">
                 <Combobox

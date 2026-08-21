@@ -310,7 +310,6 @@ export class CrawlService implements OnModuleInit {
     } catch { /* best-effort cleanup */ }
   }
 
-  // Cancel the running audit for a project: stop the crawl and mark it cancelled.
   async cancel(projectId: string) {
     const crawl = await this.prisma.crawl.findFirst({
       where: { projectId, status: { in: ["RUNNING", "QUEUED"] } },

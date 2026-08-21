@@ -96,6 +96,17 @@ export class RankTrackerService {
     });
   }
 
+  async orgUsage(orgId: string | null): Promise<{ used: number; limit: number | null }> {
+    if (!orgId) return { used: 0, limit: null };
+    const [used, ent] = await Promise.all([
+      this.prisma.rankKeyword.count({ where: { project: { orgId } } }),
+      this.entitlements.forOrg(orgId),
+    ]);
+    const raw = (ent.limits as any)?.keywords;
+    const limit = typeof raw === "number" ? raw : null;
+    return { used, limit };
+  }
+
   async add(projectId: string, keyword: string, country = "US", device = "desktop") {
     const text = (keyword ?? "").trim().slice(0, 200);
     if (!text) throw new BadRequestException("A keyword is required.");

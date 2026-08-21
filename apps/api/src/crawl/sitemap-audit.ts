@@ -96,12 +96,29 @@ export interface SitemapAuditResult {
 
 // Discover + collect every URL in the site's sitemap(s). Used to SEED the crawl
 // so pages that exist but aren't internally linked (orphans) are still audited.
+// Common sitemap paths tried in order when robots.txt declares none.
+// Covers WordPress, Squarespace, Wix, Shopify, Webflow, and generic setups.
+const FALLBACK_SITEMAP_PATHS = [
+  "/sitemap.xml",
+  "/sitemap_index.xml",
+  "/sitemap-index.xml",
+  "/sitemap/sitemap-index.xml",
+  "/wp-sitemap.xml",            // WordPress 5.5+
+  "/page-sitemap.xml",          // WordPress Yoast
+  "/post-sitemap.xml",          // WordPress Yoast
+  "/sitemap1.xml",              // Squarespace
+  "/sitemap_1.xml",
+  "/sitemap-0.xml",
+  "/sitemap/page.xml",
+];
+
 export async function fetchSitemapUrls(startUrl: string, cap = 5000): Promise<string[]> {
   let origin: string;
   try { origin = new URL(startUrl).origin; } catch { return []; }
   const robots = (await getText(origin + "/robots.txt")) || "";
   const declared = [...robots.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map((m) => m[1].trim());
-  const candidates = declared.length ? declared : [origin + "/sitemap.xml", origin + "/sitemap_index.xml"];
+  // If robots.txt declares sitemaps, use those exclusively. Otherwise probe all fallback paths.
+  const candidates = declared.length ? declared : FALLBACK_SITEMAP_PATHS.map((p) => origin + p);
   const seen = new Set<string>();
   const urls: string[] = [];
   for (const sm of candidates) {

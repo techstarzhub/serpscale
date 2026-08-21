@@ -15,7 +15,7 @@ export class AutofixService {
   private async loadContext(crawlId: string) {
     const crawl = await this.prisma.crawl.findUnique({ where: { id: crawlId } });
     if (!crawl) throw new NotFoundException("Crawl not found");
-    const project = await this.prisma.project.findUnique({ where: { id: crawl.projectId } });
+    const project = await this.prisma.project.findUnique({ where: { id: crawl.projectId ?? undefined } });
     if (!project) throw new NotFoundException("Project not found");
     const summary = Array.isArray(crawl.issuesSummary) ? (crawl.issuesSummary as { code?: string }[]) : [];
     const codes = summary.map((i) => i.code).filter((c): c is string => !!c);

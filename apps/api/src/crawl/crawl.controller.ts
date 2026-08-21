@@ -30,7 +30,7 @@ export class CrawlsController {
   private async loadWithAccess(user: AuthUser, crawlId: string) {
     const crawl = await this.crawls.getCrawl(crawlId);
     if (!crawl) throw new NotFoundException("Crawl not found");
-    const project = await this.prisma.project.findUnique({ where: { id: crawl.projectId } });
+    const project = await this.prisma.project.findUnique({ where: { id: crawl.projectId ?? undefined } });
     if (!project) throw new NotFoundException("Project not found");
     assertProjectAccess(user, project);
     return crawl;

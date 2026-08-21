@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
-import { useCan, useFeature, useCurrentUser } from "@/components/providers/user-provider";
+import { useCan, useFeature, useCurrentUser, useLimit } from "@/components/providers/user-provider";
 import { useProjects } from "@/components/providers/projects-provider";
 import { ClientMembers } from "@/components/clients/client-members";
 import { LockedFeature } from "@/components/ui/locked-feature";
@@ -46,6 +46,8 @@ export default function ClientsPage() {
 
 function ClientsInner() {
   const can = useCan();
+  const limit = useLimit();
+  const clientLimit = limit("clients");
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
@@ -74,9 +76,22 @@ function ClientsInner() {
           <p className="text-sm text-muted-foreground">Your customers and the campaigns you run for them.</p>
         </div>
         {can("clients.create") && (
-          <Button onClick={() => setOpen("new")}>
-            <Plus className="h-4 w-4" /> Add client
-          </Button>
+          <div className="flex flex-col items-end gap-1">
+            {clientLimit != null && (
+              <span className={cn("text-xs font-medium", clients.length >= clientLimit ? "text-destructive" : "text-muted-foreground")}>
+                {clients.length} / {clientLimit} clients used
+              </span>
+            )}
+            {clientLimit != null && clients.length >= clientLimit ? (
+              <Button variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10" onClick={() => window.location.href = "/dashboard/settings/billing"}>
+                <Plus className="h-4 w-4" /> Upgrade to add more
+              </Button>
+            ) : (
+              <Button onClick={() => setOpen("new")}>
+                <Plus className="h-4 w-4" /> Add client
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -291,7 +306,12 @@ function CreateModal({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
               </button>
             </label>
 
-            {err && <p className="text-sm text-destructive">{err}</p>}
+            {err && (
+              <p className="text-sm text-destructive">
+                {err}
+                {/plan|limit|upgrade/i.test(err) && <a href="/dashboard/settings/billing" className="ml-1.5 font-semibold underline underline-offset-2">Upgrade plan</a>}
+              </p>
+            )}
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="outline" onClick={onClose}>Cancel</Button>
               <Button onClick={save} disabled={saving || !ready}>

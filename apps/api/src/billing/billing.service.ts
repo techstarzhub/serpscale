@@ -181,11 +181,12 @@ export class BillingService {
   async usage(orgId: string) {
     const sub = await this.prisma.subscription.findUnique({ where: { orgId }, include: { plan: true } });
     const limits: any = { ...((sub?.plan?.limits as any) ?? {}), ...((sub?.limitOverrides as any) ?? {}) };
-    const [projects, seats, clients, blogs] = await Promise.all([
+    const [projects, seats, clients, blogs, keywords] = await Promise.all([
       this.prisma.project.count({ where: { orgId } }),
       this.prisma.user.count({ where: { orgId, isActive: true } }),
       this.prisma.client.count({ where: { orgId } }),
       this.entitlements.blogUsageThisPeriod(orgId), // resets each renewal, not calendar month
+      this.prisma.rankKeyword.count({ where: { project: { orgId } } }),
     ]);
     // A cap of 0 is real (none allowed); only a missing/blank value is unlimited.
     const lim = (k: string) => {
@@ -199,7 +200,7 @@ export class BillingService {
       projects: { used: projects, limit: lim("projects") },
       seats: { used: seats, limit: lim("seats") },
       clients: { used: clients, limit: lim("clients") },
-      keywords: { limit: lim("keywords") },
+      keywords: { used: keywords, limit: lim("keywords") },
       blogs: { used: blogs, limit: lim("blogsPerMonth") },
     };
   }
