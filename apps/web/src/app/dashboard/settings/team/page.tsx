@@ -69,7 +69,7 @@ function TeamInner() {
   return (
     <div className="space-y-5">
       <RolesSection groups={groups} roles={roles} onChange={load} canManage={can("roles.manage")} />
-      <MembersSection members={members} roles={roles} onChange={load} canManage={can("team.manage")} />
+      <MembersSection members={members} roles={roles} onChange={load} canManage={can("team.manage")} seatLimit={seatLimit} />
     </div>
   );
 }
@@ -178,7 +178,7 @@ function RoleEditor({ groups, role, onDone, onCancel }: { groups: PermGroup[]; r
 // ---------------------------------------------------------------------------
 // Members
 // ---------------------------------------------------------------------------
-function MembersSection({ members, roles, onChange, canManage }: { members: Member[]; roles: Role[]; onChange: () => void; canManage: boolean }) {
+function MembersSection({ members, roles, onChange, canManage, seatLimit }: { members: Member[]; roles: Role[]; onChange: () => void; canManage: boolean; seatLimit: number | null }) {
   const { user } = useCurrentUser();
   const confirm = useConfirm();
   // Only a real admin (not already viewing as someone) can "view as" a member.
